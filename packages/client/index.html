@@ -2,11 +2,26 @@
 <html lang="ru">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
     <title>Танки</title>
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <canvas id="stage"></canvas>
+    <canvas id="stage" hidden></canvas>
+    <div id="overlay" class="overlay" hidden></div>
+    <section id="home" class="home" hidden>
+      <h1>Танки</h1>
+      <label>
+        Имя
+        <input id="nickname" maxlength="16" placeholder="как тебя звать" autocomplete="off" />
+      </label>
+      <label>
+        Характеристики: броня, двигатель, пушка, перезарядка (сумма ≤ 10)
+        <input id="stats" maxlength="4" pattern="[0-5]{4}" value="3322" autocomplete="off" />
+      </label>
+      <button id="create">Создать дуэль</button>
+      <p class="help">Управление: W A S D или стрелки — корпус, мышь — башня, левая кнопка или пробел — выстрел.</p>
+    </section>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
