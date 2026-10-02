@@ -1,8 +1,5 @@
 import { ARENA, clamp } from '@tanks/shared/engine';
 
-// Высота видимого окна в единицах поля одинакова на любом экране; ширина следует за пропорциями экрана.
-export const CAMERA_VIEW_HEIGHT = 560;
-
 export interface Camera {
   x: number;
   y: number;
@@ -16,16 +13,16 @@ export interface Point {
   y: number;
 }
 
-// Окно центрируется на цели и прижимается к краям поля; поле уже окна — окно центрируется на поле.
-export function frameCamera(target: Point, canvasWidth: number, canvasHeight: number): Camera {
-  const scale = canvasHeight / CAMERA_VIEW_HEIGHT;
+// Окно заданной высоты в единицах поля, ширина — по пропорциям экрана. Центрируется на цели и прижимается
+// к краям поля; поле уже окна — окно центрируется на поле.
+export function frameCamera(target: Point, canvasWidth: number, canvasHeight: number, viewHeight: number): Camera {
+  const scale = canvasHeight / viewHeight;
   const width = canvasWidth / scale;
-  const height = CAMERA_VIEW_HEIGHT;
   return {
     x: clampAxis(target.x - width / 2, width, ARENA.width),
-    y: clampAxis(target.y - height / 2, height, ARENA.height),
+    y: clampAxis(target.y - viewHeight / 2, viewHeight, ARENA.height),
     width,
-    height,
+    height: viewHeight,
     scale,
   };
 }

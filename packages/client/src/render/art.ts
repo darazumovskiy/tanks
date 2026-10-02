@@ -1,10 +1,5 @@
 import type { Side } from '@tanks/shared/engine';
-import { SIDE_COLORS } from './view.js';
-
-export interface TankArt {
-  body: HTMLImageElement;
-  turret: HTMLImageElement;
-}
+import { SIDE_COLORS, makeCanvas } from './view.js';
 
 // Вид сверху, носом вправо, сетка 64×64, центр вращения (32, 32) — тот же контракт, что у ботов tank-arena.
 // Растр заготавливается крупным: камера приближает танк, и при 64 px он бы мылился.
@@ -50,10 +45,71 @@ function loadSvg(svg: string): HTMLImageElement {
   return image;
 }
 
-export function loadTankArt(side: Side): TankArt {
-  const color = SIDE_COLORS[side];
-  const dark = darken(color);
-  return { body: loadSvg(bodySvg(color, dark)), turret: loadSvg(turretSvg(color, dark)) };
+type Sprite = HTMLImageElement | HTMLCanvasElement;
+
+function isLoaded(image: HTMLImageElement): boolean {
+  return image.complete && image.naturalWidth > 0;
+}
+
+// Фильтры холста (`ctx.filter`) на телефоне дороги в каждом кадре, поэтому всё, что можно, заготавливается один раз:
+// размытая тень, «подбитый» серый вид. Подсветка выстрела рисуется наложением, без фильтра.
+export class TankArt {
+  private readonly body: HTMLImageElement;
+  private readonly turret: HTMLImageElement;
+  private deadBody: HTMLCanvasElement | null = null;
+  private deadTurret: HTMLCanvasElement | null = null;
+  private readonly shadow: HTMLCanvasElement;
+
+  constructor(side: Side) {
+    const color = SIDE_COLORS[side];
+    const dark = darken(color);
+    this.body = loadSvg(bodySvg(color, dark));
+    this.turret = loadSvg(turretSvg(color, dark));
+    this.shadow = renderShadow();
+  }
+
+  get isReady(): boolean {
+    return isLoaded(this.body) && isLoaded(this.turret);
+  }
+
+  bodySprite(isDead: boolean): Sprite {
+    if (!isDead) {
+      return this.body;
+    }
+    this.deadBody ??= renderDead(this.body);
+    return this.deadBody;
+  }
+
+  turretSprite(isDead: boolean): Sprite {
+    if (!isDead) {
+      return this.turret;
+    }
+    this.deadTurret ??= renderDead(this.turret);
+    return this.deadTurret;
+  }
+
+  shadowSprite(): HTMLCanvasElement {
+    return this.shadow;
+  }
+}
+
+function renderDead(source: HTMLImageElement): HTMLCanvasElement {
+  const { canvas, ctx } = makeCanvas(SPRITE_RASTER_PX, SPRITE_RASTER_PX);
+  ctx.filter = 'grayscale(1) brightness(0.3)';
+  ctx.drawImage(source, 0, 0, SPRITE_RASTER_PX, SPRITE_RASTER_PX);
+  return canvas;
+}
+
+// Тень — размытый эллипс в сетке спрайта; рисуется с поворотом корпуса.
+function renderShadow(): HTMLCanvasElement {
+  const { canvas, ctx } = makeCanvas(SPRITE_RASTER_PX, SPRITE_RASTER_PX);
+  const unit = SPRITE_RASTER_PX / 64;
+  ctx.filter = `blur(${String(5 * unit)}px)`;
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.beginPath();
+  ctx.ellipse(SPRITE_RASTER_PX / 2, SPRITE_RASTER_PX / 2, 27 * unit, 23 * unit, 0, 0, Math.PI * 2);
+  ctx.fill();
+  return canvas;
 }
 
 export interface SpriteOptions {
@@ -73,6 +129,9 @@ export function drawTankSprite(
   size: number,
   options: SpriteOptions = {},
 ): void {
+  if (!art.isReady) {
+    return;
+  }
   const flash = options.flash ?? 0;
   const recoil = options.recoil ?? 0;
   const isDead = options.isDead ?? false;
@@ -80,30 +139,29 @@ export function drawTankSprite(
   ctx.translate(x, y);
   if (options.hasShadow !== false) {
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.filter = `blur(${String(size * 0.08)}px)`;
-    ctx.beginPath();
-    ctx.ellipse(size * 0.06, size * 0.1, size * 0.42, size * 0.36, heading, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.translate(size * 0.06, size * 0.1);
+    ctx.rotate(heading);
+    ctx.drawImage(art.shadowSprite(), -size / 2, -size / 2, size, size);
     ctx.restore();
   }
-  if (isDead) {
-    ctx.filter = 'grayscale(1) brightness(0.3)';
-  } else if (flash > 0) {
-    ctx.filter = `brightness(${String(1 + flash * 2.5)})`;
+  const drawParts = (): void => {
+    ctx.save();
+    ctx.rotate(heading);
+    ctx.drawImage(art.bodySprite(isDead), -size / 2, -size / 2, size, size);
+    ctx.restore();
+    ctx.save();
+    ctx.rotate(turret + (isDead ? 0.5 : 0));
+    ctx.translate(-recoil * size * 0.08, 0);
+    ctx.drawImage(art.turretSprite(isDead), -size / 2, -size / 2, size, size);
+    ctx.restore();
+  };
+  drawParts();
+  if (!isDead && flash > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = Math.min(1, flash);
+    drawParts();
+    ctx.restore();
   }
-  ctx.save();
-  ctx.rotate(heading);
-  if (art.body.complete && art.body.naturalWidth > 0) {
-    ctx.drawImage(art.body, -size / 2, -size / 2, size, size);
-  }
-  ctx.restore();
-  ctx.save();
-  ctx.rotate(turret + (isDead ? 0.5 : 0));
-  ctx.translate(-recoil * size * 0.08, 0);
-  if (art.turret.complete && art.turret.naturalWidth > 0) {
-    ctx.drawImage(art.turret, -size / 2, -size / 2, size, size);
-  }
-  ctx.restore();
   ctx.restore();
 }

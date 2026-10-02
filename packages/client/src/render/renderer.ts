@@ -2,7 +2,7 @@ import { ARENA, KIT, ROUND_SECONDS, ZONE, type Side } from '@tanks/shared/engine
 import type { WorldView } from '../prediction.js';
 import { stickMagnitude } from '../steering.js';
 import { FIRE_RING, STICK_RADIUS_PX, type StickState } from '../touch.js';
-import { drawTankSprite, loadTankArt, type TankArt } from './art.js';
+import { drawTankSprite, TankArt } from './art.js';
 import { edgeMarker, frameCamera, screenToWorld, type Camera } from './camera.js';
 import type { Effects } from './effects.js';
 import { floorFor } from './floor.js';
@@ -28,7 +28,8 @@ export type Overlay =
   | null;
 
 const ZONE_START_RADIUS = Math.hypot(ARENA.width / 2, ARENA.height / 2) + 60;
-const MAX_PIXEL_RATIO = 3;
+// Выше двух пикселей на CSS-пиксель телефон тратит заметно больше на заливку, а резкости это почти не добавляет.
+const MAX_PIXEL_RATIO = 2;
 
 // Интерфейс размечен в CSS-пикселях под экран телефона высотой 390; на больших экранах растёт, но не больше чем в полтора раза.
 const UI_BASE_HEIGHT = 390;
@@ -57,13 +58,14 @@ interface Screen {
 // затем в экранных координатах — панели, стрелка на противника, объявления, оверлеи, отладка, стики.
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly art: [TankArt, TankArt] = [loadTankArt(0), loadTankArt(1)];
+  private readonly art: [TankArt, TankArt] = [new TankArt(0), new TankArt(1)];
   private pixelRatio = 1;
   private camera: Camera;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly effects: Effects,
+    private readonly viewHeight: number,
   ) {
     const ctx = canvas.getContext('2d');
     if (ctx === null) {
@@ -71,7 +73,7 @@ export class Renderer {
     }
     this.ctx = ctx;
     this.resize();
-    this.camera = frameCamera({ x: ARENA.width / 2, y: ARENA.height / 2 }, canvas.width, canvas.height);
+    this.camera = frameCamera({ x: ARENA.width / 2, y: ARENA.height / 2 }, canvas.width, canvas.height, viewHeight);
     window.addEventListener('resize', () => {
       this.resize();
     });
@@ -100,7 +102,7 @@ export class Renderer {
   draw(view: WorldView, hud: HudInfo, overlay: Overlay): void {
     const { ctx } = this;
     const me = view.tanks[hud.mySide];
-    this.camera = frameCamera(me, this.canvas.width, this.canvas.height);
+    this.camera = frameCamera(me, this.canvas.width, this.canvas.height, this.viewHeight);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#07080a';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);

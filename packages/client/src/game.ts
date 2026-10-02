@@ -13,6 +13,7 @@ export interface GameOptions {
   stats?: Stats;
   canvas: HTMLCanvasElement;
   overlay: HTMLElement;
+  viewHeight: number;
 }
 
 const TICK_MS = DT * 1000;
@@ -41,7 +42,7 @@ export class Game {
 
   constructor(private readonly options: GameOptions) {
     this.effects = new Effects(() => this.names());
-    this.renderer = new Renderer(options.canvas, this.effects);
+    this.renderer = new Renderer(options.canvas, this.effects, options.viewHeight);
     this.input = new InputReader(options.canvas, this.renderer);
     this.bindAudioUnlock();
     this.net = new NetClient(
@@ -112,6 +113,8 @@ export class Game {
     me: unknown;
     bullets: number;
     pending: number;
+    fps: number;
+    correctionPx: number;
   } | null {
     if (this.prediction === null) {
       return null;
@@ -124,6 +127,8 @@ export class Game {
       me: { ...this.prediction.me, tally: undefined, stats: undefined },
       bullets: view.bullets.length,
       pending: this.prediction.pendingCount,
+      fps: this.fps,
+      correctionPx: this.prediction.lastCorrectionPx,
     };
   }
 

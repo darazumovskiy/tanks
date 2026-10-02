@@ -26,6 +26,10 @@
         Характеристики: броня, двигатель, пушка, перезарядка (сумма ≤ 10)
         <input id="stats" maxlength="4" pattern="[0-5]{4}" value="3322" autocomplete="off" />
       </label>
+      <label id="view-field" hidden>
+        Обзор на телефоне: сколько процентов высоты поля видно (40–100)
+        <input id="view" type="number" min="40" max="100" step="5" value="75" inputmode="numeric" />
+      </label>
       <button id="create">Создать дуэль</button>
       <section id="android" class="android" hidden>
         <h2>Приложение для Android</h2>
