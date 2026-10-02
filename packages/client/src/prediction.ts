@@ -72,15 +72,19 @@ export class Prediction {
   private round: Round;
   private readonly pending: PendingInput[] = [];
   private readonly snapshots: TimedSnapshot[] = [];
-  private seq = 0;
+  private seq: number;
   lastCorrectionPx = 0;
   latestTick = 0;
 
+  // Номер команды сквозной на всё соединение: сервер отбрасывает номера не больше уже принятого,
+  // поэтому новый раунд продолжает счёт, а не начинает с единицы.
   constructor(
     private readonly side: Side,
     mapIndex: number,
     tanks: [{ nickname: string; stats: Stats }, { nickname: string; stats: Stats }],
+    lastSeq: number,
   ) {
+    this.seq = lastSeq;
     this.round = createRound(mapIndex, [
       { name: tanks[0].nickname, stats: tanks[0].stats },
       { name: tanks[1].nickname, stats: tanks[1].stats },
@@ -93,6 +97,10 @@ export class Prediction {
 
   get pendingCount(): number {
     return this.pending.length;
+  }
+
+  get lastSeq(): number {
+    return this.seq;
   }
 
   get isFighting(): boolean {

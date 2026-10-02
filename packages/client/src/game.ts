@@ -31,6 +31,7 @@ export class Game {
   private roundStartedAt = 0;
   private roundOver: { at: number; winner: Side | null; reason: string } | null = null;
   private countdownBeeped = 0;
+  private lastInputSeq = 0;
   private accumulator = 0;
   private lastFrame = performance.now();
   private frames = 0;
@@ -64,7 +65,7 @@ export class Game {
           this.roundStartedAt = performance.now();
           this.roundOver = null;
           this.countdownBeeped = 0;
-          this.prediction = new Prediction(this.side, message.mapIndex, message.tanks);
+          this.prediction = new Prediction(this.side, message.mapIndex, message.tanks, this.lastInputSeq);
           this.effects.reset();
           this.hideOverlay();
         },
@@ -185,6 +186,7 @@ export class Game {
       this.accumulator -= TICK_MS;
       const action = quantizeAction(this.input.read(prediction.me));
       const seq = prediction.predict(action);
+      this.lastInputSeq = seq;
       this.net.sendInput(seq, action);
     }
 
