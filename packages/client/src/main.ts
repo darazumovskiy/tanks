@@ -58,6 +58,7 @@ function startDuel(roomCode: string): void {
   const stats = parseStats(localStorage.getItem(STATS_KEY));
   const canvas = byId('stage', HTMLCanvasElement);
   canvas.hidden = false;
+  document.body.classList.add('duel');
   const game = new Game({ roomCode, nickname, stats, canvas, overlay: byId('overlay', HTMLElement) });
   bindRotateHint(byId('rotate', HTMLElement));
   // Точка доступа для сквозных тестов и отладки из консоли браузера.
