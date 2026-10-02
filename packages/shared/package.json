@@ -1,0 +1,19 @@
+{
+  "name": "@tanks/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./engine": {
+      "types": "./dist/engine/index.d.ts",
+      "default": "./dist/engine/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "default": "./dist/protocol/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  }
+}

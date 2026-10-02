@@ -1,0 +1,16 @@
+{
+  "name": "@tanks/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@tanks/shared": "*"
+  },
+  "devDependencies": {
+    "vite": "^7.1.0"
+  }
+}
