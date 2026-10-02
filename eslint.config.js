@@ -1,12 +1,18 @@
 import js from '@eslint/js';
+import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   { ignores: ['**/dist/**', '**/dist-types/**', '**/node_modules/**', '**/*.config.*'] },
-  js.configs.recommended,
-  ...tseslint.configs.strictTypeChecked,
-  ...tseslint.configs.stylisticTypeChecked,
   {
+    files: ['**/*.mjs'],
+    ...js.configs.recommended,
+    languageOptions: { globals: globals.node },
+    rules: { ...js.configs.recommended.rules, eqeqeq: ['error', 'always'], 'no-nested-ternary': 'error' },
+  },
+  {
+    files: ['**/*.ts', '**/*.mts'],
+    extends: [js.configs.recommended, ...tseslint.configs.strictTypeChecked, ...tseslint.configs.stylisticTypeChecked],
     languageOptions: {
       parserOptions: {
         projectService: true,

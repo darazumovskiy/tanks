@@ -4,3 +4,4 @@ node_modules
 package-lock.json
 *.md
 .cursor
+packages/shared/test/determinism/fixtures.json
