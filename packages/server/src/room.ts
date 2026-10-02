@@ -16,9 +16,9 @@ import {
   type RoomStateMessage,
   type RoundStartMessage,
   type ServerMessage,
-  type SnapshotEvent,
   type SnapshotMessage,
 } from '@tanks/shared/protocol';
+import { toSnapshotEvent } from './events.js';
 
 export interface Connection {
   send(bytes: Uint8Array): void;
@@ -57,32 +57,6 @@ export function sanitizeNickname(raw: string): string {
 
 export function sanitizeStats(raw: Stats): Stats {
   return checkStats(raw).isOk ? raw : { ...DEFAULT_STATS };
-}
-
-function toSnapshotEvent(event: RoundEvent): SnapshotEvent {
-  switch (event.type) {
-    case 'shot':
-      return { kind: 'shot', side: event.side, x: event.x, y: event.y, value: event.angle };
-    case 'impact':
-    case 'fizzle':
-    case 'ricochet':
-      return { kind: event.type, side: event.owner, x: event.x, y: event.y, value: 0 };
-    case 'clash':
-      return { kind: 'clash', side: null, x: event.x, y: event.y, value: 0 };
-    case 'hit':
-      return { kind: 'hit', side: event.side, x: event.x, y: event.y, value: event.damage };
-    case 'death':
-    case 'bump':
-      return { kind: event.type, side: event.side, x: event.x, y: event.y, value: 0 };
-    case 'kitSpawn':
-      return { kind: 'kitSpawn', side: null, x: event.x, y: event.y, value: 0 };
-    case 'pickup':
-      return { kind: 'pickup', side: event.side, x: event.x, y: event.y, value: event.healed };
-    case 'zoneStart':
-      return { kind: 'zoneStart', side: null, x: 0, y: 0, value: 0 };
-    case 'roundOver':
-      return { kind: 'roundOver', side: event.winner, x: 0, y: 0, value: event.reason === 'kill' ? 0 : 1 };
-  }
 }
 
 // Одна дуэль: два места, раунды по кругу карт, счёт. Сокетов не знает — только Connection.send.

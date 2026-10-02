@@ -150,7 +150,7 @@ function readKit(reader: ByteReader): KitSnapshot {
 function writeEvent(writer: ByteWriter, event: SnapshotEvent): void {
   writer.u8(EVENT_KINDS.indexOf(event.kind));
   writeSide(writer, event.side);
-  writer.f32(event.x).f32(event.y).f32(event.value);
+  writer.f32(event.x).f32(event.y).f32(event.value).f32(event.dx).f32(event.dy).u8(event.flags);
 }
 
 function readEvent(reader: ByteReader): SnapshotEvent {
@@ -158,7 +158,16 @@ function readEvent(reader: ByteReader): SnapshotEvent {
   if (kind === undefined) {
     throw new RangeError('неизвестный тип события');
   }
-  return { kind, side: readNullableSide(reader), x: reader.f32(), y: reader.f32(), value: reader.f32() };
+  return {
+    kind,
+    side: readNullableSide(reader),
+    x: reader.f32(),
+    y: reader.f32(),
+    value: reader.f32(),
+    dx: reader.f32(),
+    dy: reader.f32(),
+    flags: reader.u8(),
+  };
 }
 
 function writeSlot(writer: ByteWriter, slot: RoomSlot): void {

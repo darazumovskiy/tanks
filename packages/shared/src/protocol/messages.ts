@@ -1,6 +1,6 @@
 import type { Action, EndReason, Side, Stats } from '../engine/index.js';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const MessageType = {
   Join: 1,
@@ -110,12 +110,24 @@ export type SnapshotEventKind =
   | 'zoneStart'
   | 'roundOver';
 
+// Признаки события в байте flags.
+export const EventFlag = {
+  Self: 1,
+  Ricochet: 2,
+  Zone: 4,
+  ByTime: 8,
+} as const;
+
+// value: угол выстрела, урон, лечение; dx, dy: направление снаряда при попадании или нормаль стены при рикошете.
 export interface SnapshotEvent {
   kind: SnapshotEventKind;
   side: Side | null;
   x: number;
   y: number;
   value: number;
+  dx: number;
+  dy: number;
+  flags: number;
 }
 
 export interface SnapshotMessage {

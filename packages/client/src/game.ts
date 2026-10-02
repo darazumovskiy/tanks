@@ -1,9 +1,11 @@
-import { DEFAULT_STATS, DT, type Stats } from '@tanks/shared/engine';
-import { quantizeAction, type RoundStartMessage } from '@tanks/shared/protocol';
+import { DEFAULT_STATS, DT, type Side, type Stats } from '@tanks/shared/engine';
+import { EventFlag, quantizeAction, type RoundStartMessage, type SnapshotEvent } from '@tanks/shared/protocol';
 import { InputReader } from './input.js';
 import { NetClient, websocketUrl } from './net.js';
 import { Prediction } from './prediction.js';
-import { Renderer, SIDE_COLORS } from './render.js';
+import { Effects } from './render/effects.js';
+import { Renderer, type Overlay } from './render/renderer.js';
+import { Sfx } from './sfx.js';
 
 export interface GameOptions {
   roomCode: string;
@@ -16,16 +18,19 @@ export interface GameOptions {
 const TICK_MS = DT * 1000;
 const ROUND_OVER_SHOW_MS = 3000;
 
-// Связывает сеть, предсказание, ввод и рендер; держит цикл кадров и фиксированный шаг ввода.
+// Связывает сеть, предсказание, ввод, эффекты, звук и рендер; держит цикл кадров и фиксированный шаг ввода.
 export class Game {
+  private readonly effects: Effects;
   private readonly renderer: Renderer;
   private readonly input: InputReader;
+  private readonly sfx = new Sfx();
   private readonly net: NetClient;
   private prediction: Prediction | null = null;
-  private side: 0 | 1 | null = null;
+  private side: Side | null = null;
   private roundStart: RoundStartMessage | null = null;
   private roundStartedAt = 0;
-  private roundOverAt: number | null = null;
+  private roundOver: { at: number; winner: Side | null; reason: string } | null = null;
+  private countdownBeeped = 0;
   private accumulator = 0;
   private lastFrame = performance.now();
   private frames = 0;
@@ -34,8 +39,10 @@ export class Game {
   private isClosed = false;
 
   constructor(private readonly options: GameOptions) {
-    this.renderer = new Renderer(options.canvas);
+    this.effects = new Effects(() => this.names());
+    this.renderer = new Renderer(options.canvas, this.effects);
     this.input = new InputReader(options.canvas, this.renderer);
+    this.bindAudioUnlock();
     this.net = new NetClient(
       websocketUrl(),
       {
@@ -43,8 +50,7 @@ export class Game {
           this.side = message.side;
         },
         onRoomState: (message): void => {
-          const isWaiting = message.slots.some((slot) => !slot.isTaken);
-          if (isWaiting) {
+          if (message.slots.some((slot) => !slot.isTaken)) {
             this.prediction = null;
             this.roundStart = null;
             this.showWaiting();
@@ -56,19 +62,25 @@ export class Game {
           }
           this.roundStart = message;
           this.roundStartedAt = performance.now();
-          this.roundOverAt = null;
+          this.roundOver = null;
+          this.countdownBeeped = 0;
           this.prediction = new Prediction(this.side, message.mapIndex, message.tanks);
+          this.effects.reset();
           this.hideOverlay();
         },
         onSnapshot: (message, receivedAt): void => {
           if (this.prediction === null) {
             return;
           }
-          const hasBeenOver = this.prediction.view(receivedAt).round.isOver;
           this.prediction.applySnapshot(message, receivedAt);
-          if (message.isOver && !hasBeenOver) {
-            this.roundOverAt = receivedAt;
+          this.effects.onSnapshot(message.tick, message.tanks);
+          for (const event of message.events) {
+            this.effects.onEvent(event);
+            if (event.kind === 'roundOver') {
+              this.onRoundOver(event, receivedAt);
+            }
           }
+          this.sfx.events(message.events);
         },
         onError: (message): void => {
           this.showOverlay(message.text, true);
@@ -93,7 +105,7 @@ export class Game {
   }
 
   debugState(): {
-    side: 0 | 1 | null;
+    side: Side | null;
     rttMs: number;
     serverTick: number;
     me: unknown;
@@ -114,6 +126,38 @@ export class Game {
     };
   }
 
+  private names(): [string, string] {
+    if (this.roundStart === null) {
+      return ['', ''];
+    }
+    return [this.roundStart.tanks[0].nickname, this.roundStart.tanks[1].nickname];
+  }
+
+  private bindAudioUnlock(): void {
+    const unlock = (): void => {
+      this.sfx.unlock();
+    };
+    window.addEventListener('keydown', unlock);
+    window.addEventListener('mousedown', unlock);
+    window.addEventListener('touchstart', unlock);
+    window.addEventListener('keydown', (event) => {
+      if (event.code === 'KeyM' && !event.repeat) {
+        this.sfx.toggle();
+      }
+    });
+  }
+
+  private onRoundOver(event: SnapshotEvent, at: number): void {
+    const isByTime = (event.flags & EventFlag.ByTime) !== 0;
+    let reason: string;
+    if (event.side === null) {
+      reason = isByTime ? 'равная броня по истечении времени' : 'оба танка уничтожены';
+    } else {
+      reason = isByTime ? 'по оставшейся броне' : 'уничтожение';
+    }
+    this.roundOver = { at, winner: event.side, reason };
+  }
+
   private frame(now: number): void {
     if (this.isClosed) {
       return;
@@ -131,7 +175,8 @@ export class Game {
     }
 
     const prediction = this.prediction;
-    if (prediction === null || this.roundStart === null) {
+    const roundStart = this.roundStart;
+    if (prediction === null || roundStart === null) {
       return;
     }
 
@@ -144,35 +189,47 @@ export class Game {
     }
 
     const view = prediction.view(now);
-    this.renderer.draw(view, {
-      names: [this.roundStart.tanks[0].nickname, this.roundStart.tanks[1].nickname],
-      score: this.roundStart.score,
-      rttMs: this.net.rttMs,
-      serverTick: this.net.serverTick,
-      pending: prediction.pendingCount,
-      correctionPx: prediction.lastCorrectionPx,
-      fps: this.fps,
-    });
-    this.updateRoundOverlay(now, view.round.isOver, view.round.winner);
+    this.effects.update(elapsed / 1000, view.tanks);
+    this.renderer.draw(
+      view,
+      {
+        names: this.names(),
+        score: roundStart.score,
+        roundIndex: roundStart.roundIndex,
+        rttMs: this.net.rttMs,
+        serverTick: this.net.serverTick,
+        pending: prediction.pendingCount,
+        correctionPx: prediction.lastCorrectionPx,
+        fps: this.fps,
+        isMuted: this.sfx.isMuted,
+      },
+      this.overlayFor(now, prediction, roundStart),
+    );
   }
 
-  private updateRoundOverlay(now: number, isOver: boolean, winner: 0 | 1 | null): void {
-    if (this.roundStart === null) {
-      return;
+  private overlayFor(now: number, prediction: Prediction, roundStart: RoundStartMessage): Overlay {
+    if (this.roundOver !== null && now - this.roundOver.at < ROUND_OVER_SHOW_MS) {
+      return {
+        kind: 'roundEnd',
+        winner: this.roundOver.winner,
+        reason: this.roundOver.reason,
+        elapsedS: (now - this.roundOver.at) / 1000,
+      };
     }
-    if (isOver && this.roundOverAt !== null && now - this.roundOverAt < ROUND_OVER_SHOW_MS) {
-      const text = winner === null ? 'Ничья' : `Победил ${this.roundStart.tanks[winner].nickname}`;
-      this.showOverlay(text, false, winner === null ? undefined : SIDE_COLORS[winner]);
-      return;
+    const totalS = (roundStart.countdownTicks * TICK_MS) / 1000;
+    const elapsedS = (now - this.roundStartedAt) / 1000;
+    if (!prediction.isFighting && elapsedS < totalS + 0.6) {
+      const secondsLeft = Math.ceil(totalS - elapsedS);
+      if (secondsLeft >= 1 && secondsLeft !== this.countdownBeeped) {
+        this.countdownBeeped = secondsLeft;
+        this.sfx.play('beep');
+      } else if (secondsLeft < 1 && this.countdownBeeped !== -1) {
+        this.countdownBeeped = -1;
+        this.sfx.play('go');
+      }
+      return { kind: 'countdown', elapsedS, totalS };
     }
-    const countdownMs = this.roundStart.countdownTicks * TICK_MS;
-    const sinceStart = now - this.roundStartedAt;
-    if (this.prediction !== null && !this.prediction.isFighting && sinceStart < countdownMs + 500) {
-      const left = Math.max(0, Math.ceil((countdownMs - sinceStart) / 1000));
-      this.showOverlay(left > 0 ? String(left) : 'БОЙ!', false);
-      return;
-    }
-    this.hideOverlay();
+    return null;
   }
 
   private showWaiting(): void {
@@ -196,7 +253,7 @@ export class Game {
     this.options.overlay.hidden = false;
   }
 
-  private showOverlay(text: string, isError: boolean, color?: string): void {
+  private showOverlay(text: string, isError: boolean): void {
     const { overlay } = this.options;
     if (overlay.textContent === text && !overlay.hidden) {
       return;
@@ -205,9 +262,6 @@ export class Game {
     const title = document.createElement('div');
     title.className = isError ? 'overlay-title overlay-error' : 'overlay-title';
     title.textContent = text;
-    if (color !== undefined) {
-      title.style.color = color;
-    }
     overlay.append(title);
     overlay.hidden = false;
   }

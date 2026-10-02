@@ -24,10 +24,10 @@ const snapshot: SnapshotMessage = {
     { isActive: true, respawnIn: 0 },
   ],
   events: [
-    { kind: 'shot', side: 0, x: 174, y: 450, value: 0 },
-    { kind: 'hit', side: 1, x: 1460, y: 450, value: 43 },
-    { kind: 'zoneStart', side: null, x: 0, y: 0, value: 0 },
-    { kind: 'roundOver', side: 1, x: 0, y: 0, value: 1 },
+    { kind: 'shot', side: 0, x: 174, y: 450, value: 0, dx: 1, dy: 0, flags: 0 },
+    { kind: 'hit', side: 1, x: 1460, y: 450, value: 43, dx: -0.5, dy: 0.25, flags: 2 },
+    { kind: 'zoneStart', side: null, x: 0, y: 0, value: 0, dx: 0, dy: 0, flags: 0 },
+    { kind: 'roundOver', side: 1, x: 0, y: 0, value: 0, dx: 0, dy: 0, flags: 8 },
   ],
 };
 
@@ -77,12 +77,15 @@ describe('кодек протокола', () => {
       if (message.type === MessageType.Snapshot) {
         const decodedSnapshot = decoded as SnapshotMessage;
         expect({ ...decodedSnapshot, events: [] }).toEqual({ ...message, events: [] });
-        expect(decodedSnapshot.events.map((event) => [event.kind, event.side])).toEqual(
-          message.events.map((event) => [event.kind, event.side]),
+        expect(decodedSnapshot.events.map((event) => [event.kind, event.side, event.flags])).toEqual(
+          message.events.map((event) => [event.kind, event.side, event.flags]),
         );
         for (const [index, event] of decodedSnapshot.events.entries()) {
-          expect(event.x).toBeCloseTo(message.events[index]?.x ?? NaN, 3);
-          expect(event.value).toBeCloseTo(message.events[index]?.value ?? NaN, 3);
+          const expected = message.events[index];
+          expect(event.x).toBeCloseTo(expected?.x ?? NaN, 3);
+          expect(event.value).toBeCloseTo(expected?.value ?? NaN, 3);
+          expect(event.dx).toBeCloseTo(expected?.dx ?? NaN, 3);
+          expect(event.dy).toBeCloseTo(expected?.dy ?? NaN, 3);
         }
         return;
       }
@@ -109,9 +112,9 @@ describe('кодек протокола', () => {
     });
   });
 
-  it('снимок пустого боя помещается в 150 байт', () => {
+  it('снимок пустого боя помещается в 140 байт', () => {
     const empty: SnapshotMessage = { ...snapshot, bullets: [], kits: [], events: [] };
-    expect(encode(empty).byteLength).toBeLessThanOrEqual(150);
+    expect(encode(empty).byteLength).toBeLessThanOrEqual(140);
   });
 
   it('отвергает неизвестный тип и обрывок', () => {
@@ -136,13 +139,18 @@ describe('кодек протокола', () => {
     badReason[11] = 9;
     expect(() => decode(badReason)).toThrow(RangeError);
 
+    const headerBytes = 1 + 4 + 4 + 1 + 1 + 1 + 8 + 2 * 57;
     const badBulletOwner = encode({ ...snapshot, kits: [], events: [] });
-    badBulletOwner[1 + 4 + 4 + 1 + 1 + 1 + 8 + 2 * 57 + 2 + 4] = 5;
+    badBulletOwner[headerBytes + 2 + 4] = 5;
     expect(() => decode(badBulletOwner)).toThrow(RangeError);
 
     const badEventKind = encode({ ...snapshot, bullets: [], kits: [] });
-    badEventKind[1 + 4 + 4 + 1 + 1 + 1 + 8 + 2 * 57 + 2 + 1 + 1] = 200;
+    badEventKind[headerBytes + 2 + 1 + 1] = 200;
     expect(() => decode(badEventKind)).toThrow(RangeError);
+
+    const badEventSide = encode({ ...snapshot, bullets: [], kits: [] });
+    badEventSide[headerBytes + 2 + 1 + 1 + 1] = 9;
+    expect(() => decode(badEventSide)).toThrow(RangeError);
   });
 
   it('длинные строки обрезаются до 255 байт, большие сообщения растят буфер', () => {

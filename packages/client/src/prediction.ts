@@ -17,6 +17,7 @@ export interface InterpolatedTank {
   heading: number;
   turret: number;
   hp: number;
+  maxHp: number;
   isAlive: boolean;
 }
 
@@ -160,6 +161,7 @@ export class Prediction {
       heading: this.me.heading,
       turret: this.me.turret,
       hp: this.me.hp,
+      maxHp: this.me.stats.maxHp,
       isAlive: this.me.isAlive,
     };
     const enemy = this.interpolateTank(older, newer, enemySide, clampedT);
@@ -201,6 +203,7 @@ export class Prediction {
         heading: fallback.heading,
         turret: fallback.turret,
         hp: fallback.hp,
+        maxHp: fallback.stats.maxHp,
         isAlive: fallback.isAlive,
       };
     }
@@ -212,33 +215,34 @@ export class Prediction {
       heading: lerpAngle(a.heading, b.heading, t),
       turret: lerpAngle(a.turret, b.turret, t),
       hp: b.hp,
+      maxHp: fallback.stats.maxHp,
       isAlive: b.isAlive,
     };
   }
 
+  // Свои снаряды — только из предсказания: оно идёт впереди снимков, и смена источника дала бы прыжок назад.
+  // Чужие — из интерполяции снимков, как и чужой танк.
   private interpolateBullets(
     older: TimedSnapshot | null,
     newer: TimedSnapshot | null,
     t: number,
   ): InterpolatedBullet[] {
+    const mine: InterpolatedBullet[] = this.round.bullets
+      .filter((bullet) => bullet.owner === this.side)
+      .map((bullet) => ({ id: bullet.id, owner: bullet.owner, x: bullet.x, y: bullet.y }));
     if (older === null || newer === null) {
-      return this.round.bullets.map((bullet) => ({ id: bullet.id, owner: bullet.owner, x: bullet.x, y: bullet.y }));
+      return mine;
     }
     const previous = new Map<number, BulletSnapshot>(older.message.bullets.map((bullet) => [bullet.id, bullet]));
-    const result: InterpolatedBullet[] = newer.message.bullets.map((bullet) => {
-      const was = previous.get(bullet.id);
-      if (was === undefined) {
-        return { id: bullet.id, owner: bullet.owner, x: bullet.x, y: bullet.y };
-      }
-      return { id: bullet.id, owner: bullet.owner, x: lerp(was.x, bullet.x, t), y: lerp(was.y, bullet.y, t) };
-    });
-    // Свои снаряды, которые сервер ещё не подтвердил, показываются из предсказания.
-    const known = new Set(result.map((bullet) => bullet.id));
-    for (const bullet of this.round.bullets) {
-      if (bullet.owner === this.side && !known.has(bullet.id)) {
-        result.push({ id: bullet.id, owner: bullet.owner, x: bullet.x, y: bullet.y });
-      }
-    }
-    return result;
+    const theirs: InterpolatedBullet[] = newer.message.bullets
+      .filter((bullet) => bullet.owner !== this.side)
+      .map((bullet) => {
+        const was = previous.get(bullet.id);
+        if (was === undefined) {
+          return { id: bullet.id, owner: bullet.owner, x: bullet.x, y: bullet.y };
+        }
+        return { id: bullet.id, owner: bullet.owner, x: lerp(was.x, bullet.x, t), y: lerp(was.y, bullet.y, t) };
+      });
+    return [...mine, ...theirs];
   }
 }
