@@ -1,9 +1,11 @@
 import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
+import QRCode from 'qrcode';
 import { Game } from './game.js';
 
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
 const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+const APK_ROUTE = '/app/tanks.apk';
 
 function randomCode(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
@@ -41,6 +43,23 @@ function showHome(): void {
     localStorage.setItem(STATS_KEY, statsInput.value);
     location.assign(`/d/${randomCode()}`);
   });
+  void showAndroidDownload();
+}
+
+// Блок с QR-кодом появляется, только если сервер действительно раздаёт APK.
+async function showAndroidDownload(): Promise<void> {
+  const response = await fetch(APK_ROUTE, { method: 'HEAD' }).catch(() => null);
+  if (response?.ok !== true) {
+    return;
+  }
+  const url = new URL(APK_ROUTE, location.href).href;
+  byId('android-link', HTMLAnchorElement).href = url;
+  await QRCode.toCanvas(byId('android-qr', HTMLCanvasElement), url, {
+    width: 200,
+    margin: 1,
+    color: { dark: '#0b0f0d', light: '#f4f1e8' },
+  });
+  byId('android', HTMLElement).hidden = false;
 }
 
 // Подсказка «поверни телефон» — только на устройствах с касанием и только в портрете.

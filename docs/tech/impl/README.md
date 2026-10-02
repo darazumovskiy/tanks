@@ -11,3 +11,4 @@
 | [frontend/duel-client.md](frontend/duel-client.md) | Клиент дуэли: предсказание, интерполяция, ввод, рендер, HUD |
 | [frontend/touch-controls.md](frontend/touch-controls.md) | Сенсорное управление: два плавающих стика, перевод в действие, план тестирования |
 | [infra/deploy-proto.md](infra/deploy-proto.md) | Выкладка пробы на машину в Милане: Caddy, systemd, скрипты |
+| [infra/android-app.md](infra/android-app.md) | Android-приложение: оболочка Capacitor, сборка APK в Docker, раздача по QR |

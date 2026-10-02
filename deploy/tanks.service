@@ -9,6 +9,7 @@ WorkingDirectory=/opt/tanks
 Environment=NODE_ENV=production
 Environment=PORT=8080
 Environment=STATIC_ROOT=/opt/tanks/packages/client/dist
+Environment=APK_PATH=/opt/tanks-files/tanks.apk
 ExecStart=/usr/bin/node /opt/tanks/packages/server/dist/main.js
 Restart=always
 RestartSec=2

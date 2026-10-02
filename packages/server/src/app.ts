@@ -13,10 +13,11 @@ import {
 import { WebSocket, WebSocketServer } from 'ws';
 import { DEFAULT_ROOM_OPTIONS, type Connection, type RoomOptions } from './room.js';
 import { isValidRoomCode, RoomManager } from './roomManager.js';
-import { serveStatic } from './static.js';
+import { APK_ROUTE, serveApk, serveStatic } from './static.js';
 
 export interface AppOptions {
   staticRoot?: string;
+  apkPath?: string;
   room?: RoomOptions;
   tickMs?: number;
 }
@@ -68,6 +69,9 @@ export function createApp(options: AppOptions = {}): App {
     if (path === '/healthz') {
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify(stats()));
+      return;
+    }
+    if (path === APK_ROUTE && options.apkPath !== undefined && serveApk(options.apkPath, request, response)) {
       return;
     }
     if (options.staticRoot !== undefined && serveStatic(options.staticRoot, request, response)) {

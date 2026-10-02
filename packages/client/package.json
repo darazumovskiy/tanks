@@ -8,7 +8,8 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@tanks/shared": "*"
+    "@tanks/shared": "*",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "vite": "^7.1.0"

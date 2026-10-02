@@ -27,6 +27,14 @@
         <input id="stats" maxlength="4" pattern="[0-5]{4}" value="3322" autocomplete="off" />
       </label>
       <button id="create">Создать дуэль</button>
+      <section id="android" class="android" hidden>
+        <h2>Приложение для Android</h2>
+        <canvas id="android-qr" width="200" height="200"></canvas>
+        <p class="help">
+          Наведи камеру телефона на код или открой <a id="android-link" href="/app/tanks.apk">ссылку</a>. Android один
+          раз спросит разрешение на установку не из магазина.
+        </p>
+      </section>
       <p class="help">
         Управление: W A S D или стрелки — корпус, мышь — башня, левая кнопка или пробел — выстрел, M — звук. На
         телефоне: палец на левой половине экрана — куда повёл, туда едет; на правой — башня, у края стика — огонь, тап —

@@ -32,6 +32,7 @@
 | `packages/shared` | Движок (`engine/`) и протокол (`protocol/`) — общие для сервера и клиента; импорт `@tanks/shared/engine`, `@tanks/shared/protocol` |
 | `packages/server` | Игровой сервер: комнаты, тик, WebSocket (`ws`) |
 | `packages/client` | Браузерный клиент: Vite, Canvas 2D |
+| `packages/mobile` | Оболочка Capacitor (Android, iOS): открывает клиент с игрового сервера; APK собирается в Docker — `deploy/android/build.sh`, см. [android-app.md](docs/tech/impl/infra/android-app.md) |
 
 Команды из корня: `npm test` (Vitest), `npm run test:coverage` (с порогами), `npm run lint` (ESLint + Prettier), `npm run typecheck`, `npm run build`. Тесты лежат рядом с кодом (`*.test.ts`) или в `packages/*/test/`. Перед финализацией любого шага — все команды зелёные.
 
@@ -39,7 +40,7 @@
 
 Локальный запуск: `npm run build && PORT=8080 STATIC_ROOT=$PWD/packages/client/dist node packages/server/dist/main.js`, открыть `http://localhost:8080/`. Разработка клиента — `npm run dev -w @tanks/client` (Vite проксирует `/ws` на 8080).
 
-Боевая проба: `https://172-232-212-157.sslip.io` (Akamai, Милан). Выкладка — `deploy/deploy.sh root@172.232.212.157` после пуша в `main`; подробности — [docs/tech/impl/infra/deploy-proto.md](docs/tech/impl/infra/deploy-proto.md).
+Боевая проба: `https://172-232-212-157.sslip.io` (Akamai, Милан). Выкладка — `deploy/deploy.sh root@172.232.212.157` после пуша в `main`; подробности — [docs/tech/impl/infra/deploy-proto.md](docs/tech/impl/infra/deploy-proto.md). Android-приложение ставится с главной страницы по QR (`/app/tanks.apk`); оболочка грузит игру с сервера, выкладка обновляет и телефоны.
 
 ## Текущая задача
 

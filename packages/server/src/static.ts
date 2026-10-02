@@ -16,6 +16,28 @@ const MIME: Readonly<Record<string, string>> = {
 
 const SPA_ROUTES = [/^\/$/, /^\/d\/[a-z0-9]+$/];
 
+export const APK_ROUTE = '/app/tanks.apk';
+const APK_MIME = 'application/vnd.android.package-archive';
+
+// Установочный файл Android-приложения лежит вне dist и меняется редко, но без кэша: телефон должен получать свежий.
+export function serveApk(apkPath: string, request: IncomingMessage, response: ServerResponse): boolean {
+  if (!existsSync(apkPath) || !statSync(apkPath).isFile()) {
+    return false;
+  }
+  response.writeHead(200, {
+    'Content-Type': APK_MIME,
+    'Content-Length': statSync(apkPath).size,
+    'Content-Disposition': 'attachment; filename="tanks.apk"',
+    'Cache-Control': 'no-cache',
+  });
+  if (request.method === 'HEAD') {
+    response.end();
+    return true;
+  }
+  createReadStream(apkPath).pipe(response);
+  return true;
+}
+
 // Раздаёт собранный клиент: файлы из dist как есть, маршруты приложения — index.html.
 export function serveStatic(root: string, request: IncomingMessage, response: ServerResponse): boolean {
   const url = new URL(request.url ?? '/', 'http://localhost');

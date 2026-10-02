@@ -5,3 +5,5 @@ package-lock.json
 *.md
 .cursor
 packages/shared/test/determinism/fixtures.json
+packages/mobile/android
+packages/mobile/ios

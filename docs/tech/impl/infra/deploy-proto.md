@@ -7,9 +7,10 @@
 | `setup.sh` | Первичная настройка машины от root: Node 22, Caddy, пользователь `tanks`, клон репозитория в `/opt/tanks`, systemd-юнит, первая выкладка. Параметр `TANKS_HOST` — имя для сертификата |
 | `deploy-local.sh` | На машине: `git reset --hard origin/main`, `npm ci`, `npm run build`, `systemctl restart tanks`, проверка `/healthz` |
 | `deploy.sh user@host` | С рабочей машины: запускает `deploy-local.sh` по SSH ключом `~/.ssh/tanks_probe_ed25519` |
-| `tanks.service` | systemd: `node packages/server/dist/main.js`, порт 8080, статика из `packages/client/dist`, автоперезапуск |
+| `tanks.service` | systemd: `node packages/server/dist/main.js`, порт 8080, статика из `packages/client/dist`, APK из `/opt/tanks-files/tanks.apk`, автоперезапуск. `deploy-local.sh` переустанавливает юнит при каждой выкладке |
 | `Caddyfile` | HTTPS на `TANKS_HOST`, сжатие, проксирование на 8080 (включая WebSocket) |
+| `android/` | Сборка и загрузка Android-приложения — [android-app.md](android-app.md) |
 
 Выкладка берёт код только из `origin/main` на GitHub: сначала коммит и пуш, потом `deploy/deploy.sh root@172.232.212.157`. Перезапуск рвёт активные дуэли.
 
-Логи: `journalctl -u tanks`, `journalctl -u caddy`. Эхо-сервер для замеров задержки остался на порту 8081 (`/opt/echo/`).
+Логи: `journalctl -u tanks`, `journalctl -u caddy`.

@@ -82,6 +82,33 @@ describe('HTTP', () => {
   it('не принимает WebSocket на чужом пути', async () => {
     await expect(TestClient.connect(port, '/other')).rejects.toThrow();
   });
+
+  it('отдаёт APK приложения по /app/tanks.apk, пока файл есть', async () => {
+    await app.close();
+    const apkPath = join(staticRoot, 'tanks.apk');
+    writeFileSync(apkPath, 'PK-apk');
+    app = createApp({ staticRoot, apkPath, room: FAST_ROOM });
+    port = await app.listen(0, '127.0.0.1');
+    const base = `http://127.0.0.1:${String(port)}`;
+
+    const response = await fetch(`${base}/app/tanks.apk`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/vnd.android.package-archive');
+    expect(response.headers.get('content-disposition')).toContain('tanks.apk');
+    expect(response.headers.get('cache-control')).toBe('no-cache');
+    expect(await response.text()).toBe('PK-apk');
+
+    const head = await fetch(`${base}/app/tanks.apk`, { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    expect(head.headers.get('content-length')).toBe('6');
+
+    rmSync(apkPath);
+    expect((await fetch(`${base}/app/tanks.apk`)).status).toBe(404);
+  });
+
+  it('без настроенного APK маршрут /app/tanks.apk отвечает 404', async () => {
+    expect((await fetch(`http://127.0.0.1:${String(port)}/app/tanks.apk`)).status).toBe(404);
+  });
 });
 
 describe('вход в комнату', () => {
