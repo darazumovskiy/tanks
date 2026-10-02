@@ -1,8 +1,3 @@
-// Логический кадр 1920×1080: поле 1600×900 со смещением, сверху — панели игроков.
-export const VIEW_W = 1920;
-export const VIEW_H = 1080;
-export const OX = 160;
-export const OY = 170;
 export const HEAD_FONT = '"Russo One", "Arial Black", sans-serif';
 export const BODY_FONT = '"Inter", "Segoe UI", system-ui, sans-serif';
 export const SIDE_COLORS: readonly [string, string] = ['#e8825a', '#4fc3c9'];

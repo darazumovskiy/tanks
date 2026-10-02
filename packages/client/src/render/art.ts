@@ -6,9 +6,13 @@ export interface TankArt {
   turret: HTMLImageElement;
 }
 
-// Вид сверху, носом вправо, 64×64, центр вращения (32, 32) — тот же контракт, что у ботов tank-arena.
+// Вид сверху, носом вправо, сетка 64×64, центр вращения (32, 32) — тот же контракт, что у ботов tank-arena.
+// Растр заготавливается крупным: камера приближает танк, и при 64 px он бы мылился.
+const SPRITE_RASTER_PX = 256;
+const SVG_ROOT = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="${String(SPRITE_RASTER_PX)}" height="${String(SPRITE_RASTER_PX)}">`;
+
 function bodySvg(color: string, dark: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  return `${SVG_ROOT}
   <rect x="6" y="8" width="52" height="11" rx="3" fill="#24262b"/>
   <rect x="6" y="45" width="52" height="11" rx="3" fill="#24262b"/>
   <g stroke="#3b3e45" stroke-width="2">
@@ -22,7 +26,7 @@ function bodySvg(color: string, dark: string): string {
 }
 
 function turretSvg(color: string, dark: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  return `${SVG_ROOT}
   <rect x="32" y="29" width="30" height="6" rx="1.5" fill="#55585f" stroke="#2c2e33" stroke-width="1.5"/>
   <rect x="56" y="27.5" width="7" height="9" rx="1.5" fill="#3a3c42"/>
   <circle cx="32" cy="32" r="12" fill="${color}" stroke="${dark}" stroke-width="2"/>

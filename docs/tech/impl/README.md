@@ -10,5 +10,6 @@
 | [backend/duel-server.md](backend/duel-server.md) | Сервер дуэли: комнаты, фазы, тик, тесты |
 | [frontend/duel-client.md](frontend/duel-client.md) | Клиент дуэли: предсказание, интерполяция, ввод, рендер, HUD |
 | [frontend/touch-controls.md](frontend/touch-controls.md) | Сенсорное управление: два плавающих стика, перевод в действие, план тестирования |
+| [frontend/mobile-screen.md](frontend/mobile-screen.md) | Экран боя под телефон: камера за танком, панели в экранных координатах, стрелка на противника, резкость |
 | [infra/deploy-proto.md](infra/deploy-proto.md) | Выкладка пробы на машину в Милане: Caddy, systemd, скрипты |
 | [infra/android-app.md](infra/android-app.md) | Android-приложение: оболочка Capacitor, сборка APK в Docker, раздача по QR |

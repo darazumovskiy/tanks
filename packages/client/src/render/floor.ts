@@ -3,6 +3,9 @@ import { makeCanvas, seededRandom } from './view.js';
 
 const cache = new Map<number, HTMLCanvasElement>();
 
+// Пол заготавливается с запасом по разрешению: камера приближает поле, и в единичном масштабе он бы мылился.
+export const FLOOR_SCALE = 2;
+
 // Пол карты рисуется один раз: текстура, сетка, площадки появления, стены с тенью, фаской и полосой.
 export function floorFor(mapIndex: number): HTMLCanvasElement {
   const cached = cache.get(mapIndex);
@@ -10,7 +13,8 @@ export function floorFor(mapIndex: number): HTMLCanvasElement {
     return cached;
   }
   const map = mapByIndex(mapIndex);
-  const { canvas, ctx: g } = makeCanvas(ARENA.width, ARENA.height);
+  const { canvas, ctx: g } = makeCanvas(ARENA.width * FLOOR_SCALE, ARENA.height * FLOOR_SCALE);
+  g.scale(FLOOR_SCALE, FLOOR_SCALE);
   const background = g.createRadialGradient(800, 450, 80, 800, 450, 950);
   background.addColorStop(0, '#262a30');
   background.addColorStop(1, '#131519');

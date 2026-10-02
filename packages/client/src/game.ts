@@ -177,7 +177,8 @@ export class Game {
 
     const prediction = this.prediction;
     const roundStart = this.roundStart;
-    if (prediction === null || roundStart === null) {
+    const side = this.side;
+    if (prediction === null || roundStart === null || side === null) {
       return;
     }
 
@@ -198,6 +199,7 @@ export class Game {
         names: this.names(),
         score: roundStart.score,
         roundIndex: roundStart.roundIndex,
+        mySide: side,
         rttMs: this.net.rttMs,
         serverTick: this.net.serverTick,
         pending: prediction.pendingCount,
