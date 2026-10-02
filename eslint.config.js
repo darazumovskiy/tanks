@@ -29,6 +29,7 @@ export default tseslint.config(
       '@typescript-eslint/naming-convention': [
         'error',
         { selector: 'variableLike', format: ['camelCase', 'UPPER_CASE'], leadingUnderscore: 'allow' },
+        { selector: 'variable', modifiers: ['const', 'exported'], format: ['camelCase', 'UPPER_CASE', 'PascalCase'] },
         { selector: 'typeLike', format: ['PascalCase'] },
         { selector: 'variable', types: ['boolean'], format: ['PascalCase'], prefix: ['is', 'has', 'can', 'should'] },
       ],

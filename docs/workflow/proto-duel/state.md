@@ -22,11 +22,12 @@
 
 ## Сделано
 
-- Шаг 1: git инициализирован, remote `origin` → GitHub; монорепа `packages/{shared,server,client}`, TypeScript strict, Vitest 5, ESLint (strict + stylistic type-checked), Prettier, Vite 7, `ws`. Typecheck, тесты, lint, сборка — зелёные. Коммита нет.
+- Шаг 1: git инициализирован, remote `origin` → GitHub; монорепа `packages/{shared,server,client}`, TypeScript strict, Vitest 5, ESLint (strict + stylistic type-checked), Prettier, Vite 7, `ws`. Коммит `c70cb9d`.
+- Шаг 2: движок в `packages/shared/src/engine/` (`constants`, `stats`, `geometry`, `maps`, `round`, `view`), правила без изменений, поля переименованы под код-стайл (`isAlive`, `hasBounced`, `isFiring`). Эталон — `test/determinism/`: генератор гоняет оригинальный `engine.js` по шести сценариям (четыре карты, бой без стрельбы с зоной, бой с редкой стрельбой), хеш состояния на каждом тике; тест повторяет сценарии на новом движке — 9459 тиков совпали побитово. Перегенерация эталона: `node packages/shared/test/determinism/generate.mjs ../tank-arena/kit/arena/engine.js`. Коммит `49ace04`.
 
 ## Следующий шаг
 
-Шаг 2: перенос движка в `packages/shared/src/engine/` с тестом детерминизма против прогонов `tank-arena`.
+Шаг 3: протокол в `packages/shared/src/protocol/` — схема сообщений, бинарный кодек, тесты туда-обратно.
 
 ## Блокеры и открытые вопросы
 
