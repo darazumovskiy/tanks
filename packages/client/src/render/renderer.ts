@@ -4,6 +4,8 @@ import { drawTankSprite, loadTankArt, type TankArt } from './art.js';
 import type { Effects } from './effects.js';
 import { floorFor } from './floor.js';
 import { BODY_FONT, HEAD_FONT, OX, OY, SIDE_COLORS, VIEW_H, VIEW_W, clamp, easeOut, rgba } from './view.js';
+import { stickMagnitude } from '../steering.js';
+import { FIRE_RING, STICK_RADIUS_PX, type StickState } from '../touch.js';
 
 export interface HudInfo {
   names: [string, string];
@@ -15,7 +17,15 @@ export interface HudInfo {
   correctionPx: number;
   fps: number;
   isMuted: boolean;
+  sticks: readonly StickState[];
 }
+
+const STICK_KNOB_RATIO = 0.42;
+const STICK_BASE_COLOR = 'rgba(244,241,232,0.18)';
+const STICK_EDGE_COLOR = 'rgba(244,241,232,0.45)';
+const STICK_KNOB_COLOR = 'rgba(244,241,232,0.75)';
+const FIRE_RING_IDLE_COLOR = 'rgba(232,130,90,0.35)';
+const FIRE_RING_ACTIVE_COLOR = 'rgba(232,130,90,0.95)';
 
 export type Overlay =
   | { kind: 'countdown'; elapsedS: number; totalS: number }
@@ -31,6 +41,7 @@ export class Renderer {
   private scale = 1;
   private offsetX = 0;
   private offsetY = 0;
+  private pixelRatio = 1;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -57,6 +68,7 @@ export class Renderer {
 
   private resize(): void {
     const ratio = Math.min(window.devicePixelRatio, 2);
+    this.pixelRatio = ratio;
     this.canvas.width = Math.round(window.innerWidth * ratio);
     this.canvas.height = Math.round(window.innerHeight * ratio);
     this.scale = Math.min(this.canvas.width / VIEW_W, this.canvas.height / VIEW_H);
@@ -86,6 +98,43 @@ export class Renderer {
       ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     }
     this.drawDebug(hud);
+    this.drawSticks(hud.sticks);
+  }
+
+  // Стики живут в CSS-пикселях окна, поэтому рисуются поверх кадра без масштаба поля.
+  private drawSticks(sticks: readonly StickState[]): void {
+    const { ctx } = this;
+    ctx.save();
+    ctx.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
+    ctx.lineWidth = 2;
+    for (const stick of sticks) {
+      ctx.fillStyle = STICK_BASE_COLOR;
+      ctx.strokeStyle = STICK_EDGE_COLOR;
+      ctx.beginPath();
+      ctx.arc(stick.baseX, stick.baseY, STICK_RADIUS_PX, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      if (stick.role === 'aim') {
+        const isFiring = stickMagnitude(stick) >= FIRE_RING;
+        ctx.strokeStyle = isFiring ? FIRE_RING_ACTIVE_COLOR : FIRE_RING_IDLE_COLOR;
+        ctx.lineWidth = isFiring ? 4 : 2;
+        ctx.beginPath();
+        ctx.arc(stick.baseX, stick.baseY, STICK_RADIUS_PX * FIRE_RING, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.lineWidth = 2;
+      }
+      ctx.fillStyle = STICK_KNOB_COLOR;
+      ctx.beginPath();
+      ctx.arc(
+        stick.baseX + stick.dx * STICK_RADIUS_PX,
+        stick.baseY + stick.dy * STICK_RADIUS_PX,
+        STICK_RADIUS_PX * STICK_KNOB_RATIO,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   private drawArena(view: WorldView, hud: HudInfo): void {

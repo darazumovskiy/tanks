@@ -1,20 +1,32 @@
-import { DT, normalizeAngle, TURRET_RATE, type Action } from '@tanks/shared/engine';
+import type { Action } from '@tanks/shared/engine';
+import { aimTurret, isStickActive, steerHull } from './steering.js';
+import { TouchSticks, type StickState } from './touch.js';
 
 export interface Viewport {
   toWorld(clientX: number, clientY: number): { x: number; y: number };
 }
 
-// Клавиатура — корпус, мышь — башня и выстрел. Башня получает скорость поворота, которая за один тик
-// доведёт её до курсора, но не быстрее предела движка.
+export interface SteeredTank {
+  x: number;
+  y: number;
+  heading: number;
+  turret: number;
+  stats: { turnRate: number };
+}
+
+// Клавиатура — корпус, мышь — башня и выстрел; активный стик касания замещает свой источник.
 export class InputReader {
   private readonly keys = new Set<string>();
+  private readonly sticks: TouchSticks;
   private mouse: { x: number; y: number } | null = null;
   private isMouseDown = false;
+  private isReversing = false;
 
   constructor(
-    private readonly target: HTMLElement,
+    target: HTMLElement,
     private readonly viewport: Viewport,
   ) {
+    this.sticks = new TouchSticks(target);
     window.addEventListener('keydown', (event) => {
       if (event.repeat) {
         return;
@@ -31,16 +43,18 @@ export class InputReader {
       this.keys.clear();
       this.isMouseDown = false;
     });
-    target.addEventListener('mousemove', (event) => {
-      this.mouse = this.viewport.toWorld(event.clientX, event.clientY);
+    target.addEventListener('pointermove', (event) => {
+      if (event.pointerType === 'mouse') {
+        this.mouse = this.viewport.toWorld(event.clientX, event.clientY);
+      }
     });
-    target.addEventListener('mousedown', (event) => {
-      if (event.button === 0) {
+    target.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse' && event.button === 0) {
         this.isMouseDown = true;
       }
     });
-    window.addEventListener('mouseup', (event) => {
-      if (event.button === 0) {
+    window.addEventListener('pointerup', (event) => {
+      if (event.pointerType === 'mouse' && event.button === 0) {
         this.isMouseDown = false;
       }
     });
@@ -49,19 +63,43 @@ export class InputReader {
     });
   }
 
-  read(me: { x: number; y: number; turret: number }): Action {
+  get stickStates(): StickState[] {
+    return this.sticks.states;
+  }
+
+  read(me: SteeredTank): Action {
+    const hull = this.readHull(me);
+    const hasTapFire = this.sticks.takeTapFire();
+    const isFiring = this.isMouseDown || this.keys.has('Space') || this.sticks.isFiringByStick || hasTapFire;
+    return { throttle: hull.throttle, turn: hull.turn, turretTurn: this.readTurretTurn(me), isFiring };
+  }
+
+  private readHull(me: SteeredTank): { throttle: number; turn: number } {
+    const stick = this.sticks.stick('move');
+    if (stick !== null) {
+      const steering = steerHull(stick, me.heading, me.stats.turnRate, this.isReversing);
+      this.isReversing = steering.isReversing;
+      return steering;
+    }
+    this.isReversing = false;
     const isForward = this.keys.has('KeyW') || this.keys.has('ArrowUp');
     const isBack = this.keys.has('KeyS') || this.keys.has('ArrowDown');
     const isLeft = this.keys.has('KeyA') || this.keys.has('ArrowLeft');
     const isRight = this.keys.has('KeyD') || this.keys.has('ArrowRight');
-    const throttle = (isForward ? 1 : 0) - (isBack ? 1 : 0);
-    const turn = (isRight ? 1 : 0) - (isLeft ? 1 : 0);
-    let turretTurn = 0;
-    if (this.mouse !== null) {
-      const wanted = Math.atan2(this.mouse.y - me.y, this.mouse.x - me.x);
-      const diff = normalizeAngle(wanted - me.turret);
-      turretTurn = Math.max(-1, Math.min(1, diff / (TURRET_RATE * DT)));
+    return { throttle: (isForward ? 1 : 0) - (isBack ? 1 : 0), turn: (isRight ? 1 : 0) - (isLeft ? 1 : 0) };
+  }
+
+  private readTurretTurn(me: SteeredTank): number {
+    const stick = this.sticks.stick('aim');
+    if (stick !== null) {
+      if (!isStickActive(stick)) {
+        return 0;
+      }
+      return aimTurret(Math.atan2(stick.dy, stick.dx), me.turret);
     }
-    return { throttle, turn, turretTurn, isFiring: this.isMouseDown || this.keys.has('Space') };
+    if (this.mouse === null) {
+      return 0;
+    }
+    return aimTurret(Math.atan2(this.mouse.y - me.y, this.mouse.x - me.x), me.turret);
   }
 }

@@ -43,12 +43,23 @@ function showHome(): void {
   });
 }
 
+// Подсказка «поверни телефон» — только на устройствах с касанием и только в портрете.
+function bindRotateHint(hint: HTMLElement): void {
+  const portraitTouch = matchMedia('(orientation: portrait) and (pointer: coarse)');
+  const apply = (): void => {
+    hint.hidden = !portraitTouch.matches;
+  };
+  portraitTouch.addEventListener('change', apply);
+  apply();
+}
+
 function startDuel(roomCode: string): void {
   const nickname = localStorage.getItem(NICKNAME_KEY) ?? '';
   const stats = parseStats(localStorage.getItem(STATS_KEY));
   const canvas = byId('stage', HTMLCanvasElement);
   canvas.hidden = false;
   const game = new Game({ roomCode, nickname, stats, canvas, overlay: byId('overlay', HTMLElement) });
+  bindRotateHint(byId('rotate', HTMLElement));
   // Точка доступа для сквозных тестов и отладки из консоли браузера.
   Object.assign(window, { tanksGame: game });
   window.addEventListener('beforeunload', () => {

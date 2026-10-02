@@ -204,6 +204,7 @@ export class Game {
         correctionPx: prediction.lastCorrectionPx,
         fps: this.fps,
         isMuted: this.sfx.isMuted,
+        sticks: this.input.stickStates,
       },
       this.overlayFor(now, prediction, roundStart),
     );

@@ -2,14 +2,35 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['packages/*/src/**/*.test.ts', 'packages/*/test/**/*.test.ts'],
+    projects: [
+      {
+        test: {
+          name: 'node',
+          include: ['packages/{shared,server}/src/**/*.test.ts', 'packages/{shared,server}/test/**/*.test.ts'],
+        },
+      },
+      {
+        test: {
+          name: 'client',
+          include: ['packages/client/src/**/*.test.ts'],
+          environment: 'happy-dom',
+        },
+      },
+    ],
     coverage: {
       provider: 'v8',
-      include: ['packages/server/src/**/*.ts', 'packages/shared/src/protocol/**/*.ts'],
+      include: [
+        'packages/server/src/**/*.ts',
+        'packages/shared/src/protocol/**/*.ts',
+        'packages/client/src/steering.ts',
+        'packages/client/src/touch.ts',
+        'packages/client/src/input.ts',
+      ],
       exclude: ['**/*.test.ts', 'packages/server/src/main.ts'],
       thresholds: {
         'packages/server/src/**': { statements: 90, branches: 78, functions: 90, lines: 90 },
         'packages/shared/src/protocol/**': { statements: 95, branches: 85, functions: 95, lines: 95 },
+        'packages/client/src/{steering,touch,input}.ts': { statements: 95, branches: 90, functions: 95, lines: 95 },
       },
     },
   },
