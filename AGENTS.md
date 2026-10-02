@@ -33,6 +33,8 @@
 
 Команды из корня: `npm test` (Vitest), `npm run test:coverage` (с порогами), `npm run lint` (ESLint + Prettier), `npm run typecheck`, `npm run build`. Тесты лежат рядом с кодом (`*.test.ts`) или в `packages/*/test/`. Перед финализацией любого шага — все команды зелёные.
 
+**Определение готовности** (ADR `tests.md`): план тестирования с крайними случаями написан до кода и исполнен; всё видимое игроку агент проверил сам в браузере двумя клиентами (chrome-devtools MCP, `window.tanksGame.debugState()` на странице боя). Без этого о готовности не сообщать.
+
 Локальный запуск: `npm run build && PORT=8080 STATIC_ROOT=$PWD/packages/client/dist node packages/server/dist/main.js`, открыть `http://localhost:8080/`. Разработка клиента — `npm run dev -w @tanks/client` (Vite проксирует `/ws` на 8080).
 
 Боевая проба: `https://172-232-212-157.sslip.io` (Akamai, Милан). Выкладка — `deploy/deploy.sh root@172.232.212.157` после пуша в `main`; подробности — [docs/tech/impl/infra/deploy-proto.md](docs/tech/impl/infra/deploy-proto.md).
