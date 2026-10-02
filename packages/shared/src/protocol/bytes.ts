@@ -71,9 +71,16 @@ export class ByteWriter {
     return this.u8(value ? 1 : 0);
   }
 
-  // Строка до 255 байт UTF-8; длиннее — обрезается по байтам, что допустимо только для имён и кодов.
+  // Строка до 255 байт UTF-8; длиннее — обрезается по границе символа, что допустимо только для имён и кодов.
   string(value: string): this {
-    const bytes = textEncoder.encode(value).subarray(0, 255);
+    let bytes = textEncoder.encode(value);
+    if (bytes.length > 255) {
+      let cut = 255;
+      while (cut > 0 && ((bytes[cut] ?? 0) & 0xc0) === 0x80) {
+        cut--;
+      }
+      bytes = bytes.subarray(0, cut);
+    }
     this.u8(bytes.length);
     this.ensure(bytes.length);
     new Uint8Array(this.buffer, this.offset, bytes.length).set(bytes);

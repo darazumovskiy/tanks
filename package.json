@@ -11,14 +11,16 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
-    "typecheck": "tsc -b packages/shared packages/server packages/client && tsc -p packages/shared/test"
+    "typecheck": "tsc -b packages/shared packages/server packages/client && tsc -p packages/shared/test && tsc -p packages/server/test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
     "@types/node": "^22.20.5",
+    "@vitest/coverage-v8": "^5.0.3",
     "eslint": "^9.39.0",
     "globals": "^17.13.0",
     "prettier": "^3.6.2",

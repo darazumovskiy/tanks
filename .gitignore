@@ -6,3 +6,4 @@ dist-types/
 .env
 .env.*
 coverage/
+coverage/

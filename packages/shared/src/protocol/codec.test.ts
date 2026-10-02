@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_STATS } from '../engine/index.js';
 import { decode, encode, quantizeAction } from './codec.js';
 import { ErrorCode, MESSAGE_TYPE_NAMES, MessageType, type Message, type SnapshotMessage } from './messages.js';
 
@@ -116,5 +117,59 @@ describe('кодек протокола', () => {
   it('отвергает неизвестный тип и обрывок', () => {
     expect(() => decode(new Uint8Array([200]))).toThrow(RangeError);
     expect(() => decode(encode(snapshot).subarray(0, 20))).toThrow(RangeError);
+  });
+
+  it('отвергает испорченные значения полей', () => {
+    const welcome = encode({ type: MessageType.Welcome, side: 0, roomCode: 'x' });
+    welcome[1] = 7;
+    expect(() => decode(welcome)).toThrow(RangeError);
+
+    const error = encode({ type: MessageType.Error, code: ErrorCode.BadMessage, text: 'x' });
+    error[1] = 99;
+    expect(() => decode(error)).toThrow(RangeError);
+
+    const badWinner = encode(snapshot);
+    badWinner[10] = 7;
+    expect(() => decode(badWinner)).toThrow(RangeError);
+
+    const badReason = encode(snapshot);
+    badReason[11] = 9;
+    expect(() => decode(badReason)).toThrow(RangeError);
+
+    const badBulletOwner = encode({ ...snapshot, kits: [], events: [] });
+    badBulletOwner[1 + 4 + 4 + 1 + 1 + 1 + 8 + 2 * 57 + 2 + 4] = 5;
+    expect(() => decode(badBulletOwner)).toThrow(RangeError);
+
+    const badEventKind = encode({ ...snapshot, bullets: [], kits: [] });
+    badEventKind[1 + 4 + 4 + 1 + 1 + 1 + 8 + 2 * 57 + 2 + 1 + 1] = 200;
+    expect(() => decode(badEventKind)).toThrow(RangeError);
+  });
+
+  it('длинные строки обрезаются до 255 байт, большие сообщения растят буфер', () => {
+    const longName = 'я'.repeat(300);
+    const decoded = decode(
+      encode({ type: MessageType.Join, protocolVersion: 1, roomCode: 'r', nickname: longName, stats: DEFAULT_STATS }),
+    );
+    expect(decoded.type).toBe(MessageType.Join);
+    if (decoded.type === MessageType.Join) {
+      expect(new TextEncoder().encode(decoded.nickname).byteLength).toBeLessThanOrEqual(255);
+      expect(decoded.nickname.length).toBeGreaterThan(100);
+    }
+
+    const template = snapshot.bullets[0] ?? {
+      id: 0,
+      owner: 0,
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      bouncesLeft: 0,
+      hasBounced: false,
+      age: 0,
+    };
+    const bullets = Array.from({ length: 300 }, (_, index) => ({ ...template, id: index }));
+    const big = decode(encode({ ...snapshot, bullets, events: [] })) as SnapshotMessage;
+    expect(big.bullets).toHaveLength(300);
+    expect(big.bullets[299]?.id).toBe(299);
   });
 });
