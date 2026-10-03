@@ -27,11 +27,20 @@ describe('SettingsPanel', () => {
     return input;
   };
 
-  it('кнопка открывает и закрывает панель', () => {
-    toggle.click();
+  const press = (): void => {
+    toggle.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 7, pointerType: 'touch', isPrimary: false }));
+  };
+
+  it('касание кнопки открывает и закрывает панель, даже если палец не главный', () => {
+    press();
     expect(root.hidden).toBe(false);
-    toggle.click();
+    press();
     expect(root.hidden).toBe(true);
+  });
+
+  it('клавиша Enter на кнопке тоже переключает', () => {
+    toggle.dispatchEvent(new KeyboardEvent('keydown', { code: 'Enter' }));
+    expect(root.hidden).toBe(false);
   });
 
   it('ползунки показывают текущие значения и меняют хранилище сразу', () => {
@@ -65,7 +74,7 @@ describe('SettingsPanel', () => {
 
   it('открытие панели подтягивает значения, изменённые вне её', () => {
     store.setNumber('minViewPercent', 50);
-    toggle.click();
+    press();
     expect(rangeFor('minViewPercent').value).toBe('50');
   });
 });

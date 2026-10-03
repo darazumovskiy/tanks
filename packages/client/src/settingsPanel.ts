@@ -36,8 +36,16 @@ export class SettingsPanel {
       this.refresh();
     });
     root.append(reset);
-    toggle.addEventListener('click', () => {
+    // Второй палец при зажатом стике не рождает click — слушаем само касание.
+    toggle.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
       this.toggle();
+    });
+    toggle.addEventListener('keydown', (event) => {
+      if (event.code === 'Enter' || event.code === 'Space') {
+        event.preventDefault();
+        this.toggle();
+      }
     });
     this.refresh();
   }
