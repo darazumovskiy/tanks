@@ -25,9 +25,9 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = {
   stickRadiusPx: 40,
   deadZone: 0.07,
   fireRing: 0.89,
-  minViewPercent: 65,
-  cameraLagMs: 120,
-  zoomLagMs: 900,
+  minViewPercent: 75,
+  cameraLagMs: 300,
+  zoomLagMs: 600,
   showFrameGraph: false,
 };
 
@@ -37,9 +37,9 @@ export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
   { key: 'fireRing', label: 'Кольцо огня', hint: 'доля радиуса, с которой стреляет', min: 0.5, max: 1, step: 0.01 },
   {
     key: 'minViewPercent',
-    label: 'Приближение',
-    hint: 'ближе камера не подъезжает: минимум % высоты поля в кадре (только телефон)',
-    min: 40,
+    label: 'Максимальное приближение',
+    hint: '% высоты поля в кадре при самом близком подъезде камеры; больше — дальше (только телефон)',
+    min: 50,
     max: 100,
     step: 5,
   },
