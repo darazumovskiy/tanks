@@ -10,95 +10,25 @@ import {
   type Point,
 } from './camera.js';
 
-// Коробка противника на ближнем уровне; на дальнем достаточно, чтобы он был в окне с небольшим запасом.
+// Коробка противника на ближнем уровне; на дальних достаточно, чтобы он был в окне с небольшим запасом.
 export const ENEMY_AREA = { left: 0.1, right: 0.9, top: 0.14, bottom: 0.7 };
-export const ENEMY_FAR_MARGIN = 0.04;
-// Гистерезис уровня: отдаление — когда пара перестала помещаться, приближение — когда помещается с запасом
-// и это держится долго: приближение заметнее отдаления, его нельзя делать на каждый манёвр.
+const ENEMY_FAR_MARGIN = 0.04;
+// Гистерезис уровня: выше — когда пара перестала помещаться, ниже — когда помещается с запасом и это
+// держится долго: приближение заметнее отдаления, его нельзя делать на каждый манёвр. В полосе между
+// порогами выдержка не копится и не сбрасывается.
 export const ZOOM_OUT_RATIO = 1;
 export const ZOOM_IN_RATIO = 0.85;
 export const ZOOM_OUT_DWELL_MS = 150;
 export const ZOOM_IN_DWELL_MS = 1500;
-
-export type Level = 'near' | 'far';
+// Дальние уровни: всё поле и полтора поля — второй нужен, когда я у нижней стенки, а противник высоко:
+// в окне высотой с поле он не помещается над моим танком, прижатым к верхней половине экрана.
+export const FAR_HEIGHTS: readonly number[] = [ARENA.height, ARENA.height * 1.5];
 
 export interface ScreenArea {
   left: number;
   right: number;
   top: number;
   bottom: number;
-}
-
-// Два уровня масштаба с гистерезисом и выдержкой. Без противника уровень не меняется; после сброса выбирается
-// сразу по текущему разносу.
-export class ZoomLevels {
-  private level: Level | null = null;
-  private pendingLevel: Level | null = null;
-  private pendingMs = 0;
-
-  reset(): void {
-    this.level = null;
-    this.pendingLevel = null;
-    this.pendingMs = 0;
-  }
-
-  next(ratio: number | null, dtMs: number): Level {
-    this.level = this.resolve(ratio, dtMs);
-    return this.level;
-  }
-
-  // Уровень по положению танков. Ближний уровень не меньше поля (обзор 100 %) — уровень один, дальний.
-  nextFor(me: Point, enemy: Point | null, near: number, aspect: number, dtMs: number): Level {
-    if (near >= ARENA.height) {
-      return 'far';
-    }
-    return this.next(enemy === null ? null : fitRatio(me, enemy, near, aspect), dtMs);
-  }
-
-  private resolve(ratio: number | null, dtMs: number): Level {
-    if (ratio === null) {
-      return this.level ?? 'far';
-    }
-    if (this.level === null) {
-      return ratio <= ZOOM_OUT_RATIO ? 'near' : 'far';
-    }
-    const desired = desiredLevel(this.level, ratio);
-    if (desired === this.level) {
-      this.pendingLevel = null;
-      this.pendingMs = 0;
-      return this.level;
-    }
-    if (this.pendingLevel !== desired) {
-      this.pendingLevel = desired;
-      this.pendingMs = 0;
-    }
-    this.pendingMs += dtMs;
-    const dwell = desired === 'far' ? ZOOM_OUT_DWELL_MS : ZOOM_IN_DWELL_MS;
-    if (this.pendingMs < dwell) {
-      return this.level;
-    }
-    this.pendingLevel = null;
-    this.pendingMs = 0;
-    return desired;
-  }
-}
-
-function desiredLevel(current: Level, ratio: number): Level {
-  if (current === 'near') {
-    return ratio > ZOOM_OUT_RATIO ? 'far' : 'near';
-  }
-  return ratio < ZOOM_IN_RATIO ? 'near' : 'far';
-}
-
-// Во сколько раз разнос пары превышает то, что помещается на ближнем уровне при соблюдении коробок
-// обоих танков: по x — общая полоса, по y — зависит от того, кто выше (свой танк не ниже половины экрана).
-export function fitRatio(me: Point, enemy: Point, height: number, aspect: number): number {
-  const width = height * aspect;
-  const spanX = (ENEMY_AREA.right - TANK_AREA.left) * width;
-  const dy = enemy.y - me.y;
-  const spanY =
-    dy < 0 ? (TANK_AREA.bottomAtSides - ENEMY_AREA.top) * height : (ENEMY_AREA.bottom - TANK_AREA.top) * height;
-  return Math.max(Math.abs(enemy.x - me.x) / spanX, Math.abs(dy) / spanY);
 }
 
 export const FAR_ENEMY_AREA: ScreenArea = {
@@ -108,8 +38,123 @@ export const FAR_ENEMY_AREA: ScreenArea = {
   bottom: 1 - ENEMY_FAR_MARGIN,
 };
 
+export interface ZoomLevel {
+  height: number;
+  isFar: boolean;
+}
+
+// Лестница уровней снизу вверх: ближний (обзор) и дальние. Обзор не меньше поля — ближнего уровня нет.
+export function zoomLadder(near: number): ZoomLevel[] {
+  const far = FAR_HEIGHTS.map((height) => ({ height, isFar: true }));
+  if (near >= ARENA.height) {
+    return far;
+  }
+  return [{ height: near, isFar: false }, ...far];
+}
+
+export function enemyAreaOf(level: ZoomLevel): ScreenArea {
+  return level.isFar ? FAR_ENEMY_AREA : ENEMY_AREA;
+}
+
 export function isFarCamera(camera: Camera): boolean {
   return camera.height >= ARENA.height - 1;
+}
+
+// Во сколько раз разнос пары превышает то, что помещается на уровне при соблюдении коробок обоих танков:
+// по x — общая полоса, по y — зависит от того, кто выше; `meBottom` — нижняя граница своего танка там, где
+// он сейчас по горизонтали.
+export function fitRatio(me: Point, enemy: Point, level: ZoomLevel, aspect: number, meBottom: number): number {
+  const area = enemyAreaOf(level);
+  const width = level.height * aspect;
+  const spanX = (area.right - TANK_AREA.left) * width;
+  const dy = enemy.y - me.y;
+  const spanY = dy < 0 ? (meBottom - area.top) * level.height : (area.bottom - TANK_AREA.top) * level.height;
+  return Math.max(Math.abs(enemy.x - me.x) / spanX, Math.abs(dy) / spanY);
+}
+
+type Fit = (level: ZoomLevel) => number | null;
+
+// Положение на лестнице уровней с гистерезисом и выдержкой. Без противника уровень не меняется; после сброса
+// берётся самый близкий уровень, где пара помещается; при смене стратегии — уровень по унаследованной высоте.
+export class ZoomLevels {
+  private index: number | null = null;
+  private pendingIndex: number | null = null;
+  private pendingMs = 0;
+
+  reset(): void {
+    this.index = null;
+    this.pendingIndex = null;
+    this.pendingMs = 0;
+  }
+
+  adopt(height: number, ladder: readonly ZoomLevel[]): void {
+    let best = 0;
+    ladder.forEach((level, index) => {
+      const current = ladder[best];
+      if (current !== undefined && Math.abs(level.height - height) < Math.abs(current.height - height)) {
+        best = index;
+      }
+    });
+    this.index = best;
+    this.pendingIndex = null;
+    this.pendingMs = 0;
+  }
+
+  next(ladder: readonly ZoomLevel[], fit: Fit, dtMs: number): ZoomLevel {
+    this.index = this.resolve(ladder, fit, dtMs);
+    return ladder[this.index] ?? ladder[ladder.length - 1] ?? { height: ARENA.height, isFar: true };
+  }
+
+  // Вверх — на первый уровень, где пара помещается; не помещается нигде — дальше первого дальнего не уходим:
+  // отдаление без цели только мельчит картинку. Вниз — на самый близкий уровень, где помещается с запасом.
+  private resolve(ladder: readonly ZoomLevel[], fit: Fit, dtMs: number): number {
+    const last = ladder.length - 1;
+    const ratios = ladder.map((level) => fit(level));
+    const firstFar = Math.max(
+      0,
+      ladder.findIndex((level) => level.isFar),
+    );
+    const fitting = ratios.findIndex((ratio) => ratio !== null && ratio <= ZOOM_OUT_RATIO);
+    if (this.index === null) {
+      return fitting === -1 ? firstFar : fitting;
+    }
+    const index = Math.min(this.index, last);
+    const currentRatio = ratios[index];
+    if (currentRatio === null || currentRatio === undefined) {
+      return index;
+    }
+    const lowestWithMargin = ratios.findIndex((ratio) => ratio !== null && ratio < ZOOM_IN_RATIO);
+    let desired: number | null = null;
+    let isHolding = false;
+    if (currentRatio > ZOOM_OUT_RATIO) {
+      const upward = fitting > index ? fitting : Math.max(index, firstFar);
+      desired = upward === index ? null : upward;
+    } else if (lowestWithMargin !== -1 && lowestWithMargin < index) {
+      desired = lowestWithMargin;
+    } else if (fitting < index) {
+      isHolding = this.pendingIndex !== null && this.pendingIndex < index;
+    }
+    if (isHolding) {
+      return index;
+    }
+    if (desired === null) {
+      this.pendingIndex = null;
+      this.pendingMs = 0;
+      return index;
+    }
+    if (this.pendingIndex !== desired) {
+      this.pendingIndex = desired;
+      this.pendingMs = 0;
+    }
+    this.pendingMs += dtMs;
+    const dwell = desired > index ? ZOOM_OUT_DWELL_MS : ZOOM_IN_DWELL_MS;
+    if (this.pendingMs < dwell) {
+      return index;
+    }
+    this.pendingIndex = null;
+    this.pendingMs = 0;
+    return desired;
+  }
 }
 
 // Интервал начала окна по оси, при котором противник остаётся в заданной коробке; без противника — пусто.
@@ -124,11 +169,11 @@ export function enemyRange(value: number | undefined, size: number, min: number,
 export function farFieldWindow(
   me: Point,
   enemy: Point | null,
+  height: number,
   canvasWidth: number,
   canvasHeight: number,
   voidLimit: { x: number; y: number },
 ): Camera {
-  const height = ARENA.height;
   const width = height * (canvasWidth / canvasHeight);
   const x = resolveAxis((ARENA.width - width) / 2, [
     voidRange(width, ARENA.width, voidLimit.x * width),

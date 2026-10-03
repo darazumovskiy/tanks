@@ -13,7 +13,7 @@ import {
   type Camera,
   type Point,
 } from './camera.js';
-import { farFieldWindow, ZoomLevels, type Level } from './cameraLevels.js';
+import { farFieldWindow, fitRatio, zoomLadder, ZoomLevels, type ZoomLevel } from './cameraLevels.js';
 import type { CameraInput, CameraStrategy } from './cameraStrategy.js';
 
 // Точка покоя своего танка — выше середины: внизу живут стики.
@@ -53,15 +53,18 @@ export class FollowCamera implements CameraStrategy {
 
   adopt(camera: Camera): void {
     this.smoothed = camera;
+    this.levels?.adopt(camera.height, zoomLadder(this.nearHeight()));
   }
 
   update(input: CameraInput, dtMs: number): Camera {
-    const near = (ARENA.height * this.settings.minViewPercent) / 100;
+    const near = this.nearHeight();
     const aspect = input.canvasWidth / input.canvasHeight;
-    const isFar = this.nextLevel(input, near, aspect, dtMs) === 'far';
-    this.wanted = isFar
-      ? farFieldWindow(input.me, input.enemy, input.canvasWidth, input.canvasHeight, FOLLOW_VOID_LIMIT)
-      : this.nearWindow(input, near, aspect, dtMs);
+    // Упреждение живёт и на дальнем уровне, иначе после возврата камера поедет по устаревшему вектору.
+    this.lookAhead = this.nextLookAhead(input, near * aspect, near, dtMs);
+    const level = this.nextLevel(input, near, aspect, dtMs);
+    this.wanted = level.isFar
+      ? farFieldWindow(input.me, input.enemy, level.height, input.canvasWidth, input.canvasHeight, FOLLOW_VOID_LIMIT)
+      : this.nearWindow(input, near, aspect, true);
     const smoothed = smoothCamera(
       this.smoothed,
       this.wanted,
@@ -77,18 +80,30 @@ export class FollowCamera implements CameraStrategy {
     return this.smoothed;
   }
 
-  private nextLevel(input: CameraInput, near: number, aspect: number, dtMs: number): Level {
-    if (this.levels === null) {
-      return 'near';
-    }
-    return this.levels.nextFor(input.me, input.enemy, near, aspect, dtMs);
+  private nearHeight(): number {
+    return (ARENA.height * this.settings.minViewPercent) / 100;
   }
 
-  private nearWindow(input: CameraInput, height: number, aspect: number, dtMs: number): Camera {
+  private nextLevel(input: CameraInput, near: number, aspect: number, dtMs: number): ZoomLevel {
+    if (this.levels === null) {
+      return { height: near, isFar: false };
+    }
+    // Нижняя граница берётся из ближнего окна без мёртвой зоны: она не зависит от уровня, иначе уровень
+    // влиял бы на собственный выбор и качался.
+    const probe = this.nearWindow(input, near, aspect, false);
+    const meBottom = tankBottomLimit((input.me.x - probe.x) / probe.width);
+    return this.levels.next(
+      zoomLadder(near),
+      (candidate) => (input.enemy === null ? null : fitRatio(input.me, input.enemy, candidate, aspect, meBottom)),
+      dtMs,
+    );
+  }
+
+  private nearWindow(input: CameraInput, height: number, aspect: number, hasDeadZone: boolean): Camera {
     const width = height * aspect;
-    this.lookAhead = this.nextLookAhead(input, width, height, dtMs);
     const focus = { x: input.me.x + this.lookAhead.x, y: input.me.y + this.lookAhead.y };
-    const previous = this.wanted !== null && this.wanted.height === height ? this.wanted : null;
+    const isSameHeight = this.wanted !== null && this.wanted.height === height;
+    const previous = hasDeadZone && isSameHeight ? this.wanted : null;
     const idealX = this.idealStart(focus.x, width, REST.fx, DEAD_ZONE.fx, previous?.x);
     const idealY = this.idealStart(focus.y, height, REST.fy, DEAD_ZONE.fy, previous?.y);
     const x = resolveAxis(idealX, [

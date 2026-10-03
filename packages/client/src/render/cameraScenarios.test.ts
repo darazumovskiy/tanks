@@ -1,8 +1,8 @@
 import { ARENA } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, type Settings } from '../settings.js';
-import { TANK_AREA, type Camera, type Point } from './camera.js';
-import { ENEMY_AREA, fitRatio, ZOOM_IN_RATIO, ZOOM_OUT_RATIO } from './cameraLevels.js';
+import { TANK_AREA, tankBottomLimit, type Camera, type Point } from './camera.js';
+import { ENEMY_AREA, enemyAreaOf, fitRatio, zoomLadder, ZOOM_IN_RATIO, ZOOM_OUT_RATIO } from './cameraLevels.js';
 import {
   CAMERA_SCENARIOS,
   centerSpeedViolations,
@@ -233,8 +233,9 @@ function checkFollowInvariants(camera: Camera, settings: Readonly<Settings>): Vi
   return [];
 }
 
-// P1/P2 в статике: пара помещается с запасом — ближний уровень (в `pair` ещё и противник в своей коробке);
-// не помещается — дальний.
+// P1/P2 в статике: уровень — первый на лестнице, где пара помещается (не помещается нигде — первый дальний),
+// либо выше, если спуск заперт гистерезисом (отношение на уровне ниже ≥ 0,85); на уровне, где пара
+// помещается, противник в коробке этого уровня (на ближнем — только в `pair`).
 function checkLevelInvariants(
   camera: Camera,
   me: Point,
@@ -246,33 +247,49 @@ function checkLevelInvariants(
   if (enemy === null) {
     return [];
   }
-  const near = nearHeight(settings);
-  const ratio = fitRatio(me, enemy, near, screen.width / screen.height);
-  const violations: Violation[] = [];
-  if (ratio < ZOOM_IN_RATIO) {
-    if (Math.abs(camera.height - near) > 1) {
-      violations.push({
-        invariant: 'P1',
-        detail: `пара помещается (${ratio.toFixed(2)}), а высота ${camera.height.toFixed(0)}`,
-      });
+  const ladder = zoomLadder(nearHeight(settings));
+  const aspect = screen.width / screen.height;
+  const meBottom = tankBottomLimit(fractionOf(camera, me).fx);
+  const ratios = ladder.map((level) => fitRatio(me, enemy, level, aspect, meBottom));
+  const fitting = ratios.findIndex((ratio) => ratio <= ZOOM_OUT_RATIO);
+  const firstFar = Math.max(
+    0,
+    ladder.findIndex((level) => level.isFar),
+  );
+  const expectedIndex = fitting === -1 ? firstFar : fitting;
+  const acceptable = new Set<number>([expectedIndex]);
+  for (let index = expectedIndex + 1; index < ladder.length; index++) {
+    const below = ratios[index - 1];
+    if (below === undefined || below < ZOOM_IN_RATIO) {
+      break;
     }
-    const f = fractionOf(camera, enemy);
-    const isInside =
-      f.fx >= ENEMY_AREA.left - 1e-3 &&
-      f.fx <= ENEMY_AREA.right + 1e-3 &&
-      f.fy >= ENEMY_AREA.top - 1e-3 &&
-      f.fy <= ENEMY_AREA.bottom + 1e-3;
-    if (hasEnemyBox && !isInside) {
-      violations.push({
-        invariant: 'P1',
-        detail: `противник вне коробки: ${(f.fx * 100).toFixed(0)} % / ${(f.fy * 100).toFixed(0)} %`,
-      });
-    }
+    acceptable.add(index);
   }
-  if (ratio > ZOOM_OUT_RATIO && Math.abs(camera.height - ARENA.height) > 1) {
+  const actualIndex = ladder.findIndex((level) => Math.abs(level.height - camera.height) <= 1);
+  const violations: Violation[] = [];
+  if (!acceptable.has(actualIndex)) {
+    violations.push({
+      invariant: 'P1',
+      detail: `отношения ${ratios.map((r) => r.toFixed(2)).join('/')}, высота ${camera.height.toFixed(0)}`,
+    });
+    return violations;
+  }
+  const level = ladder[actualIndex];
+  const ratio = ratios[actualIndex];
+  if (level === undefined || ratio === undefined || ratio > ZOOM_OUT_RATIO) {
+    return violations;
+  }
+  if (!hasEnemyBox && !level.isFar) {
+    return violations;
+  }
+  const area = enemyAreaOf(level);
+  const f = fractionOf(camera, enemy);
+  const isInside =
+    f.fx >= area.left - 1e-3 && f.fx <= area.right + 1e-3 && f.fy >= area.top - 1e-3 && f.fy <= area.bottom + 1e-3;
+  if (!isInside) {
     violations.push({
       invariant: 'P2',
-      detail: `пара не помещается (${ratio.toFixed(2)}), а высота ${camera.height.toFixed(0)}`,
+      detail: `противник вне коробки уровня ${level.height.toFixed(0)}: ${(f.fx * 100).toFixed(0)} % / ${(f.fy * 100).toFixed(0)} %`,
     });
   }
   return violations;
@@ -332,6 +349,21 @@ describe('камера «За своим танком»: упреждение и
     }
     expect(fractionOf(withEnemy, me).fx).toBeLessThan(0.4);
     expect(Math.abs(fractionOf(alone, me).fx - 0.5)).toBeLessThanOrEqual(0.04 + 1e-3);
+  });
+
+  it('упреждение живёт на дальнем уровне: после возврата камера не едет сначала в старую сторону', () => {
+    const strategy = createCameraStrategy('followZoom', settings);
+    const me = { x: 800, y: 450 };
+    runTrajectory(strategy, [hold(me, { x: 1576, y: 450 }, 4000), hold(me, { x: 1576, y: 24 }, 4000)], screen);
+    const centers: number[] = [];
+    runTrajectory(strategy, [hold(me, { x: 400, y: 500 }, 4000)], screen, (camera) => {
+      centers.push(camera.x + camera.width / 2);
+    });
+    const start = centers[0];
+    if (start === undefined) {
+      throw new Error('нет кадров');
+    }
+    expect(Math.max(...centers)).toBeLessThanOrEqual(start + 10);
   });
 
   it('свой танк у нижней стенки: у бока — на половине экрана, в середине — на трёх четвертях', () => {
@@ -420,6 +452,46 @@ describe.each(['followZoom', 'pair'] as const)('камера %s: уровни м
         throw new Error('нет кадров');
       }
       expect(Math.abs(after.height - before.height)).toBeLessThan(1);
+    }
+  });
+
+  it('P3: в полосе гистерезиса выдержка приближения не сбрасывается — колебание 0,8/0,9 всё же приближает', () => {
+    const strategy = createCameraStrategy(mode, settings);
+    const steps: TrajectoryStep[] = [hold(me, enemyAt(1.3), 3000)];
+    for (let i = 0; i < 12; i++) {
+      steps.push(hold(me, enemyAt(0.8), 200), hold(me, enemyAt(0.9), 200));
+    }
+    steps.push(hold(me, enemyAt(0.9), 3000));
+    const settled = runTrajectory(strategy, steps, screen);
+    const last = settled.at(-1);
+    if (last === undefined) {
+      throw new Error('нет кадров');
+    }
+    expect(Math.abs(last.height - near)).toBeLessThan(8);
+  });
+
+  it('третий уровень: я у нижней стенки сбоку, противник в средней полосе — полтора поля и противник в кадре', () => {
+    const scenario = { id: 't', title: 't', me: { x: 100, y: 876 }, enemy: { x: 300, y: 400 } };
+    const camera = settle(mode, settings, scenario, screen);
+    expect(camera.height).toBeCloseTo(ARENA.height * 1.5, 0);
+    const f = fractionOf(camera, scenario.enemy);
+    expect(f.fy).toBeGreaterThanOrEqual(0.04 - 1e-3);
+    expect(fractionOf(camera, scenario.me).fy).toBeLessThanOrEqual(0.5 + 1e-3);
+  });
+
+  it('смена стратегии при мёртвом противнике сохраняет уровень', () => {
+    for (const from of ['follow', 'followZoom', 'pair'] as const) {
+      for (const startRatio of [0.5, 1.3]) {
+        const source = createCameraStrategy(from, settings);
+        const [, before] = runTrajectory(source, [hold(me, enemyAt(startRatio), 4000), hold(me, null, 1000)], screen);
+        const target = createCameraStrategy(mode, settings);
+        if (before === undefined) {
+          throw new Error('нет кадров');
+        }
+        target.adopt(before);
+        const [after] = runTrajectory(target, [hold(me, null, 4000)], screen);
+        expect(after?.height, `${from} → ${mode} при отношении ${String(startRatio)}`).toBeCloseTo(before.height, 0);
+      }
     }
   });
 

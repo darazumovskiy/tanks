@@ -2,7 +2,7 @@ import { ARENA } from '@tanks/shared/engine';
 import type { Settings } from '../settings.js';
 import { CAMERA_MAX_SPEED, TANK_AREA, tankBottomLimit, type Camera, type Point } from './camera.js';
 import { FOLLOW_VOID_LIMIT } from './cameraFollow.js';
-import { ENEMY_AREA, FAR_ENEMY_AREA, isFarCamera, type ScreenArea } from './cameraLevels.js';
+import { ENEMY_AREA, FAR_ENEMY_AREA, FAR_HEIGHTS, isFarCamera, type ScreenArea } from './cameraLevels.js';
 import { createCameraStrategy, type CameraInput, type CameraStrategy, type PhoneCameraMode } from './cameraStrategy.js';
 
 // Сценарий — положения танков на поле; противник `null` — мёртв или ушёл.
@@ -109,6 +109,18 @@ export const CAMERA_SCENARIOS: readonly CameraScenario[] = [
     title: 'Я внизу по центру, противник сверху',
     me: { x: 800, y: 876 },
     enemy: { x: 800, y: 300 },
+  },
+  {
+    id: 'me-bottom-side-enemy-top',
+    title: 'Я у нижней стенки сбоку, противник у верхней',
+    me: { x: 100, y: 876 },
+    enemy: { x: 100, y: 100 },
+  },
+  {
+    id: 'me-bottom-side-enemy-mid',
+    title: 'Я у нижней стенки сбоку, противник в средней полосе',
+    me: { x: 100, y: 876 },
+    enemy: { x: 300, y: 400 },
   },
   {
     id: 'me-bottom-left-enemy-right',
@@ -265,16 +277,18 @@ export function checkCommonInvariants(input: CommonInvariantInput): Violation[] 
     });
   }
   const minViewHeight = (ARENA.height * minViewPercent) / 100;
-  if (camera.height < minViewHeight - SETTLE_TOLERANCE || camera.height > ARENA.height + SETTLE_TOLERANCE) {
+  const maxHeight = Math.max(...FAR_HEIGHTS);
+  if (camera.height < minViewHeight - SETTLE_TOLERANCE || camera.height > maxHeight + SETTLE_TOLERANCE) {
     violations.push({
       invariant: 'C2',
-      detail: `высота ${camera.height.toFixed(0)} вне [${minViewHeight.toFixed(0)}, ${String(ARENA.height)}]`,
+      detail: `высота ${camera.height.toFixed(0)} вне [${minViewHeight.toFixed(0)}, ${String(maxHeight)}]`,
     });
   }
   const around = voidAround(camera);
   const limitX = voidLimits.x * camera.width + SETTLE_TOLERANCE;
   const limitY = voidLimits.y * camera.height + SETTLE_TOLERANCE;
   const isWiderThanField = camera.width - 2 * voidLimits.x * camera.width > ARENA.width;
+  const isTallerThanField = camera.height - 2 * voidLimits.y * camera.height > ARENA.height;
   const enemyF = input.enemy === null ? null : fractionOf(camera, input.enemy);
   const enemyArea = input.enemyArea;
   const isEnemyAtSideBound =
@@ -291,7 +305,7 @@ export function checkCommonInvariants(input: CommonInvariantInput): Violation[] 
       detail: `пустота по x: слева ${around.left.toFixed(0)}, справа ${around.right.toFixed(0)}`,
     });
   }
-  if (isVoidY && !isAtVerticalBound) {
+  if (isVoidY && !isAtVerticalBound && !isTallerThanField) {
     violations.push({
       invariant: 'C8',
       detail: `пустота по y: сверху ${around.top.toFixed(0)}, снизу ${around.bottom.toFixed(0)}`,
