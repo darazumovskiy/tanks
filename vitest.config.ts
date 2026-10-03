@@ -28,7 +28,7 @@ export default defineConfig({
       ],
       exclude: ['**/*.test.ts', 'packages/server/src/main.ts'],
       thresholds: {
-        'packages/server/src/**': { statements: 90, branches: 78, functions: 90, lines: 90 },
+        'packages/server/src/**': { statements: 100, branches: 100, functions: 100, lines: 100 },
         'packages/shared/src/protocol/**': { statements: 95, branches: 85, functions: 95, lines: 95 },
         'packages/client/src/{steering,touch,input}.ts': { statements: 95, branches: 90, functions: 95, lines: 95 },
       },

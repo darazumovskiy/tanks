@@ -19,6 +19,11 @@ const SPA_ROUTES = [/^\/$/, /^\/d\/[a-z0-9]+$/];
 export const APK_ROUTE = '/app/tanks.apk';
 const APK_MIME = 'application/vnd.android.package-archive';
 
+// У запроса, пришедшего через http.Server, url задан всегда.
+export function requestPath(request: IncomingMessage): string {
+  return new URL(String(request.url), 'http://localhost').pathname;
+}
+
 // Установочный файл Android-приложения лежит вне dist и меняется редко, но без кэша: телефон должен получать свежий.
 export function serveApk(apkPath: string, request: IncomingMessage, response: ServerResponse): boolean {
   if (!existsSync(apkPath) || !statSync(apkPath).isFile()) {
@@ -40,9 +45,9 @@ export function serveApk(apkPath: string, request: IncomingMessage, response: Se
 
 // Раздаёт собранный клиент: файлы из dist как есть, маршруты приложения — index.html.
 export function serveStatic(root: string, request: IncomingMessage, response: ServerResponse): boolean {
-  const url = new URL(request.url ?? '/', 'http://localhost');
-  const isSpaRoute = SPA_ROUTES.some((pattern) => pattern.test(url.pathname));
-  const relative = isSpaRoute ? 'index.html' : normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
+  const pathname = requestPath(request);
+  const isSpaRoute = SPA_ROUTES.some((pattern) => pattern.test(pathname));
+  const relative = isSpaRoute ? 'index.html' : normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, '');
   const file = resolve(join(root, relative));
   if (!file.startsWith(resolve(root)) || !existsSync(file) || !statSync(file).isFile()) {
     return false;

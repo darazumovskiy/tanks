@@ -1,8 +1,10 @@
 import { clamp, DT, normalizeAngle, TICK_RATE, TURRET_RATE, type Action, type Side } from '@tanks/shared/engine';
-import { decode, MessageType, type SnapshotMessage } from '@tanks/shared/protocol';
-import type { Connection, Room } from './room.js';
+import { decode, MessageType, type SnapshotMessage, type TankSnapshot } from '@tanks/shared/protocol';
+import type { Connection, Seat } from './room.js';
 
 export const BOT_NICKNAME = 'Манекен';
+export const BOT_SIDE: Side = 0;
+const HUMAN_SIDE: Side = 1;
 
 const WANDER_MIN_TICKS = TICK_RATE;
 const WANDER_MAX_TICKS = TICK_RATE * 2;
@@ -17,28 +19,24 @@ const HULL_TURN_RATE = 2;
 
 // Манекен — слабый соперник, живущий внутри процесса как обычное подключение: получает те же сообщения,
 // что игрок, и отвечает тем же вводом через проверки комнаты. Блуждает случайными курсами, целится медленно
-// и с шумом, стреляет редко.
+// и с шумом, стреляет редко. Место занимает сам при создании: снимки приходят только после второго игрока.
 export class DummyBot implements Connection {
-  private room: Room | null = null;
-  private side: Side | null = null;
+  readonly seat: Seat;
   private seq = 0;
   private wanderHeading = 0;
   private wanderTicksLeft = 0;
   private stuckTicks = 0;
   private aimNoise = 0;
 
-  constructor(private readonly random: () => number = Math.random) {}
-
-  attach(room: Room): void {
-    this.room = room;
+  constructor(
+    private readonly random: () => number,
+    takeSeat: (connection: Connection) => Seat,
+  ) {
+    this.seat = takeSeat(this);
   }
 
   send(bytes: Uint8Array): void {
     const message = decode(bytes);
-    if (message.type === MessageType.Welcome) {
-      this.side = message.side;
-      return;
-    }
     if (message.type === MessageType.RoundStart) {
       this.wanderTicksLeft = 0;
       this.stuckTicks = 0;
@@ -49,27 +47,21 @@ export class DummyBot implements Connection {
     }
   }
 
-  close(): void {
-    this.room = null;
-  }
-
+  // Гибель любого танка заканчивает раунд в тот же тик, поэтому в живом раунде живы оба.
   private react(snapshot: SnapshotMessage): void {
-    if (this.room === null || this.side === null || snapshot.isOver) {
+    if (snapshot.isOver) {
       return;
     }
-    const me = snapshot.tanks[this.side];
-    const enemy = snapshot.tanks[this.side === 0 ? 1 : 0];
-    if (!me.isAlive) {
-      return;
-    }
+    const me = snapshot.tanks[BOT_SIDE];
+    const enemy = snapshot.tanks[HUMAN_SIDE];
     this.seq++;
-    this.room.input(this, this.seq, {
+    this.seat.input(this.seq, {
       ...this.wander(me),
       ...this.aim(me, enemy),
     });
   }
 
-  private wander(me: SnapshotMessage['tanks'][number]): Pick<Action, 'throttle' | 'turn'> {
+  private wander(me: TankSnapshot): Pick<Action, 'throttle' | 'turn'> {
     const isStuck = Math.abs(me.speed) < STUCK_SPEED;
     this.stuckTicks = isStuck ? this.stuckTicks + 1 : 0;
     if (this.wanderTicksLeft <= 0 || this.stuckTicks > STUCK_TICKS) {
@@ -85,13 +77,7 @@ export class DummyBot implements Connection {
     };
   }
 
-  private aim(
-    me: SnapshotMessage['tanks'][number],
-    enemy: SnapshotMessage['tanks'][number],
-  ): Pick<Action, 'turretTurn' | 'isFiring'> {
-    if (!enemy.isAlive) {
-      return { turretTurn: 0, isFiring: false };
-    }
+  private aim(me: TankSnapshot, enemy: TankSnapshot): Pick<Action, 'turretTurn' | 'isFiring'> {
     if (this.random() < 1 / TICK_RATE) {
       this.aimNoise = (this.random() * 2 - 1) * AIM_NOISE_RAD;
     }
