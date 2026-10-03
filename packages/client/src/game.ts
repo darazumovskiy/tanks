@@ -21,6 +21,7 @@ export interface GameOptions {
 const TICK_MS = DT * 1000;
 const ROUND_OVER_SHOW_MS = 3000;
 const FRAME_HISTORY = 120;
+const WORST_FRAME_WINDOW_MS = 1000;
 
 // Связывает сеть, предсказание, ввод, эффекты, звук и рендер; держит цикл кадров и фиксированный шаг ввода.
 export class Game {
@@ -42,6 +43,9 @@ export class Game {
   private fps = 0;
   private fpsWindowStart = performance.now();
   private readonly frameTimes: number[] = [];
+  private worstFrameMs = 0;
+  private worstFrameWindowStart = performance.now();
+  private worstFrameCandidate = 0;
   private isClosed = false;
 
   constructor(private readonly options: GameOptions) {
@@ -119,6 +123,7 @@ export class Game {
     bullets: number;
     pending: number;
     fps: number;
+    worstFrameMs: number;
     correctionPx: number;
   } | null {
     if (this.prediction === null) {
@@ -133,6 +138,7 @@ export class Game {
       bullets: view.bullets.length,
       pending: this.prediction.pendingCount,
       fps: this.fps,
+      worstFrameMs: this.worstFrameMs,
       correctionPx: this.prediction.lastCorrectionPx,
     };
   }
@@ -183,6 +189,12 @@ export class Game {
     if (this.frameTimes.length > FRAME_HISTORY) {
       this.frameTimes.shift();
     }
+    this.worstFrameCandidate = Math.max(this.worstFrameCandidate, elapsed);
+    if (now - this.worstFrameWindowStart >= WORST_FRAME_WINDOW_MS) {
+      this.worstFrameMs = this.worstFrameCandidate;
+      this.worstFrameCandidate = 0;
+      this.worstFrameWindowStart = now;
+    }
     if (now - this.fpsWindowStart >= 1000) {
       this.fps = (this.frames * 1000) / (now - this.fpsWindowStart);
       this.frames = 0;
@@ -219,6 +231,7 @@ export class Game {
         pending: prediction.pendingCount,
         correctionPx: prediction.lastCorrectionPx,
         fps: this.fps,
+        worstFrameMs: this.worstFrameMs,
         isMuted: this.sfx.isMuted,
         sticks: this.input.stickStates,
         frameMs: elapsed,

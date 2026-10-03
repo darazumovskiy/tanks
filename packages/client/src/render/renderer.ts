@@ -19,6 +19,7 @@ export interface HudInfo {
   pending: number;
   correctionPx: number;
   fps: number;
+  worstFrameMs: number;
   isMuted: boolean;
   sticks: readonly StickState[];
   frameMs: number;
@@ -514,9 +515,9 @@ export class Renderer {
     ctx.font = `10px ui-monospace, monospace`;
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(244,241,232,0.55)';
-    const sound = hud.isMuted ? 'звук выключен · M' : 'M — звук';
+    const sound = hud.isMuted ? 'звук выкл · M' : 'M — звук';
     ctx.fillText(
-      `задержка ${hud.rttMs.toFixed(0)} мс · тик ${String(hud.serverTick)} · неподтверждённых ${String(hud.pending)} · поправка ${hud.correctionPx.toFixed(1)} px · ${hud.fps.toFixed(0)} к/с · ${sound}`,
+      `${hud.fps.toFixed(0)} к/с · худший кадр ${hud.worstFrameMs.toFixed(0)} мс · задержка ${hud.rttMs.toFixed(0)} мс · поправка ${hud.correctionPx.toFixed(1)} px · ${sound}`,
       UI_MARGIN,
       screen.height - 8,
     );
