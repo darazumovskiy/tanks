@@ -181,6 +181,24 @@ describe('вход в комнату', () => {
     expect(app.stats().rooms).toBe(0);
   });
 
+  it('клиент замолчал — его танк останавливается, а не едет по последней команде вечно', async () => {
+    await app.close();
+    app = createApp({ staticRoot, room: FAST_ROOM, random: seededRandom(1), tickMs: 4 });
+    port = await app.listen(0, '127.0.0.1');
+    const [a] = await joinedPair('silent');
+    await snapshotAfterCountdown(a);
+    a.input({ throttle: 1 });
+    let fastest = 0;
+    let latest = 0;
+    for (let i = 0; i < 90; i++) {
+      const snapshot = await a.nextOfType(MessageType.Snapshot);
+      latest = snapshot.tanks[0].speed;
+      fastest = Math.max(fastest, latest);
+    }
+    expect(fastest).toBeGreaterThan(50);
+    expect(latest).toBeLessThan(1);
+  });
+
   it('третьему отказывает: комната полна', async () => {
     await joinedPair('full');
     const c = await connect();
@@ -278,6 +296,7 @@ describe('бой', () => {
     const isDone = (): boolean => seen.has('ricochet') && (seen.has('impact') || seen.has('clash'));
     while (!isDone() && Date.now() < deadline) {
       const snapshot = await a.nextOfType(MessageType.Snapshot);
+      a.input({ isFiring: true });
       for (const event of snapshot.events) {
         seen.add(event.kind);
       }

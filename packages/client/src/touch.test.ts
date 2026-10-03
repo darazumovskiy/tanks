@@ -227,4 +227,17 @@ describe('TouchSticks', () => {
     expect(sticks.stick('move')?.baseX).toBe(LEFT_X);
     expect(sticks.stick('move')?.dx).toBe(0);
   });
+
+  it('уход в фон или потеря фокуса сбрасывает зажатые стики и тап', () => {
+    down({ id: 1, x: LEFT_X, y: Y });
+    down({ id: 2, x: RIGHT_X, y: Y });
+    window.dispatchEvent(new Event('blur'));
+    expect(sticks.states).toHaveLength(0);
+    down({ id: 2, x: RIGHT_X, y: Y });
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(sticks.states).toHaveLength(0);
+    expect(sticks.takeTapFire()).toBe(false);
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+  });
 });

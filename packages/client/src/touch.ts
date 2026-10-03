@@ -52,6 +52,18 @@ export class TouchSticks {
     window.addEventListener('pointercancel', (event) => {
       this.end(event, false);
     });
+    // Приложение ушло в фон или потеряло фокус — касания могут не прийти к завершению, стики сбрасываются.
+    const dropAll = (): void => {
+      this.active.clear();
+      this.hasPendingTap = false;
+    };
+    window.addEventListener('blur', dropAll);
+    window.addEventListener('pagehide', dropAll);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        dropAll();
+      }
+    });
   }
 
   stick(role: StickRole): StickState | null {

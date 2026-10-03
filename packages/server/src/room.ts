@@ -40,6 +40,7 @@ interface Player {
   nickname: string;
   stats: Stats;
   lastSeq: number;
+  lastInputTick: number;
   ackSeq: number;
   pending: { seq: number; action: Action } | null;
   lastAction: Action;
@@ -48,6 +49,8 @@ interface Player {
 }
 
 const IDLE: Action = { throttle: 0, turn: 0, turretTurn: 0, isFiring: false };
+// Клиент замолчал (ушёл в фон, завис) — его танк не должен ехать и стрелять по последней команде вечно.
+export const INPUT_TIMEOUT_TICKS = 15;
 const NICKNAME_MAX = 16;
 
 export function sanitizeNickname(raw: string): string {
@@ -94,6 +97,7 @@ export class Room {
       nickname: sanitizeNickname(nickname),
       stats: sanitizeStats(stats),
       lastSeq: 0,
+      lastInputTick: 0,
       ackSeq: 0,
       pending: null,
       lastAction: { ...IDLE },
@@ -155,6 +159,7 @@ export class Room {
       return;
     }
     player.lastSeq = seq;
+    player.lastInputTick = this.tick;
     player.pending = { seq, action };
   }
 
@@ -210,7 +215,8 @@ export class Room {
         player.ackSeq = player.pending.seq;
         player.pending = null;
       }
-      result[side] = player.lastAction;
+      const isSilent = this.tick - player.lastInputTick > INPUT_TIMEOUT_TICKS;
+      result[side] = isSilent ? IDLE : player.lastAction;
     }
     return result;
   }

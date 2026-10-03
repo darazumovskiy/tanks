@@ -1,6 +1,6 @@
 import { DEFAULT_STATS } from '@tanks/shared/engine';
 import { decode, encode, ErrorCode, MessageType, type ClientMessage } from '@tanks/shared/protocol';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { NetClient, RECONNECT_BASE_MS, RECONNECT_MAX_MS, type NetHandlers, type SocketLike } from './net.js';
 
 class FakeSocket implements SocketLike {
@@ -40,6 +40,9 @@ class FakeSocket implements SocketLike {
 describe('NetClient', () => {
   const sockets: FakeSocket[] = [];
   let handlers: NetHandlers;
+  let onDisconnect: Mock<NetHandlers['onDisconnect']>;
+  let onError: Mock<NetHandlers['onError']>;
+  let onWelcome: Mock<NetHandlers['onWelcome']>;
   let client: NetClient;
 
   const latest = (): FakeSocket => {
@@ -53,13 +56,16 @@ describe('NetClient', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     sockets.length = 0;
+    onDisconnect = vi.fn<NetHandlers['onDisconnect']>();
+    onError = vi.fn<NetHandlers['onError']>();
+    onWelcome = vi.fn<NetHandlers['onWelcome']>();
     handlers = {
-      onWelcome: vi.fn(),
+      onWelcome,
       onRoomState: vi.fn(),
       onRoundStart: vi.fn(),
       onSnapshot: vi.fn(),
-      onError: vi.fn(),
-      onDisconnect: vi.fn(),
+      onError,
+      onDisconnect,
     };
     client = new NetClient(
       'ws://test/ws',
@@ -91,19 +97,19 @@ describe('NetClient', () => {
   it('разрыв не по нашей воле — переподключение через 1, 2, 4 … с, не больше предела', () => {
     latest().open();
     latest().drop();
-    expect(handlers.onDisconnect).toHaveBeenLastCalledWith(RECONNECT_BASE_MS);
+    expect(onDisconnect).toHaveBeenLastCalledWith(RECONNECT_BASE_MS);
     expect(sockets).toHaveLength(1);
     vi.advanceTimersByTime(RECONNECT_BASE_MS);
     expect(sockets).toHaveLength(2);
     latest().drop();
-    expect(handlers.onDisconnect).toHaveBeenLastCalledWith(RECONNECT_BASE_MS * 2);
+    expect(onDisconnect).toHaveBeenLastCalledWith(RECONNECT_BASE_MS * 2);
     vi.advanceTimersByTime(RECONNECT_BASE_MS * 2);
     latest().drop();
     vi.advanceTimersByTime(RECONNECT_BASE_MS * 4);
     latest().drop();
     vi.advanceTimersByTime(RECONNECT_MAX_MS);
     latest().drop();
-    expect(handlers.onDisconnect).toHaveBeenLastCalledWith(RECONNECT_MAX_MS);
+    expect(onDisconnect).toHaveBeenLastCalledWith(RECONNECT_MAX_MS);
   });
 
   it('новый сокет снова входит в ту же комнату, пауза сбрасывается после удачного входа', () => {
@@ -113,7 +119,7 @@ describe('NetClient', () => {
     latest().open();
     expect(latest().sent[0]).toMatchObject({ type: MessageType.Join, roomCode: 'abc' });
     latest().drop();
-    expect(handlers.onDisconnect).toHaveBeenLastCalledWith(RECONNECT_BASE_MS);
+    expect(onDisconnect).toHaveBeenLastCalledWith(RECONNECT_BASE_MS);
   });
 
   it('пинг не шлётся в разорванный сокет', () => {
@@ -139,23 +145,23 @@ describe('NetClient', () => {
     client.close();
     vi.advanceTimersByTime(RECONNECT_MAX_MS * 2);
     expect(sockets).toHaveLength(1);
-    expect(handlers.onDisconnect).not.toHaveBeenCalled();
+    expect(onDisconnect).not.toHaveBeenCalled();
   });
 
   it('ошибка от сервера окончательна: сокет закрылся — переподключения нет', () => {
     latest().open();
     latest().receive(encode({ type: MessageType.Error, code: ErrorCode.RoomFull, text: 'полна' }));
     latest().drop();
-    expect(handlers.onError).toHaveBeenCalled();
+    expect(onError).toHaveBeenCalled();
     vi.advanceTimersByTime(RECONNECT_MAX_MS * 2);
     expect(sockets).toHaveLength(1);
-    expect(handlers.onDisconnect).not.toHaveBeenCalled();
+    expect(onDisconnect).not.toHaveBeenCalled();
   });
 
   it('входящие сообщения раскладываются по обработчикам, понг меряет задержку', () => {
     latest().open();
     latest().receive(encode({ type: MessageType.Welcome, side: 1, roomCode: 'abc' }));
-    expect(handlers.onWelcome).toHaveBeenCalledWith(expect.objectContaining({ side: 1 }));
+    expect(onWelcome).toHaveBeenCalledWith(expect.objectContaining({ side: 1 }));
     latest().receive(encode({ type: MessageType.Pong, clientTime: 940, serverTick: 77 }));
     expect(client.rttMs).toBe(60);
     expect(client.serverTick).toBe(77);
