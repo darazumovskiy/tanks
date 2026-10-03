@@ -16,6 +16,7 @@
 | Какие тесты обязательны | [adr/tests.md](../../adr/tests.md) |
 | Что в `tank-arena` берём, что меняем | [research/tank-arena-audit.md](../../research/tank-arena-audit.md) |
 | Замеры хостинга | [research/hosting.md](../../research/hosting.md) |
+| Как проверять на телефоне и эмуляторе, замеры на устройстве | [knowledge/device-testing.md](knowledge/device-testing.md) |
 
 ## Ключевые файлы кода
 
