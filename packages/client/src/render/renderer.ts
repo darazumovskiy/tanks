@@ -4,19 +4,8 @@ import type { Settings } from '../settings.js';
 import { stickMagnitude } from '../steering.js';
 import type { StickState } from '../touch.js';
 import { drawTankSprite, TankArt } from './art.js';
-import {
-  edgeMarker,
-  frameCamera,
-  frameTargets,
-  keepTargetOutOfThumbZones,
-  screenToWorld,
-  smoothCamera,
-  stabilizedHeight,
-  type Camera,
-  type FramingInsets,
-  type Point,
-  type ThumbZones,
-} from './camera.js';
+import { edgeMarker, frameCamera, screenToWorld, type Camera } from './camera.js';
+import { DuelCamera } from './duelCamera.js';
 import type { Effects } from './effects.js';
 import { floorFor } from './floor.js';
 import { BODY_FONT, HEAD_FONT, SIDE_COLORS, clamp, easeOut } from './view.js';
@@ -56,14 +45,6 @@ const PLATE_BAR_HEIGHT = 7;
 const MARKER_INSET = 36;
 const MARKER_SIZE = 10;
 const ANNOUNCE_SCALE = 0.6;
-// Доли окна под панели (сверху) и большие пальцы на стиках (снизу, по бокам): цели кадрирования держатся вне их.
-const FRAMING_INSETS: FramingInsets = { side: 0.12, top: 0.14, bottom: 0.32 };
-// Свой танк не заходит в нижние углы (зоны пальцев) и под панели даже ценой пустоты за полем.
-const THUMB_ZONES: ThumbZones = { side: 0.32, cornerTop: 0.5, top: 0.12 };
-// Масштаб переключается ступенями: пока нужная высота в пределах ±20 % от зафиксированной, она не меняется.
-const ZOOM_DEAD_BAND = 0.2;
-// Отдаление вдвое быстрее приближения.
-const ZOOM_OUT_RATIO = 0.5;
 const FRAME_GRAPH_HEIGHT = 36;
 const FRAME_GRAPH_BAR_WIDTH = 2;
 const FRAME_BUDGET_MS = 1000 / 60;
@@ -88,21 +69,23 @@ export class Renderer {
   private readonly art: [TankArt, TankArt] = [new TankArt(0), new TankArt(1)];
   private pixelRatio = 1;
   private camera: Camera;
-  private smoothedCamera: Camera | null = null;
-  private committedHeight: number | null = null;
+  private readonly duelCamera: DuelCamera;
 
   // На компьютере поле показывается целиком; на устройстве с касанием камера кадрирует бой: себя и противника.
+  // `viewport` — размер холста в CSS-пикселях и плотность; по умолчанию окно браузера (лаборатория задаёт своё).
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly effects: Effects,
     private readonly settings: Readonly<Settings>,
     private readonly isTouchDevice: boolean,
+    private readonly viewport: () => { width: number; height: number; pixelRatio: number } = windowViewport,
   ) {
     const ctx = canvas.getContext('2d');
     if (ctx === null) {
       throw new Error('Canvas 2D недоступен');
     }
     this.ctx = ctx;
+    this.duelCamera = new DuelCamera(settings);
     this.resize();
     this.camera = frameCamera({ x: ARENA.width / 2, y: ARENA.height / 2 }, canvas.width, canvas.height, ARENA.height);
     window.addEventListener('resize', () => {
@@ -112,8 +95,7 @@ export class Renderer {
 
   // Новый раунд — танки появляются в другом месте, камера не должна ехать к ним через всё поле.
   resetCamera(): void {
-    this.smoothedCamera = null;
-    this.committedHeight = null;
+    this.duelCamera.reset();
   }
 
   get currentCamera(): Camera {
@@ -131,26 +113,7 @@ export class Renderer {
     }
     const me = view.tanks[mySide];
     const enemy = view.tanks[mySide === 0 ? 1 : 0];
-    const targets: Point[] = enemy.isAlive ? [me, enemy] : [me];
-    const minViewHeight = (ARENA.height * this.settings.minViewPercent) / 100;
-    const needed = frameTargets(targets, this.canvas.width, this.canvas.height, minViewHeight, FRAMING_INSETS);
-    this.committedHeight = stabilizedHeight(this.committedHeight, needed.height, ZOOM_DEAD_BAND);
-    const framed = frameTargets(
-      targets,
-      this.canvas.width,
-      this.canvas.height,
-      minViewHeight,
-      FRAMING_INSETS,
-      this.committedHeight,
-    );
-    const wanted = keepTargetOutOfThumbZones(framed, me, THUMB_ZONES);
-    const smoothing = {
-      moveLagMs: this.settings.cameraLagMs,
-      zoomInLagMs: this.settings.zoomLagMs,
-      zoomOutLagMs: this.settings.zoomLagMs * ZOOM_OUT_RATIO,
-    };
-    this.smoothedCamera = smoothCamera(this.smoothedCamera, wanted, smoothing, frameMs);
-    return this.smoothedCamera;
+    return this.duelCamera.update(me, enemy.isAlive ? enemy : null, this.canvas.width, this.canvas.height, frameMs);
   }
 
   // Координаты окна → координаты поля боя через текущее положение камеры.
@@ -162,9 +125,10 @@ export class Renderer {
   }
 
   private resize(): void {
-    this.pixelRatio = Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO);
-    this.canvas.width = Math.round(window.innerWidth * this.pixelRatio);
-    this.canvas.height = Math.round(window.innerHeight * this.pixelRatio);
+    const { width, height, pixelRatio } = this.viewport();
+    this.pixelRatio = Math.min(pixelRatio, MAX_PIXEL_RATIO);
+    this.canvas.width = Math.round(width * this.pixelRatio);
+    this.canvas.height = Math.round(height * this.pixelRatio);
   }
 
   private screen(): Screen {
@@ -607,4 +571,8 @@ export class Renderer {
     }
     ctx.restore();
   }
+}
+
+function windowViewport(): { width: number; height: number; pixelRatio: number } {
+  return { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio };
 }

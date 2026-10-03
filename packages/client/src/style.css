@@ -109,6 +109,20 @@ input {
   cursor: pointer;
 }
 
+.lab {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.lab select {
+  max-width: 834px;
+  padding: 6px;
+  font-size: 14px;
+}
+
 .rotate-hint {
   position: fixed;
   top: 12px;

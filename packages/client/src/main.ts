@@ -1,6 +1,7 @@
 import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
 import QRCode from 'qrcode';
 import { Game } from './game.js';
+import { showCameraLab } from './lab.js';
 import { SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
 
@@ -119,6 +120,8 @@ function startDuel(roomCode: string): void {
 const duelMatch = /^\/d\/([a-z0-9]{3,16})$/.exec(location.pathname);
 if (duelMatch?.[1] !== undefined) {
   startDuel(duelMatch[1]);
+} else if (new URLSearchParams(location.search).get('lab') === 'camera') {
+  showCameraLab(byId('lab', HTMLElement));
 } else {
   showHome();
 }
