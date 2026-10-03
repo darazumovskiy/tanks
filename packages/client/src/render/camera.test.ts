@@ -1,6 +1,6 @@
 import { ARENA } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
-import { edgeMarker, followCenter, frameCamera, screenToWorld, worldToScreen } from './camera.js';
+import { edgeMarker, followCenter, frameCamera, keepTargetInSafeZone, screenToWorld, worldToScreen } from './camera.js';
 
 const PHONE = { width: 2200, height: 1000 };
 const VIEW_HEIGHT = 560;
@@ -19,11 +19,13 @@ describe('frameCamera', () => {
     expect(camera.y + camera.height / 2).toBeCloseTo(450, 6);
   });
 
-  it('у края поля окно не прижимается: цель остаётся в центре, за полем — пустота', () => {
+  it('у края поля окно прижимается к краю, а не показывает пустоту', () => {
     const corner = frameCamera({ x: 140, y: 100 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
-    expect(corner.x + corner.width / 2).toBeCloseTo(140, 6);
-    expect(corner.y + corner.height / 2).toBeCloseTo(100, 6);
-    expect(corner.x).toBeLessThan(0);
+    expect(corner.x).toBe(0);
+    expect(corner.y).toBe(0);
+    const far = frameCamera({ x: 1550, y: 850 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
+    expect(far.x + far.width).toBeCloseTo(ARENA.width, 6);
+    expect(far.y + far.height).toBeCloseTo(ARENA.height, 6);
   });
 
   it('экран шире поля — окно центрируется на поле', () => {
@@ -129,5 +131,37 @@ describe('followCenter', () => {
     expect(half.x).toBeCloseTo(50, 6);
     const almost = followCenter({ x: 0, y: 0 }, { x: 100, y: 0 }, view, lagged, 1000);
     expect(almost.x).toBeGreaterThan(99.8);
+  });
+});
+
+describe('keepTargetInSafeZone', () => {
+  const safe = { side: 0.25, top: 0.15, bottom: 0.4 };
+
+  it('цель внутри безопасного прямоугольника — окно не трогается', () => {
+    const camera = frameCamera({ x: 800, y: 450 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
+    expect(keepTargetInSafeZone(camera, { x: 800, y: 450 }, safe)).toEqual(camera);
+  });
+
+  it('цель у правого края поля — окно сдвигается за край ровно до границы полосы', () => {
+    const camera = frameCamera({ x: 1460, y: 450 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
+    const kept = keepTargetInSafeZone(camera, { x: 1460, y: 450 }, safe);
+    const fraction = (1460 - kept.x) / kept.width;
+    expect(fraction).toBeCloseTo(0.75, 6);
+    expect(kept.x + kept.width).toBeGreaterThan(ARENA.width);
+    expect(kept.y).toBe(camera.y);
+  });
+
+  it('цель у нижнего левого угла — не ниже границы снизу и не левее границы сбоку', () => {
+    const camera = frameCamera({ x: 90, y: 850 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
+    const kept = keepTargetInSafeZone(camera, { x: 90, y: 850 }, safe);
+    expect((90 - kept.x) / kept.width).toBeCloseTo(0.25, 6);
+    expect((850 - kept.y) / kept.height).toBeCloseTo(0.6, 6);
+  });
+
+  it('окно шире поля (обзор 80 % на телефоне) — цель у края всё равно уходит из-под стика', () => {
+    const camera = frameCamera({ x: 90, y: 450 }, 2200, 1000, 720);
+    expect(camera.width).toBeGreaterThan(ARENA.width - 100);
+    const kept = keepTargetInSafeZone(camera, { x: 90, y: 450 }, safe);
+    expect((90 - kept.x) / kept.width).toBeCloseTo(0.25, 6);
   });
 });

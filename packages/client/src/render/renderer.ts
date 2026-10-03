@@ -4,7 +4,15 @@ import type { Settings } from '../settings.js';
 import { stickMagnitude } from '../steering.js';
 import type { StickState } from '../touch.js';
 import { drawTankSprite, TankArt } from './art.js';
-import { edgeMarker, followCenter, frameCamera, screenToWorld, type Camera, type Point } from './camera.js';
+import {
+  edgeMarker,
+  followCenter,
+  frameCamera,
+  keepTargetInSafeZone,
+  screenToWorld,
+  type Camera,
+  type Point,
+} from './camera.js';
 import type { Effects } from './effects.js';
 import { floorFor } from './floor.js';
 import { BODY_FONT, HEAD_FONT, SIDE_COLORS, clamp, easeOut } from './view.js';
@@ -44,6 +52,7 @@ const PLATE_BAR_HEIGHT = 7;
 const MARKER_INSET = 36;
 const MARKER_SIZE = 10;
 const ANNOUNCE_SCALE = 0.6;
+const SAFE_TOP_FRACTION = 0.15;
 const FRAME_GRAPH_HEIGHT = 36;
 const FRAME_GRAPH_BAR_WIDTH = 2;
 const FRAME_BUDGET_MS = 1000 / 60;
@@ -137,7 +146,14 @@ export class Renderer {
       lagMs: this.settings.cameraLagMs,
     };
     const center = followCenter(this.cameraCenter, me, { width: viewWidth, height: viewHeight }, follow, hud.frameMs);
-    this.camera = frameCamera(center, this.canvas.width, this.canvas.height, viewHeight);
+    const framed = frameCamera(center, this.canvas.width, this.canvas.height, viewHeight);
+    this.camera = this.isTouchDevice
+      ? keepTargetInSafeZone(framed, me, {
+          side: this.settings.safeSidePercent / 100,
+          top: SAFE_TOP_FRACTION,
+          bottom: this.settings.safeBottomPercent / 100,
+        })
+      : framed;
     this.cameraCenter = { x: this.camera.x + this.camera.width / 2, y: this.camera.y + this.camera.height / 2 };
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#07080a';

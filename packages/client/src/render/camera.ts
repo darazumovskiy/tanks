@@ -1,4 +1,4 @@
-import { ARENA } from '@tanks/shared/engine';
+import { ARENA, clamp } from '@tanks/shared/engine';
 
 export interface Camera {
   x: number;
@@ -13,8 +13,9 @@ export interface Point {
   y: number;
 }
 
-// Окно заданной высоты в единицах поля, ширина — по пропорциям экрана. Центрируется на цели даже у края поля —
-// за полем показывается пустота, зато танк не уезжает под стик; поле уже окна — окно центрируется на поле.
+// Окно заданной высоты в единицах поля, ширина — по пропорциям экрана. Центрируется на цели и прижимается
+// к краям поля, чтобы не показывать пустоту; поле уже окна — окно центрируется на поле.
+// Пустота за краем допускается только `keepTargetInSafeZone`, когда иначе цель уехала бы под стик.
 export function frameCamera(target: Point, canvasWidth: number, canvasHeight: number, viewHeight: number): Camera {
   const scale = canvasHeight / viewHeight;
   const width = canvasWidth / scale;
@@ -31,7 +32,24 @@ function clampAxis(start: number, size: number, limit: number): number {
   if (size >= limit) {
     return (limit - size) / 2;
   }
-  return start;
+  return clamp(start, 0, limit - size);
+}
+
+// Безопасный прямоугольник экрана в долях окна: цель не ближе `side` к левому и правому краю,
+// не выше `top` от верха и не ниже `bottom` от низа — там панели и большие пальцы на стиках.
+export interface SafeZone {
+  side: number;
+  top: number;
+  bottom: number;
+}
+
+// Сдвигает окно ровно настолько, чтобы цель вернулась в безопасный прямоугольник, — даже за край поля.
+export function keepTargetInSafeZone(camera: Camera, target: Point, safe: SafeZone): Camera {
+  const minX = target.x - camera.width * (1 - safe.side);
+  const maxX = target.x - camera.width * safe.side;
+  const minY = target.y - camera.height * (1 - safe.bottom);
+  const maxY = target.y - camera.height * safe.top;
+  return { ...camera, x: clamp(camera.x, minX, maxX), y: clamp(camera.y, minY, maxY) };
 }
 
 export interface CameraFollow {

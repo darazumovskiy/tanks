@@ -8,6 +8,8 @@ export interface Settings {
   cameraBoxXPercent: number;
   cameraBoxYPercent: number;
   cameraLagMs: number;
+  safeSidePercent: number;
+  safeBottomPercent: number;
   showFrameGraph: boolean;
 }
 
@@ -30,6 +32,8 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = {
   cameraBoxXPercent: 0,
   cameraBoxYPercent: 0,
   cameraLagMs: 120,
+  safeSidePercent: 25,
+  safeBottomPercent: 40,
   showFrameGraph: false,
 };
 
@@ -55,6 +59,22 @@ export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
     step: 5,
   },
   { key: 'cameraLagMs', label: 'Догон камеры', hint: 'мс до середины пути; 0 — мгновенно', min: 0, max: 500, step: 10 },
+  {
+    key: 'safeSidePercent',
+    label: 'Запас до края экрана',
+    hint: '% ширины: танк не ближе к левому и правому краю, даже ценой пустоты за полем',
+    min: 10,
+    max: 45,
+    step: 5,
+  },
+  {
+    key: 'safeBottomPercent',
+    label: 'Запас до низа экрана',
+    hint: '% высоты от низа, куда танк не опускается — там стики',
+    min: 20,
+    max: 60,
+    step: 5,
+  },
 ];
 
 export const SETTINGS_STORAGE_KEY = 'tanks.settings';
