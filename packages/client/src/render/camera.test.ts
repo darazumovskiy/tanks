@@ -93,8 +93,8 @@ describe('высота окна — параметр', () => {
 
 describe('followCenter', () => {
   const view = { width: 1000, height: 500 };
-  const rigid = { boxPercent: 0, lagMs: 0 };
-  const boxed = { boxPercent: 40, lagMs: 0 };
+  const rigid = { boxXPercent: 0, boxYPercent: 0, lagMs: 0 };
+  const boxed = { boxXPercent: 40, boxYPercent: 40, lagMs: 0 };
 
   it('первый кадр — центр на цели', () => {
     expect(followCenter(null, { x: 300, y: 200 }, view, boxed, 16)).toEqual({ x: 300, y: 200 });
@@ -118,8 +118,15 @@ describe('followCenter', () => {
     expect(up.y).toBe(200);
   });
 
+  it('доли по осям независимы: узкая по горизонтали, широкая по вертикали', () => {
+    const follow = { boxXPercent: 10, boxYPercent: 60, lagMs: 0 };
+    const center = { x: 500, y: 250 };
+    expect(followCenter(center, { x: 600, y: 250 }, view, follow, 16).x).toBe(550);
+    expect(followCenter(center, { x: 500, y: 380 }, view, follow, 16).y).toBe(250);
+  });
+
   it('догон: за lagMs проходится половина пути, за долгое время — почти весь', () => {
-    const lagged = { boxPercent: 0, lagMs: 100 };
+    const lagged = { boxXPercent: 0, boxYPercent: 0, lagMs: 100 };
     const half = followCenter({ x: 0, y: 0 }, { x: 100, y: 0 }, view, lagged, 100);
     expect(half.x).toBeCloseTo(50, 6);
     const almost = followCenter({ x: 0, y: 0 }, { x: 100, y: 0 }, view, lagged, 1000);

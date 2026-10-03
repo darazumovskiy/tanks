@@ -20,6 +20,7 @@ export interface AppOptions {
   apkPath?: string;
   room?: RoomOptions;
   tickMs?: number;
+  random?: () => number;
 }
 
 export interface App {
@@ -62,7 +63,7 @@ function toBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
 }
 
 export function createApp(options: AppOptions = {}): App {
-  const rooms = new RoomManager(options.room ?? DEFAULT_ROOM_OPTIONS);
+  const rooms = new RoomManager(options.room ?? DEFAULT_ROOM_OPTIONS, options.random ?? Math.random);
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
   const server = createServer((request, response) => {
     const path = request.url ?? '/';

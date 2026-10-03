@@ -131,7 +131,11 @@ export class Renderer {
     const me = view.tanks[hud.mySide];
     const viewHeight = this.viewHeight();
     const viewWidth = (this.canvas.width / this.canvas.height) * viewHeight;
-    const follow = { boxPercent: this.settings.cameraBoxPercent, lagMs: this.settings.cameraLagMs };
+    const follow = {
+      boxXPercent: this.settings.cameraBoxXPercent,
+      boxYPercent: this.settings.cameraBoxYPercent,
+      lagMs: this.settings.cameraLagMs,
+    };
     const center = followCenter(this.cameraCenter, me, { width: viewWidth, height: viewHeight }, follow, hud.frameMs);
     this.camera = frameCamera(center, this.canvas.width, this.canvas.height, viewHeight);
     this.cameraCenter = { x: this.camera.x + this.camera.width / 2, y: this.camera.y + this.camera.height / 2 };

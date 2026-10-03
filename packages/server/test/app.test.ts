@@ -8,6 +8,15 @@ import { TestClient } from './client.js';
 
 const FAST_ROOM = { countdownTicks: 3, roundEndTicks: 3, maxInputsPerSecond: 90 };
 
+// Детерминированная случайность для манекена: тест не должен зависеть от удачи.
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0 || 1;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
 let app: App;
 let port: number;
 let staticRoot: string;
@@ -43,7 +52,7 @@ beforeEach(async () => {
   staticRoot = mkdtempSync(join(tmpdir(), 'tanks-static-'));
   writeFileSync(join(staticRoot, 'index.html'), '<html>tanks</html>');
   writeFileSync(join(staticRoot, 'app.js'), 'console.log(1)');
-  app = createApp({ staticRoot, room: FAST_ROOM });
+  app = createApp({ staticRoot, room: FAST_ROOM, random: seededRandom(42) });
   port = await app.listen(0, '127.0.0.1');
 });
 
@@ -132,6 +141,44 @@ describe('вход в комнату', () => {
     expect(start.score).toEqual([0, 0]);
     expect(start.countdownTicks).toBe(FAST_ROOM.countdownTicks);
     expect(app.stats().rooms).toBe(1);
+  });
+
+  it('код с префиксом bot — дуэль против манекена: он уже сидит первым, раунд стартует сразу', async () => {
+    await app.close();
+    app = createApp({ staticRoot, room: FAST_ROOM, random: seededRandom(42), tickMs: 4 });
+    port = await app.listen(0, '127.0.0.1');
+    const human = await connect();
+    human.join('botxyz1', 'Дима');
+    const welcome = await human.nextOfType(MessageType.Welcome);
+    expect(welcome.side).toBe(1);
+    const start = await human.nextOfType(MessageType.RoundStart);
+    expect(start.tanks[0].nickname).toBe('Манекен');
+    expect(start.tanks[1].nickname).toBe('Дима');
+
+    let hasMoved = false;
+    let hasFired = false;
+    let lastHeading: number | null = null;
+    for (let i = 0; i < 400 && !(hasMoved && hasFired); i++) {
+      const snapshot = await human.nextOfType(MessageType.Snapshot);
+      const bot = snapshot.tanks[0];
+      if (lastHeading !== null && (Math.abs(bot.speed) > 1 || bot.heading !== lastHeading)) {
+        hasMoved = true;
+      }
+      lastHeading = bot.heading;
+      if (snapshot.bullets.some((bullet) => bullet.owner === 0)) {
+        hasFired = true;
+      }
+    }
+    expect(hasMoved).toBe(true);
+    expect(hasFired).toBe(true);
+
+    const stranger = await connect();
+    stranger.join('botxyz1', 'Третий');
+    expect((await stranger.nextOfType(MessageType.Error)).code).toBe(ErrorCode.RoomFull);
+
+    human.close();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(app.stats().rooms).toBe(0);
   });
 
   it('третьему отказывает: комната полна', async () => {

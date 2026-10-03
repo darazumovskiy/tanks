@@ -35,11 +35,13 @@ function clampAxis(start: number, size: number, limit: number): number {
 }
 
 export interface CameraFollow {
-  boxPercent: number;
+  boxXPercent: number;
+  boxYPercent: number;
   lagMs: number;
 }
 
-// Центр камеры догоняет цель только когда она выходит из «свободного прямоугольника» — доли окна вокруг центра;
+// Центр камеры догоняет цель только когда она выходит из «свободного прямоугольника» — долей ширины и высоты окна
+// вокруг центра (экран широкий, поэтому доли по осям разные);
 // сдвиг сглаживается: за lagMs проходится половина пути. Нулевая свобода и нулевой догон — жёсткая привязка.
 export function followCenter(
   previous: Point | null,
@@ -51,8 +53,8 @@ export function followCenter(
   if (previous === null) {
     return { x: target.x, y: target.y };
   }
-  const halfBoxWidth = (view.width * follow.boxPercent) / 200;
-  const halfBoxHeight = (view.height * follow.boxPercent) / 200;
+  const halfBoxWidth = (view.width * follow.boxXPercent) / 200;
+  const halfBoxHeight = (view.height * follow.boxYPercent) / 200;
   const wanted = {
     x: pullIntoBox(previous.x, target.x, halfBoxWidth),
     y: pullIntoBox(previous.y, target.y, halfBoxHeight),

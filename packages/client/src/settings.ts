@@ -5,7 +5,8 @@ export interface Settings {
   deadZone: number;
   fireRing: number;
   viewPercent: number;
-  cameraBoxPercent: number;
+  cameraBoxXPercent: number;
+  cameraBoxYPercent: number;
   cameraLagMs: number;
   showFrameGraph: boolean;
 }
@@ -26,7 +27,8 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = {
   deadZone: 0.15,
   fireRing: 0.85,
   viewPercent: 75,
-  cameraBoxPercent: 35,
+  cameraBoxXPercent: 15,
+  cameraBoxYPercent: 35,
   cameraLagMs: 120,
   showFrameGraph: false,
 };
@@ -37,9 +39,17 @@ export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
   { key: 'fireRing', label: 'Кольцо огня', hint: 'доля радиуса, с которой стреляет', min: 0.5, max: 1, step: 0.01 },
   { key: 'viewPercent', label: 'Обзор', hint: '% высоты поля в кадре (только телефон)', min: 40, max: 100, step: 5 },
   {
-    key: 'cameraBoxPercent',
-    label: 'Свобода камеры',
-    hint: '% кадра, где танк ездит без сдвига камеры',
+    key: 'cameraBoxXPercent',
+    label: 'Свобода камеры по горизонтали',
+    hint: '% ширины кадра, где танк ездит без сдвига камеры',
+    min: 0,
+    max: 80,
+    step: 5,
+  },
+  {
+    key: 'cameraBoxYPercent',
+    label: 'Свобода камеры по вертикали',
+    hint: '% высоты кадра, где танк ездит без сдвига камеры',
     min: 0,
     max: 80,
     step: 5,

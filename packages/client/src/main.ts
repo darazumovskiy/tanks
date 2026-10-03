@@ -8,6 +8,8 @@ const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
 const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const APK_ROUTE = '/app/tanks.apk';
+// Код с этим префиксом сервер понимает как дуэль против манекена.
+const BOT_ROOM_PREFIX = 'bot';
 const SETTINGS_KEY_CODE = 'KeyO';
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 
@@ -42,10 +44,16 @@ function showHome(): void {
   home.hidden = false;
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
   statsInput.value = localStorage.getItem(STATS_KEY) ?? '3322';
-  byId('create', HTMLButtonElement).addEventListener('click', () => {
+  const startDuelWith = (code: string): void => {
     localStorage.setItem(NICKNAME_KEY, nickname.value);
     localStorage.setItem(STATS_KEY, statsInput.value);
-    location.assign(`/d/${randomCode()}`);
+    location.assign(`/d/${code}`);
+  };
+  byId('create', HTMLButtonElement).addEventListener('click', () => {
+    startDuelWith(randomCode());
+  });
+  byId('create-bot', HTMLButtonElement).addEventListener('click', () => {
+    startDuelWith(`${BOT_ROOM_PREFIX}${randomCode()}`);
   });
   void showAndroidDownload();
 }
