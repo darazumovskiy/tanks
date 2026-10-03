@@ -8,6 +8,8 @@
     "dev": "vite"
   },
   "dependencies": {
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/share": "^8.0.3",
     "@tanks/shared": "*",
     "qrcode": "^1.5.4"
   },

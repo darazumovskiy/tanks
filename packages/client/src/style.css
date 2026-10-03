@@ -249,6 +249,67 @@ input {
   border-radius: 8px;
 }
 
+.overlay-buttons {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.overlay-button {
+  pointer-events: auto;
+  min-width: 150px;
+  padding: 12px 20px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0b0f0d;
+  background: #e8825a;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.open-app {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 14px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.open-app-link {
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0b0f0d;
+  background: #e8825a;
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.open-app-note {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.open-app-close {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f4f1e8;
+  font-size: 14px;
+  cursor: pointer;
+}
+
 .home {
   max-width: 480px;
   margin: 0 auto;

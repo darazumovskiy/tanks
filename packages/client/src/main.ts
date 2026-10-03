@@ -1,5 +1,7 @@
+import { Capacitor } from '@capacitor/core';
 import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
 import QRCode from 'qrcode';
+import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
 import { Game } from './game.js';
 import { showCameraLab } from './lab.js';
 import { SettingsStore } from './settings.js';
@@ -125,6 +127,15 @@ function startDuel(roomCode: string): void {
   });
   bindAutoFire(byId('autofire', HTMLButtonElement), game, hasTouch);
   bindRotateHint(byId('rotate', HTMLElement));
+  if (isAndroidBrowser(navigator.userAgent, Capacitor.isNativePlatform())) {
+    const apkUrl = new URL(APK_ROUTE, location.href).href;
+    showOpenInApp(
+      byId('open-app', HTMLElement),
+      byId('open-app-link', HTMLAnchorElement),
+      byId('open-app-close', HTMLButtonElement),
+      androidIntentUrl(location.href, apkUrl),
+    );
+  }
   // Точка доступа для сквозных тестов и отладки из консоли браузера.
   Object.assign(window, { tanksGame: game });
   window.addEventListener('beforeunload', () => {

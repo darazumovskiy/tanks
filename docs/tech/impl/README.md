@@ -13,5 +13,6 @@
 | [frontend/touch-controls.md](frontend/touch-controls.md) | Сенсорное управление: два плавающих стика, перевод в действие, план тестирования |
 | [frontend/mobile-screen.md](frontend/mobile-screen.md) | Экран боя под телефон: панели в экранных координатах, стрелка на противника, резкость |
 | [frontend/duel-camera.md](frontend/duel-camera.md) | Камера дуэли: стратегии «за своим», «за своим + отдаление», «оба в кадре», разрешённая область танка, кромка, инварианты и лаборатория |
+| [frontend/invite-link.md](frontend/invite-link.md) | Приглашение по ссылке: «Копировать» и «Поделиться», открытие ссылки Android-приложением (App Links, `assetlinks.json`), плашка «Открыть в приложении» |
 | [infra/deploy-proto.md](infra/deploy-proto.md) | Выкладка пробы на машину в Милане: Caddy, systemd, скрипты |
 | [infra/android-app.md](infra/android-app.md) | Android-приложение: оболочка Capacitor, сборка APK в Docker, раздача по QR |

@@ -8,6 +8,7 @@ import {
 } from '@tanks/shared/protocol';
 import { DiagLog } from './diag.js';
 import { InputReader } from './input.js';
+import { browserInviteActions, renderInvite } from './invite.js';
 import { NetClient, websocketUrl } from './net.js';
 import { Prediction } from './prediction.js';
 import type { Camera } from './render/camera.js';
@@ -400,23 +401,12 @@ export class Game {
   }
 
   private showWaiting(): void {
-    const link = location.href;
     this.options.overlay.innerHTML = '';
     const title = document.createElement('div');
     title.className = 'overlay-title';
     title.textContent = 'Ждём соперника';
-    const hint = document.createElement('div');
-    hint.className = 'overlay-hint';
-    hint.textContent = 'Отправь ссылку второму игроку:';
-    const linkBox = document.createElement('input');
-    linkBox.className = 'overlay-link';
-    linkBox.readOnly = true;
-    linkBox.value = link;
-    linkBox.addEventListener('click', () => {
-      linkBox.select();
-      void navigator.clipboard.writeText(link);
-    });
-    this.options.overlay.append(title, hint, linkBox);
+    this.options.overlay.append(title);
+    renderInvite(this.options.overlay, location.href, browserInviteActions);
     this.options.overlay.hidden = false;
   }
 

@@ -20,6 +20,9 @@ const AUTOFIRE_START_TIMEOUT_MS = 5_000;
 const AUTOFIRE_STOP_TIMEOUT_MS = 8_000;
 // Дольше перезарядки: за это время выключенный авто-огонь выпустил бы новый снаряд.
 const NO_FIRE_CHECK_MS = 2_000;
+const ANDROID_PACKAGE = 'io.github.darazumovskiy.tanks';
+const ANDROID_USER_AGENT =
+  'Mozilla/5.0 (Linux; Android 15; 24129PN74G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
 
 const server = new GameServer();
 
@@ -149,7 +152,7 @@ test('сервер перезапущен под открытыми страни
 
 test('телефон: кнопка авто-огня стреляет без касания стика, повторное касание выключает', async ({ browser }) => {
   const code = roomCode();
-  const phone = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, true);
+  const phone = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, { isTouch: true });
   const desktop = await Player.open(browser, server.baseUrl, code, 'Компьютер', DEFAULT_STATS);
   await phone.waitForFight();
   await desktop.waitForFight();
@@ -200,4 +203,45 @@ test('комната с манекеном: раунд стартует сраз
     'манекен не двигается',
   );
   await human.close();
+});
+
+test('создатель ждёт соперника: «Копировать» кладёт ссылку на дуэль в буфер обмена', async ({ browser }) => {
+  const code = roomCode();
+  const creator = await Player.open(browser, server.baseUrl, code, 'Алиса', DEFAULT_STATS);
+  await creator.expectOverlay('Ждём соперника');
+  const copyButton = creator.copyButton();
+  await expect(copyButton).toHaveText('Копировать');
+  await copyButton.click();
+  await expect(copyButton).toHaveText('Скопировано');
+  expect(await creator.clipboardText()).toBe(`${server.baseUrl}/d/${code}`);
+  await creator.close();
+});
+
+test('браузер Android видит плашку «Открыть в приложении», компьютер — нет', async ({ browser }) => {
+  const code = roomCode();
+  const android = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, {
+    userAgent: ANDROID_USER_AGENT,
+  });
+  await expect(android.openAppBanner()).toBeVisible();
+  const href = await android.openAppHref();
+  expect(href).toMatch(/^intent:\/\//);
+  expect(href).toContain(`${new URL(server.baseUrl).host}/d/${code}`);
+  expect(href).toContain(`package=${ANDROID_PACKAGE}`);
+  expect(href).toContain(encodeURIComponent(`${server.baseUrl}/app/tanks.apk`));
+  await android.closeOpenAppBanner();
+  await expect(android.openAppBanner()).toBeHidden();
+
+  const desktop = await Player.open(browser, server.baseUrl, code, 'Компьютер', DEFAULT_STATS);
+  await desktop.waitForBattle();
+  await expect(desktop.openAppBanner()).toBeHidden();
+  await android.close();
+  await desktop.close();
+});
+
+test('сервер отдаёт подтверждение домена для Android App Links', async ({ request }) => {
+  const response = await request.get(`${server.baseUrl}/.well-known/assetlinks.json`);
+  expect(response.status()).toBe(200);
+  expect(response.headers()['content-type']).toContain('application/json');
+  const statements = (await response.json()) as { target: { package_name: string } }[];
+  expect(statements[0]?.target.package_name).toBe(ANDROID_PACKAGE);
 });

@@ -7,7 +7,8 @@
 | Файл | Роль |
 |---|---|
 | `packages/mobile/capacitor.config.ts` | `appId` `io.github.darazumovskiy.tanks`, имя «Танки», `server.url` — адрес игрового сервера (переопределяется `TANKS_SERVER_URL`), `webDir: www` — заглушка «нет связи» |
-| `packages/mobile/android/` | Нативный проект: `AndroidManifest.xml` — `screenOrientation="sensorLandscape"`; `MainActivity.java` — скрытые системные панели (возвращаются свайпом от края), экран не гаснет; `app/build.gradle` — подпись из переменных окружения, `versionCode`/`versionName` |
+| `packages/mobile/android/` | Нативный проект: `AndroidManifest.xml` — `screenOrientation="sensorLandscape"`, intent-filter ссылок `https://<сервер>/d/…` с `autoVerify`; `MainActivity.java` — скрытые системные панели (возвращаются свайпом от края), экран не гаснет, ссылка на дуэль из `onNewIntent` грузится в WebView; `app/build.gradle` — подпись из переменных окружения, `versionCode`/`versionName`, хост ссылок из `TANKS_SERVER_URL`. Открытие ссылок приложением — [invite-link.md](../frontend/invite-link.md) |
+| `packages/mobile/package.json` | Нативные плагины Capacitor, которые `cap sync` кладёт в APK: `@capacitor/share` — системное меню «поделиться» |
 | `packages/mobile/ios/` | Проект iOS, создан, не собирается (см. research) |
 | `deploy/android/Dockerfile` | Образ сборки: JDK 21, Android SDK 36, build-tools 36 и 35. Всегда `linux/amd64` — инструменты SDK собраны под x86_64, на Apple Silicon идёт через Rosetta |
 | `deploy/android/keystore.sh` | Один раз создаёт ключ подписи в `~/.secrets/tanks-android/` (`keystore.jks`, `env` с паролями). Ключ не в репозитории; потеря ключа = переустановка приложения у всех |
@@ -18,11 +19,16 @@
 
 ## Как выпустить новую версию приложения
 
-Нужно только при изменении самой оболочки (ориентация, панели, иконка, адрес сервера). Изменения игры доезжают без этого.
+Нужно только при изменении самой оболочки (ориентация, панели, иконка, адрес сервера, нативные плагины). Изменения игры доезжают без этого.
 
 1. Поднять `versionCode` в `packages/mobile/android/app/build.gradle`.
-2. `deploy/android/build.sh`, затем `deploy/android/upload.sh root@172.232.212.157`.
+2. `deploy/android/build.sh`, затем `deploy/android/upload.sh root@172.232.212.157`. Если менялся `assetlinks.json` — сначала выкладка сервера: Android сверяет домен при установке.
 3. На телефоне — скачать по QR заново; Android поставит поверх старой версии, потому что подпись та же.
+
+| Версия | Что изменилось |
+|---|---|
+| 0.2 (`versionCode` 2) | Первая установка у Димы |
+| 0.3 (`versionCode` 3) | Ссылки на дуэль открываются приложением; плагин «поделиться» |
 
 ## Проверка на устройстве
 

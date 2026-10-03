@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.github.darazumovskiy.tanks",
+      "sha256_cert_fingerprints": [
+        "7F:D3:94:E2:2B:4B:1D:9C:66:48:5F:75:E2:2C:A2:B7:38:ED:E0:9A:F5:7A:34:23:8B:74:75:F5:58:B0:5D:D2"
+      ]
+    }
+  }
+]

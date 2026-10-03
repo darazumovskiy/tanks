@@ -1,4 +1,4 @@
-import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test';
 
 export interface Point {
   x: number;
@@ -29,6 +29,10 @@ export interface DebugState {
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
 const AUTOFIRE_BUTTON = '#autofire';
+const COPY_BUTTON = '#overlay .overlay-copy';
+const OPEN_APP_BANNER = '#open-app';
+const OPEN_APP_LINK = '#open-app-link';
+const OPEN_APP_CLOSE = '#open-app-close';
 // Экран телефона в альбомной ориентации; с эмуляцией касания клиент видит `pointer: coarse` и показывает кнопки.
 const PHONE_VIEWPORT = { width: 844, height: 390 };
 const POLL_MS = 50;
@@ -77,11 +81,12 @@ export class Player {
     roomCode: string,
     name: string,
     stats: string,
-    isTouch = false,
+    options: { isTouch?: boolean; userAgent?: string } = {},
   ): Promise<Player> {
-    const context = isTouch
-      ? await browser.newContext({ hasTouch: true, isMobile: true, viewport: PHONE_VIEWPORT })
-      : await browser.newContext();
+    const touchOptions = options.isTouch === true ? { hasTouch: true, isMobile: true, viewport: PHONE_VIEWPORT } : {};
+    const agentOptions = options.userAgent === undefined ? {} : { userAgent: options.userAgent };
+    const context = await browser.newContext({ ...touchOptions, ...agentOptions });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     await context.addInitScript(
       (entries: Record<string, string>) => {
         for (const [key, value] of Object.entries(entries)) {
@@ -138,6 +143,26 @@ export class Player {
 
   async expectNoBattle(): Promise<void> {
     expect(await this.state()).toBeNull();
+  }
+
+  copyButton(): Locator {
+    return this.page.locator(COPY_BUTTON);
+  }
+
+  clipboardText(): Promise<string> {
+    return this.page.evaluate(() => navigator.clipboard.readText());
+  }
+
+  openAppBanner(): Locator {
+    return this.page.locator(OPEN_APP_BANNER);
+  }
+
+  openAppHref(): Promise<string | null> {
+    return this.page.locator(OPEN_APP_LINK).getAttribute('href');
+  }
+
+  async closeOpenAppBanner(): Promise<void> {
+    await this.page.locator(OPEN_APP_CLOSE).click();
   }
 
   // Едет вперёд заданное время и возвращает, на сколько сдвинулся танк.
