@@ -13,7 +13,7 @@ import {
   type Camera,
   type Point,
 } from './camera.js';
-import { farFieldWindow, fitRatio, ZoomLevels } from './cameraLevels.js';
+import { farFieldWindow, ZoomLevels, type Level } from './cameraLevels.js';
 import type { CameraInput, CameraStrategy } from './cameraStrategy.js';
 
 // Точка покоя своего танка — выше середины: внизу живут стики.
@@ -77,12 +77,11 @@ export class FollowCamera implements CameraStrategy {
     return this.smoothed;
   }
 
-  private nextLevel(input: CameraInput, near: number, aspect: number, dtMs: number): 'near' | 'far' {
+  private nextLevel(input: CameraInput, near: number, aspect: number, dtMs: number): Level {
     if (this.levels === null) {
       return 'near';
     }
-    const ratio = input.enemy === null ? null : fitRatio(input.me, input.enemy, near, aspect);
-    return this.levels.next(ratio, dtMs);
+    return this.levels.nextFor(input.me, input.enemy, near, aspect, dtMs);
   }
 
   private nearWindow(input: CameraInput, height: number, aspect: number, dtMs: number): Camera {

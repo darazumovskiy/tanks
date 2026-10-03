@@ -47,6 +47,14 @@ export class ZoomLevels {
     return this.level;
   }
 
+  // Уровень по положению танков. Ближний уровень не меньше поля (обзор 100 %) — уровень один, дальний.
+  nextFor(me: Point, enemy: Point | null, near: number, aspect: number, dtMs: number): Level {
+    if (near >= ARENA.height) {
+      return 'far';
+    }
+    return this.next(enemy === null ? null : fitRatio(me, enemy, near, aspect), dtMs);
+  }
+
   private resolve(ratio: number | null, dtMs: number): Level {
     if (ratio === null) {
       return this.level ?? 'far';

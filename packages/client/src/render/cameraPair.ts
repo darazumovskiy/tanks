@@ -11,7 +11,7 @@ import {
   windowRangeFor,
   type Camera,
 } from './camera.js';
-import { ENEMY_AREA, enemyRange, farFieldWindow, fitRatio, ZoomLevels } from './cameraLevels.js';
+import { ENEMY_AREA, enemyRange, farFieldWindow, ZoomLevels } from './cameraLevels.js';
 import type { CameraInput, CameraStrategy } from './cameraStrategy.js';
 
 // Центр пары — выше середины экрана: внизу стики.
@@ -38,8 +38,7 @@ export class PairCamera implements CameraStrategy {
   update(input: CameraInput, dtMs: number): Camera {
     const aspect = input.canvasWidth / input.canvasHeight;
     const near = (ARENA.height * this.settings.minViewPercent) / 100;
-    const ratio = input.enemy === null ? null : fitRatio(input.me, input.enemy, near, aspect);
-    const level = this.levels.next(ratio, dtMs);
+    const level = this.levels.nextFor(input.me, input.enemy, near, aspect, dtMs);
     const share = this.settings.pairVoidPercent / 100;
     const voidLimit = { x: share, y: share };
     const wanted =

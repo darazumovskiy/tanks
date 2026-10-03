@@ -258,9 +258,18 @@ export class Renderer {
   }
 
   // Полоса за полем, предупредительная штриховка вдоль края и светлая линия границы. Рисуется в координатах
-  // поля под полом; пол закрывает внутреннюю половину штрихов, поэтому они отступают наружу.
+  // поля под полом; пол закрывает внутреннюю половину штрихов, поэтому они отступают наружу. Окно целиком
+  // внутри поля — рисовать нечего, экономим три заливки на кадр.
   private drawBorder(): void {
-    const { ctx } = this;
+    const { ctx, camera } = this;
+    const isInsideField =
+      camera.x >= 0 &&
+      camera.y >= 0 &&
+      camera.x + camera.width <= ARENA.width &&
+      camera.y + camera.height <= ARENA.height;
+    if (isInsideField) {
+      return;
+    }
     ctx.save();
     for (const band of BORDER_BANDS) {
       ctx.fillStyle = band.fill;
