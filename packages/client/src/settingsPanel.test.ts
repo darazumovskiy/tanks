@@ -64,8 +64,8 @@ describe('SettingsPanel', () => {
   });
 
   it('открытие панели подтягивает значения, изменённые вне её', () => {
-    store.setNumber('viewPercent', 50);
+    store.setNumber('minViewPercent', 50);
     toggle.click();
-    expect(rangeFor('viewPercent').value).toBe('50');
+    expect(rangeFor('minViewPercent').value).toBe('50');
   });
 });

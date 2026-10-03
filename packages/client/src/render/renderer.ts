@@ -6,11 +6,13 @@ import type { StickState } from '../touch.js';
 import { drawTankSprite, TankArt } from './art.js';
 import {
   edgeMarker,
-  followCenter,
   frameCamera,
+  frameTargets,
   keepTargetInSafeZone,
   screenToWorld,
+  smoothCamera,
   type Camera,
+  type FramingInsets,
   type Point,
 } from './camera.js';
 import type { Effects } from './effects.js';
@@ -52,7 +54,10 @@ const PLATE_BAR_HEIGHT = 7;
 const MARKER_INSET = 36;
 const MARKER_SIZE = 10;
 const ANNOUNCE_SCALE = 0.6;
-const SAFE_TOP_FRACTION = 0.15;
+// Доли окна под панели (сверху) и большие пальцы на стиках (снизу, по бокам): цели кадрирования держатся вне их.
+const FRAMING_INSETS: FramingInsets = { side: 0.12, top: 0.14, bottom: 0.32 };
+// Свой танк не заходит в эти доли даже ценой пустоты за полем — иначе он уехал бы под стик.
+const SELF_INSETS: FramingInsets = { side: 0.1, top: 0.12, bottom: 0.3 };
 const FRAME_GRAPH_HEIGHT = 36;
 const FRAME_GRAPH_BAR_WIDTH = 2;
 const FRAME_BUDGET_MS = 1000 / 60;
@@ -77,9 +82,9 @@ export class Renderer {
   private readonly art: [TankArt, TankArt] = [new TankArt(0), new TankArt(1)];
   private pixelRatio = 1;
   private camera: Camera;
-  private cameraCenter: Point | null = null;
+  private smoothedCamera: Camera | null = null;
 
-  // На компьютере поле показывается целиком; на устройстве с касанием камера приближает по настройке «обзор».
+  // На компьютере поле показывается целиком; на устройстве с касанием камера кадрирует бой: себя и противника.
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly effects: Effects,
@@ -92,27 +97,35 @@ export class Renderer {
     }
     this.ctx = ctx;
     this.resize();
-    this.camera = frameCamera(
-      { x: ARENA.width / 2, y: ARENA.height / 2 },
-      canvas.width,
-      canvas.height,
-      this.viewHeight(),
-    );
+    this.camera = frameCamera({ x: ARENA.width / 2, y: ARENA.height / 2 }, canvas.width, canvas.height, ARENA.height);
     window.addEventListener('resize', () => {
       this.resize();
     });
   }
 
-  // Новый раунд — танк появляется в другом месте, камера не должна ехать к нему через всё поле.
+  // Новый раунд — танки появляются в другом месте, камера не должна ехать к ним через всё поле.
   resetCamera(): void {
-    this.cameraCenter = null;
+    this.smoothedCamera = null;
   }
 
-  private viewHeight(): number {
+  private frameBattle(view: WorldView, mySide: Side, frameMs: number): Camera {
     if (!this.isTouchDevice) {
-      return ARENA.height;
+      return frameCamera(
+        { x: ARENA.width / 2, y: ARENA.height / 2 },
+        this.canvas.width,
+        this.canvas.height,
+        ARENA.height,
+      );
     }
-    return (ARENA.height * this.settings.viewPercent) / 100;
+    const me = view.tanks[mySide];
+    const enemy = view.tanks[mySide === 0 ? 1 : 0];
+    const targets: Point[] = enemy.isAlive ? [me, enemy] : [me];
+    const minViewHeight = (ARENA.height * this.settings.minViewPercent) / 100;
+    const framed = frameTargets(targets, this.canvas.width, this.canvas.height, minViewHeight, FRAMING_INSETS);
+    const wanted = keepTargetInSafeZone(framed, me, SELF_INSETS);
+    const smoothing = { moveLagMs: this.settings.cameraLagMs, zoomLagMs: this.settings.zoomLagMs };
+    this.smoothedCamera = smoothCamera(this.smoothedCamera, wanted, smoothing, frameMs);
+    return this.smoothedCamera;
   }
 
   // Координаты окна → координаты поля боя через текущее положение камеры.
@@ -137,24 +150,7 @@ export class Renderer {
 
   draw(view: WorldView, hud: HudInfo, overlay: Overlay): void {
     const { ctx } = this;
-    const me = view.tanks[hud.mySide];
-    const viewHeight = this.viewHeight();
-    const viewWidth = (this.canvas.width / this.canvas.height) * viewHeight;
-    const follow = {
-      boxXPercent: this.settings.cameraBoxXPercent,
-      boxYPercent: this.settings.cameraBoxYPercent,
-      lagMs: this.settings.cameraLagMs,
-    };
-    const center = followCenter(this.cameraCenter, me, { width: viewWidth, height: viewHeight }, follow, hud.frameMs);
-    const framed = frameCamera(center, this.canvas.width, this.canvas.height, viewHeight);
-    this.camera = this.isTouchDevice
-      ? keepTargetInSafeZone(framed, me, {
-          side: this.settings.safeSidePercent / 100,
-          top: SAFE_TOP_FRACTION,
-          bottom: this.settings.safeBottomPercent / 100,
-        })
-      : framed;
-    this.cameraCenter = { x: this.camera.x + this.camera.width / 2, y: this.camera.y + this.camera.height / 2 };
+    this.camera = this.frameBattle(view, hud.mySide, hud.frameMs);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#07080a';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);

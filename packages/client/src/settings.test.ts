@@ -14,12 +14,12 @@ describe('parseSettings', () => {
 
   it('значения вне диапазона зажимаются, неверные типы заменяются умолчанием', () => {
     const settings = parseSettings(
-      JSON.stringify({ stickRadiusPx: 500, deadZone: -1, fireRing: 'x', viewPercent: 60, showFrameGraph: 'yes' }),
+      JSON.stringify({ stickRadiusPx: 500, deadZone: -1, fireRing: 'x', minViewPercent: 55, showFrameGraph: 'yes' }),
     );
     expect(settings.stickRadiusPx).toBe(110);
     expect(settings.deadZone).toBe(0);
     expect(settings.fireRing).toBe(DEFAULT_SETTINGS.fireRing);
-    expect(settings.viewPercent).toBe(60);
+    expect(settings.minViewPercent).toBe(55);
     expect(settings.showFrameGraph).toBe(false);
   });
 
@@ -51,10 +51,10 @@ describe('SettingsStore', () => {
 
   it('сброс возвращает умолчания и сохраняет их', () => {
     const store = new SettingsStore(localStorage);
-    store.setNumber('viewPercent', 40);
+    store.setNumber('minViewPercent', 40);
     store.reset();
     expect(store.value).toEqual(DEFAULT_SETTINGS);
-    expect(new SettingsStore(localStorage).value.viewPercent).toBe(DEFAULT_SETTINGS.viewPercent);
+    expect(new SettingsStore(localStorage).value.minViewPercent).toBe(DEFAULT_SETTINGS.minViewPercent);
   });
 
   it('объект настроек один и тот же — потребители читают изменения без подписки', () => {

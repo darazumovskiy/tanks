@@ -1,6 +1,14 @@
 import { ARENA } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
-import { edgeMarker, followCenter, frameCamera, keepTargetInSafeZone, screenToWorld, worldToScreen } from './camera.js';
+import {
+  edgeMarker,
+  frameCamera,
+  frameTargets,
+  keepTargetInSafeZone,
+  screenToWorld,
+  smoothCamera,
+  worldToScreen,
+} from './camera.js';
 
 const PHONE = { width: 2200, height: 1000 };
 const VIEW_HEIGHT = 560;
@@ -91,49 +99,6 @@ describe('высота окна — параметр', () => {
   });
 });
 
-describe('followCenter', () => {
-  const view = { width: 1000, height: 500 };
-  const rigid = { boxXPercent: 0, boxYPercent: 0, lagMs: 0 };
-  const boxed = { boxXPercent: 40, boxYPercent: 40, lagMs: 0 };
-
-  it('первый кадр — центр на цели', () => {
-    expect(followCenter(null, { x: 300, y: 200 }, view, boxed, 16)).toEqual({ x: 300, y: 200 });
-  });
-
-  it('без свободы и догона — жёсткая привязка', () => {
-    expect(followCenter({ x: 0, y: 0 }, { x: 300, y: 200 }, view, rigid, 16)).toEqual({ x: 300, y: 200 });
-  });
-
-  it('цель внутри свободного прямоугольника — камера не двигается', () => {
-    const center = { x: 500, y: 250 };
-    expect(followCenter(center, { x: 650, y: 330 }, view, boxed, 16)).toEqual(center);
-  });
-
-  it('цель вышла за прямоугольник — камера сдвигается ровно до его границы', () => {
-    const center = { x: 500, y: 250 };
-    const moved = followCenter(center, { x: 800, y: 250 }, view, boxed, 16);
-    expect(moved.x).toBe(600);
-    expect(moved.y).toBe(250);
-    const up = followCenter(center, { x: 500, y: 100 }, view, boxed, 16);
-    expect(up.y).toBe(200);
-  });
-
-  it('доли по осям независимы: узкая по горизонтали, широкая по вертикали', () => {
-    const follow = { boxXPercent: 10, boxYPercent: 60, lagMs: 0 };
-    const center = { x: 500, y: 250 };
-    expect(followCenter(center, { x: 600, y: 250 }, view, follow, 16).x).toBe(550);
-    expect(followCenter(center, { x: 500, y: 380 }, view, follow, 16).y).toBe(250);
-  });
-
-  it('догон: за lagMs проходится половина пути, за долгое время — почти весь', () => {
-    const lagged = { boxXPercent: 0, boxYPercent: 0, lagMs: 100 };
-    const half = followCenter({ x: 0, y: 0 }, { x: 100, y: 0 }, view, lagged, 100);
-    expect(half.x).toBeCloseTo(50, 6);
-    const almost = followCenter({ x: 0, y: 0 }, { x: 100, y: 0 }, view, lagged, 1000);
-    expect(almost.x).toBeGreaterThan(99.8);
-  });
-});
-
 describe('keepTargetInSafeZone', () => {
   const safe = { side: 0.25, top: 0.15, bottom: 0.4 };
 
@@ -163,5 +128,109 @@ describe('keepTargetInSafeZone', () => {
     expect(camera.width).toBeGreaterThan(ARENA.width - 100);
     const kept = keepTargetInSafeZone(camera, { x: 90, y: 450 }, safe);
     expect((90 - kept.x) / kept.width).toBeCloseTo(0.25, 6);
+  });
+});
+
+describe('frameTargets', () => {
+  const insets = { side: 0.12, top: 0.14, bottom: 0.32 };
+  const MIN_VIEW = 540;
+
+  it('танки далеко друг от друга — поле целиком по высоте, окно центрировано на поле', () => {
+    const camera = frameTargets(
+      [
+        { x: 140, y: 450 },
+        { x: 1460, y: 450 },
+      ],
+      2200,
+      1000,
+      MIN_VIEW,
+      insets,
+    );
+    expect(camera.height).toBe(ARENA.height);
+    expect(camera.y).toBe(0);
+    expect(camera.x + camera.width / 2).toBeCloseTo(ARENA.width / 2, 6);
+  });
+
+  it('танки рядом — приближение до минимума, оба в безопасной области, центр целей выше середины экрана', () => {
+    const me = { x: 800, y: 600 };
+    const enemy = { x: 900, y: 560 };
+    const camera = frameTargets([me, enemy], 2200, 1000, MIN_VIEW, insets);
+    expect(camera.height).toBe(MIN_VIEW);
+    for (const point of [me, enemy]) {
+      const fx = (point.x - camera.x) / camera.width;
+      const fy = (point.y - camera.y) / camera.height;
+      expect(fx).toBeGreaterThan(insets.side);
+      expect(fx).toBeLessThan(1 - insets.side);
+      expect(fy).toBeGreaterThan(insets.top);
+      expect(fy).toBeLessThan(1 - insets.bottom);
+    }
+    const targetsCenterY = (me.y + enemy.y) / 2;
+    expect((targetsCenterY - camera.y) / camera.height).toBeCloseTo(
+      insets.top + (1 - insets.top - insets.bottom) / 2,
+      6,
+    );
+  });
+
+  it('танки на среднем расстоянии — высота подбирается так, чтобы оба влезли с запасом', () => {
+    const camera = frameTargets(
+      [
+        { x: 300, y: 450 },
+        { x: 1100, y: 450 },
+      ],
+      2200,
+      1000,
+      MIN_VIEW,
+      insets,
+    );
+    expect(camera.height).toBeGreaterThan(MIN_VIEW);
+    expect(camera.height).toBeLessThan(ARENA.height);
+    const spanNeeded = 800 + 220;
+    expect(camera.width * (1 - insets.side * 2)).toBeCloseTo(spanNeeded, 6);
+  });
+
+  it('оба танка в левом нижнем углу — окно прижато к углу поля, не к центру', () => {
+    const camera = frameTargets(
+      [
+        { x: 150, y: 780 },
+        { x: 300, y: 700 },
+      ],
+      2200,
+      1000,
+      MIN_VIEW,
+      insets,
+    );
+    expect(camera.x).toBe(0);
+    expect(camera.y + camera.height).toBeCloseTo(ARENA.height, 6);
+    expect(camera.height).toBeCloseTo((80 + 220) / (1 - insets.top - insets.bottom), 6);
+  });
+
+  it('одна цель — минимальное приближение вокруг неё', () => {
+    const camera = frameTargets([{ x: 800, y: 450 }], 2200, 1000, MIN_VIEW, insets);
+    expect(camera.height).toBe(MIN_VIEW);
+    expect(camera.x + camera.width / 2).toBeCloseTo(800, 6);
+  });
+});
+
+describe('smoothCamera', () => {
+  const smoothing = { moveLagMs: 100, zoomLagMs: 200 };
+  const from = { x: 0, y: 0, width: 1000, height: 500, scale: 2 };
+  const to = { x: 400, y: 200, width: 1600, height: 800, scale: 1.25 };
+
+  it('первый кадр — сразу цель', () => {
+    expect(smoothCamera(null, to, smoothing, 16)).toEqual(to);
+  });
+
+  it('за lagMs центр проходит половину пути, высота — свою половину за свой lagMs', () => {
+    const step = smoothCamera(from, to, smoothing, 100);
+    const fromCenterX = from.x + from.width / 2;
+    const toCenterX = to.x + to.width / 2;
+    expect(step.x + step.width / 2).toBeCloseTo((fromCenterX + toCenterX) / 2, 6);
+    expect(step.height).toBeCloseTo(500 + 300 * (1 - Math.pow(0.5, 100 / 200)), 6);
+    expect(step.width / step.height).toBeCloseTo(to.width / to.height, 6);
+    expect(step.scale * step.height).toBeCloseTo(to.scale * to.height, 6);
+  });
+
+  it('нулевые паузы — мгновенно', () => {
+    expect(smoothCamera(from, to, { moveLagMs: 0, zoomLagMs: 0 }, 16)).toEqual(to);
   });
 });

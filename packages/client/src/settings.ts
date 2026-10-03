@@ -4,12 +4,9 @@ export interface Settings {
   stickRadiusPx: number;
   deadZone: number;
   fireRing: number;
-  viewPercent: number;
-  cameraBoxXPercent: number;
-  cameraBoxYPercent: number;
+  minViewPercent: number;
   cameraLagMs: number;
-  safeSidePercent: number;
-  safeBottomPercent: number;
+  zoomLagMs: number;
   showFrameGraph: boolean;
 }
 
@@ -28,12 +25,9 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = {
   stickRadiusPx: 40,
   deadZone: 0.07,
   fireRing: 0.89,
-  viewPercent: 80,
-  cameraBoxXPercent: 0,
-  cameraBoxYPercent: 0,
+  minViewPercent: 60,
   cameraLagMs: 120,
-  safeSidePercent: 25,
-  safeBottomPercent: 40,
+  zoomLagMs: 300,
   showFrameGraph: false,
 };
 
@@ -41,39 +35,22 @@ export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
   { key: 'stickRadiusPx', label: 'Размер стика', hint: 'радиус круга, px', min: 40, max: 110, step: 2 },
   { key: 'deadZone', label: 'Мёртвая зона', hint: 'доля радиуса без реакции', min: 0, max: 0.5, step: 0.01 },
   { key: 'fireRing', label: 'Кольцо огня', hint: 'доля радиуса, с которой стреляет', min: 0.5, max: 1, step: 0.01 },
-  { key: 'viewPercent', label: 'Обзор', hint: '% высоты поля в кадре (только телефон)', min: 40, max: 100, step: 5 },
   {
-    key: 'cameraBoxXPercent',
-    label: 'Свобода камеры по горизонтали',
-    hint: '% ширины кадра, где танк ездит без сдвига камеры',
-    min: 0,
-    max: 80,
-    step: 5,
-  },
-  {
-    key: 'cameraBoxYPercent',
-    label: 'Свобода камеры по вертикали',
-    hint: '% высоты кадра, где танк ездит без сдвига камеры',
-    min: 0,
-    max: 80,
+    key: 'minViewPercent',
+    label: 'Приближение',
+    hint: 'ближе камера не подъезжает: минимум % высоты поля в кадре (только телефон)',
+    min: 40,
+    max: 100,
     step: 5,
   },
   { key: 'cameraLagMs', label: 'Догон камеры', hint: 'мс до середины пути; 0 — мгновенно', min: 0, max: 500, step: 10 },
   {
-    key: 'safeSidePercent',
-    label: 'Запас до края экрана',
-    hint: '% ширины: танк не ближе к левому и правому краю, даже ценой пустоты за полем',
-    min: 10,
-    max: 45,
-    step: 5,
-  },
-  {
-    key: 'safeBottomPercent',
-    label: 'Запас до низа экрана',
-    hint: '% высоты от низа, куда танк не опускается — там стики',
-    min: 20,
-    max: 60,
-    step: 5,
+    key: 'zoomLagMs',
+    label: 'Плавность приближения',
+    hint: 'мс до середины пути; 0 — мгновенно',
+    min: 0,
+    max: 1000,
+    step: 25,
   },
 ];
 
