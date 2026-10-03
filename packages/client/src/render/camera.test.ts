@@ -198,19 +198,14 @@ describe('frameTargets', () => {
     expect(camera.width * (1 - insets.side * 2)).toBeCloseTo(spanNeeded, 6);
   });
 
-  it('оба танка в левом нижнем углу — окно прижато к углу поля, не к центру', () => {
-    const camera = frameTargets(
-      [
-        { x: 150, y: 780 },
-        { x: 300, y: 700 },
-      ],
-      2200,
-      1000,
-      MIN_VIEW,
-      insets,
-    );
-    expect(camera.x).toBe(0);
-    expect(camera.y + camera.height).toBeCloseTo(ARENA.height, 6);
+  it('оба танка в левом нижнем углу — камера центрирует пару, за краем поля пустота', () => {
+    const me = { x: 150, y: 780 };
+    const enemy = { x: 300, y: 700 };
+    const camera = frameTargets([me, enemy], 2200, 1000, MIN_VIEW, insets);
+    expect(camera.x).toBeLessThan(0);
+    expect(camera.x + camera.width / 2).toBeCloseTo((me.x + enemy.x) / 2, 6);
+    const pairY = (me.y + enemy.y) / 2;
+    expect((pairY - camera.y) / camera.height).toBeCloseTo(insets.top + (1 - insets.top - insets.bottom) / 2, 6);
     expect(camera.height).toBeCloseTo((80 + 220) / (1 - insets.top - insets.bottom), 6);
   });
 
@@ -222,6 +217,14 @@ describe('frameTargets', () => {
     expect(frameTargets(targets, 2200, 1000, MIN_VIEW, insets, 700).height).toBe(700);
     expect(frameTargets(targets, 2200, 1000, MIN_VIEW, insets, 100).height).toBe(MIN_VIEW);
     expect(frameTargets(targets, 2200, 1000, MIN_VIEW, insets, 5000).height).toBe(ARENA.height);
+  });
+
+  it('окно шириной с поле, но не полностью отдалено — всё равно центр на паре', () => {
+    const me = { x: 24, y: 450 };
+    const enemy = { x: 854, y: 450 };
+    const camera = frameTargets([me, enemy], 2224, 1000, 720, insets, 720);
+    expect(camera.width).toBeGreaterThan(ARENA.width);
+    expect(camera.x + camera.width / 2).toBeCloseTo((me.x + enemy.x) / 2, 6);
   });
 
   it('одна цель — минимальное приближение вокруг неё', () => {

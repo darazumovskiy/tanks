@@ -46,7 +46,9 @@ const TARGET_MARGIN = 110;
 
 // Камера дуэли: держит в кадре все цели (свой танк и противника) внутри безопасной области окна, приближая,
 // когда они рядом, и отдаляя до целого поля, когда далеко. Безопасная область сдвинута вверх, поэтому центр
-// целей оказывается выше середины экрана — внизу живут стики. Окно прижимается к полю.
+// целей оказывается выше середины экрана — внизу живут стики. Полностью отдалена (высота окна — всё поле) —
+// центрируется поле; любое приближение — центр событий, даже если за краем поля видна пустота, а дальний край
+// поля ушёл за кадр.
 export function frameTargets(
   targets: readonly Point[],
   canvasWidth: number,
@@ -68,9 +70,10 @@ export function frameTargets(
   const centerX = (left + right) / 2;
   const centerY = (top + bottom) / 2;
   const safeCenterYFraction = insets.top + safeHeightFraction / 2;
+  const isFullyOut = height >= ARENA.height;
   return {
-    x: clampAxis(centerX - width / 2, width, ARENA.width),
-    y: clampAxis(centerY - height * safeCenterYFraction, height, ARENA.height),
+    x: isFullyOut ? (ARENA.width - width) / 2 : centerX - width / 2,
+    y: isFullyOut ? (ARENA.height - height) / 2 : centerY - height * safeCenterYFraction,
     width,
     height,
     scale: canvasHeight / height,
