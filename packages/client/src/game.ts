@@ -5,6 +5,7 @@ import { NetClient, websocketUrl } from './net.js';
 import { Prediction } from './prediction.js';
 import { Effects } from './render/effects.js';
 import { Renderer, type Overlay } from './render/renderer.js';
+import type { Settings } from './settings.js';
 import { Sfx } from './sfx.js';
 
 export interface GameOptions {
@@ -13,11 +14,13 @@ export interface GameOptions {
   stats?: Stats;
   canvas: HTMLCanvasElement;
   overlay: HTMLElement;
-  viewHeight: number;
+  settings: Readonly<Settings>;
+  isTouchDevice: boolean;
 }
 
 const TICK_MS = DT * 1000;
 const ROUND_OVER_SHOW_MS = 3000;
+const FRAME_HISTORY = 120;
 
 // Связывает сеть, предсказание, ввод, эффекты, звук и рендер; держит цикл кадров и фиксированный шаг ввода.
 export class Game {
@@ -38,12 +41,13 @@ export class Game {
   private frames = 0;
   private fps = 0;
   private fpsWindowStart = performance.now();
+  private readonly frameTimes: number[] = [];
   private isClosed = false;
 
   constructor(private readonly options: GameOptions) {
     this.effects = new Effects(() => this.names());
-    this.renderer = new Renderer(options.canvas, this.effects, options.viewHeight);
-    this.input = new InputReader(options.canvas, this.renderer);
+    this.renderer = new Renderer(options.canvas, this.effects, options.settings, options.isTouchDevice);
+    this.input = new InputReader(options.canvas, this.renderer, options.settings);
     this.bindAudioUnlock();
     this.net = new NetClient(
       websocketUrl(),
@@ -68,6 +72,7 @@ export class Game {
           this.countdownBeeped = 0;
           this.prediction = new Prediction(this.side, message.mapIndex, message.tanks, this.lastInputSeq);
           this.effects.reset();
+          this.renderer.resetCamera();
           this.hideOverlay();
         },
         onSnapshot: (message, receivedAt): void => {
@@ -174,6 +179,10 @@ export class Game {
     const elapsed = Math.min(250, now - this.lastFrame);
     this.lastFrame = now;
     this.frames++;
+    this.frameTimes.push(elapsed);
+    if (this.frameTimes.length > FRAME_HISTORY) {
+      this.frameTimes.shift();
+    }
     if (now - this.fpsWindowStart >= 1000) {
       this.fps = (this.frames * 1000) / (now - this.fpsWindowStart);
       this.frames = 0;
@@ -212,6 +221,8 @@ export class Game {
         fps: this.fps,
         isMuted: this.sfx.isMuted,
         sticks: this.input.stickStates,
+        frameMs: elapsed,
+        frameTimes: this.frameTimes,
       },
       this.overlayFor(now, prediction, roundStart),
     );

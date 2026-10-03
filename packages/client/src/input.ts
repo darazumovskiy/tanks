@@ -1,6 +1,6 @@
 import type { Action } from '@tanks/shared/engine';
 import { aimTurret, isStickActive, steerHull } from './steering.js';
-import { TouchSticks, type StickState } from './touch.js';
+import { TouchSticks, type StickSettings, type StickState } from './touch.js';
 
 export interface Viewport {
   toWorld(clientX: number, clientY: number): { x: number; y: number };
@@ -14,6 +14,10 @@ export interface SteeredTank {
   stats: { turnRate: number };
 }
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+}
+
 // Клавиатура — корпус, мышь — башня и выстрел; активный стик касания замещает свой источник.
 export class InputReader {
   private readonly keys = new Set<string>();
@@ -25,10 +29,11 @@ export class InputReader {
   constructor(
     target: HTMLElement,
     private readonly viewport: Viewport,
+    settings: StickSettings,
   ) {
-    this.sticks = new TouchSticks(target);
+    this.sticks = new TouchSticks(target, settings);
     window.addEventListener('keydown', (event) => {
-      if (event.repeat) {
+      if (event.repeat || isTypingTarget(event.target)) {
         return;
       }
       this.keys.add(event.code);
@@ -77,7 +82,7 @@ export class InputReader {
   private readHull(me: SteeredTank): { throttle: number; turn: number } {
     const stick = this.sticks.stick('move');
     if (stick !== null) {
-      const steering = steerHull(stick, me.heading, me.stats.turnRate, this.isReversing);
+      const steering = steerHull(stick, stick.deadZone, me.heading, me.stats.turnRate, this.isReversing);
       this.isReversing = steering.isReversing;
       return steering;
     }
@@ -92,7 +97,7 @@ export class InputReader {
   private readTurretTurn(me: SteeredTank): number {
     const stick = this.sticks.stick('aim');
     if (stick !== null) {
-      if (!isStickActive(stick)) {
+      if (!isStickActive(stick, stick.deadZone)) {
         return 0;
       }
       return aimTurret(Math.atan2(stick.dy, stick.dx), me.turret);

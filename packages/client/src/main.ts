@@ -1,18 +1,14 @@
-import { ARENA, DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
+import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
 import QRCode from 'qrcode';
 import { Game } from './game.js';
+import { SettingsStore } from './settings.js';
+import { SettingsPanel } from './settingsPanel.js';
 
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
-const VIEW_KEY = 'tanks.view';
 const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const APK_ROUTE = '/app/tanks.apk';
-
-// Обзор — какая доля высоты поля видна. На телефоне камера приближает (по умолчанию 75 %),
-// на компьютере поле показывается целиком.
-const VIEW_PERCENT_DEFAULT = 75;
-const VIEW_PERCENT_MIN = 40;
-const VIEW_PERCENT_MAX = 100;
+const SETTINGS_KEY_CODE = 'KeyO';
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 
 function randomCode(): string {
@@ -39,38 +35,16 @@ function parseStats(raw: string | null): Stats {
   return isValid && total <= STAT_POINTS ? stats : { ...DEFAULT_STATS };
 }
 
-function parseViewPercent(raw: string | null): number {
-  if (raw === null || raw.trim() === '') {
-    return VIEW_PERCENT_DEFAULT;
-  }
-  const value = Number(raw);
-  if (!Number.isFinite(value)) {
-    return VIEW_PERCENT_DEFAULT;
-  }
-  return Math.min(VIEW_PERCENT_MAX, Math.max(VIEW_PERCENT_MIN, Math.round(value)));
-}
-
-function viewHeightForDevice(): number {
-  if (!isTouchDevice()) {
-    return ARENA.height;
-  }
-  return (ARENA.height * parseViewPercent(localStorage.getItem(VIEW_KEY))) / 100;
-}
-
 function showHome(): void {
   const home = byId('home', HTMLElement);
   const nickname = byId('nickname', HTMLInputElement);
   const statsInput = byId('stats', HTMLInputElement);
-  const viewInput = byId('view', HTMLInputElement);
   home.hidden = false;
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
   statsInput.value = localStorage.getItem(STATS_KEY) ?? '3322';
-  viewInput.value = String(parseViewPercent(localStorage.getItem(VIEW_KEY)));
-  byId('view-field', HTMLElement).hidden = !isTouchDevice();
   byId('create', HTMLButtonElement).addEventListener('click', () => {
     localStorage.setItem(NICKNAME_KEY, nickname.value);
     localStorage.setItem(STATS_KEY, statsInput.value);
-    localStorage.setItem(VIEW_KEY, String(parseViewPercent(viewInput.value)));
     location.assign(`/d/${randomCode()}`);
   });
   void showAndroidDownload();
@@ -108,13 +82,23 @@ function startDuel(roomCode: string): void {
   const canvas = byId('stage', HTMLCanvasElement);
   canvas.hidden = false;
   document.body.classList.add('duel');
+  const store = new SettingsStore(localStorage);
   const game = new Game({
     roomCode,
     nickname,
     stats,
     canvas,
     overlay: byId('overlay', HTMLElement),
-    viewHeight: viewHeightForDevice(),
+    settings: store.value,
+    isTouchDevice: isTouchDevice(),
+  });
+  const settingsToggle = byId('settings-toggle', HTMLButtonElement);
+  settingsToggle.hidden = false;
+  const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store);
+  window.addEventListener('keydown', (event) => {
+    if (event.code === SETTINGS_KEY_CODE && !event.repeat) {
+      panel.toggle();
+    }
   });
   bindRotateHint(byId('rotate', HTMLElement));
   // Точка доступа для сквозных тестов и отладки из консоли браузера.

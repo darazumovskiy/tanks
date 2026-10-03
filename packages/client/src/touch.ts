@@ -1,15 +1,18 @@
+import type { Settings } from './settings.js';
 import { isStickActive, stickMagnitude, type StickVector } from './steering.js';
 
-export const STICK_RADIUS_PX = 64;
-export const FIRE_RING = 0.85;
 export const TAP_MAX_MS = 200;
 
 export type StickRole = 'move' | 'aim';
 
+// Размеры и пороги фиксируются в момент касания: смена настроек в панели не дёргает уже зажатый стик.
 export interface StickState extends StickVector {
   role: StickRole;
   baseX: number;
   baseY: number;
+  radiusPx: number;
+  deadZone: number;
+  fireRing: number;
 }
 
 interface ActiveStick extends StickState {
@@ -17,6 +20,8 @@ interface ActiveStick extends StickState {
   startedAt: number;
   hasLeftDeadZone: boolean;
 }
+
+export type StickSettings = Pick<Settings, 'stickRadiusPx' | 'deadZone' | 'fireRing'>;
 
 // Плавающие стики: касание левой половины экрана рождает стик корпуса, правой — стик башни.
 // Основание — в точке касания, ручка следует за пальцем в пределах радиуса.
@@ -26,6 +31,7 @@ export class TouchSticks {
 
   constructor(
     target: HTMLElement,
+    private readonly settings: StickSettings,
     private readonly now: () => number = () => performance.now(),
   ) {
     target.addEventListener('pointerdown', (event) => {
@@ -56,7 +62,7 @@ export class TouchSticks {
 
   get isFiringByStick(): boolean {
     const aim = this.active.get('aim');
-    return aim !== undefined && stickMagnitude(aim) >= FIRE_RING;
+    return aim !== undefined && stickMagnitude(aim) >= aim.fireRing;
   }
 
   // Тап по правой половине — одиночный выстрел; флаг снимается при чтении.
@@ -78,6 +84,9 @@ export class TouchSticks {
       baseY: event.clientY,
       dx: 0,
       dy: 0,
+      radiusPx: this.settings.stickRadiusPx,
+      deadZone: this.settings.deadZone,
+      fireRing: this.settings.fireRing,
       startedAt: this.now(),
       hasLeftDeadZone: false,
     });
@@ -88,13 +97,13 @@ export class TouchSticks {
     if (stick === null) {
       return;
     }
-    const rawX = (event.clientX - stick.baseX) / STICK_RADIUS_PX;
-    const rawY = (event.clientY - stick.baseY) / STICK_RADIUS_PX;
+    const rawX = (event.clientX - stick.baseX) / stick.radiusPx;
+    const rawY = (event.clientY - stick.baseY) / stick.radiusPx;
     const length = Math.hypot(rawX, rawY);
     const scale = length > 1 ? 1 / length : 1;
     stick.dx = rawX * scale;
     stick.dy = rawY * scale;
-    if (isStickActive(stick)) {
+    if (isStickActive(stick, stick.deadZone)) {
       stick.hasLeftDeadZone = true;
     }
   }

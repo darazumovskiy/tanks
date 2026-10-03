@@ -1,6 +1,6 @@
 import { ARENA } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
-import { edgeMarker, frameCamera, screenToWorld, worldToScreen } from './camera.js';
+import { edgeMarker, followCenter, frameCamera, screenToWorld, worldToScreen } from './camera.js';
 
 const PHONE = { width: 2200, height: 1000 };
 const VIEW_HEIGHT = 560;
@@ -88,5 +88,41 @@ describe('высота окна — параметр', () => {
     expect(camera.x).toBe(0);
     expect(camera.width).toBeCloseTo(ARENA.width, 6);
     expect(camera.height).toBe(ARENA.height);
+  });
+});
+
+describe('followCenter', () => {
+  const view = { width: 1000, height: 500 };
+  const rigid = { boxPercent: 0, lagMs: 0 };
+  const boxed = { boxPercent: 40, lagMs: 0 };
+
+  it('первый кадр — центр на цели', () => {
+    expect(followCenter(null, { x: 300, y: 200 }, view, boxed, 16)).toEqual({ x: 300, y: 200 });
+  });
+
+  it('без свободы и догона — жёсткая привязка', () => {
+    expect(followCenter({ x: 0, y: 0 }, { x: 300, y: 200 }, view, rigid, 16)).toEqual({ x: 300, y: 200 });
+  });
+
+  it('цель внутри свободного прямоугольника — камера не двигается', () => {
+    const center = { x: 500, y: 250 };
+    expect(followCenter(center, { x: 650, y: 330 }, view, boxed, 16)).toEqual(center);
+  });
+
+  it('цель вышла за прямоугольник — камера сдвигается ровно до его границы', () => {
+    const center = { x: 500, y: 250 };
+    const moved = followCenter(center, { x: 800, y: 250 }, view, boxed, 16);
+    expect(moved.x).toBe(600);
+    expect(moved.y).toBe(250);
+    const up = followCenter(center, { x: 500, y: 100 }, view, boxed, 16);
+    expect(up.y).toBe(200);
+  });
+
+  it('догон: за lagMs проходится половина пути, за долгое время — почти весь', () => {
+    const lagged = { boxPercent: 0, lagMs: 100 };
+    const half = followCenter({ x: 0, y: 0 }, { x: 100, y: 0 }, view, lagged, 100);
+    expect(half.x).toBeCloseTo(50, 6);
+    const almost = followCenter({ x: 0, y: 0 }, { x: 100, y: 0 }, view, lagged, 1000);
+    expect(almost.x).toBeGreaterThan(99.8);
   });
 });

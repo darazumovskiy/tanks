@@ -16,6 +16,8 @@
     <canvas id="stage" hidden></canvas>
     <div id="overlay" class="overlay" hidden></div>
     <div id="rotate" class="rotate-hint" hidden>Поверни телефон горизонтально</div>
+    <button id="settings-toggle" class="settings-toggle" type="button" aria-label="Настройки" hidden>⚙</button>
+    <aside id="settings" class="settings" hidden></aside>
     <section id="home" class="home" hidden>
       <h1>Танки</h1>
       <label>
@@ -25,10 +27,6 @@
       <label>
         Характеристики: броня, двигатель, пушка, перезарядка (сумма ≤ 10)
         <input id="stats" maxlength="4" pattern="[0-5]{4}" value="3322" autocomplete="off" />
-      </label>
-      <label id="view-field" hidden>
-        Обзор на телефоне: сколько процентов высоты поля видно (40–100)
-        <input id="view" type="number" min="40" max="100" step="5" value="75" inputmode="numeric" />
       </label>
       <button id="create">Создать дуэль</button>
       <section id="android" class="android" hidden>
@@ -42,7 +40,7 @@
       <p class="help">
         Управление: W A S D или стрелки — корпус, мышь — башня, левая кнопка или пробел — выстрел, M — звук. На
         телефоне: палец на левой половине экрана — куда повёл, туда едет; на правой — башня, у края стика — огонь, тап —
-        выстрел.
+        выстрел. Шестерёнка в углу (или O) — настройки управления и камеры прямо в бою.
       </p>
     </section>
     <script type="module" src="/src/main.ts"></script>

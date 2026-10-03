@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { STICK_RADIUS_PX, TAP_MAX_MS, TouchSticks } from './touch.js';
+import { TAP_MAX_MS, TouchSticks, type StickSettings } from './touch.js';
+
+const STICK_RADIUS_PX = 64;
 
 interface PointerSpec {
   id: number;
@@ -27,6 +29,7 @@ describe('TouchSticks', () => {
   let target: HTMLElement;
   let sticks: TouchSticks;
   let time = 0;
+  let settings: StickSettings;
 
   const down = (spec: PointerSpec): PointerEvent => {
     const event = pointerEvent('pointerdown', spec);
@@ -48,7 +51,8 @@ describe('TouchSticks', () => {
     target = document.createElement('div');
     document.body.append(target);
     time = 0;
-    sticks = new TouchSticks(target, () => time);
+    settings = { stickRadiusPx: STICK_RADIUS_PX, deadZone: 0.15, fireRing: 0.85 };
+    sticks = new TouchSticks(target, settings, () => time);
   });
 
   it('касание слева рождает стик корпуса в точке касания и ведёт ручку', () => {
@@ -184,5 +188,18 @@ describe('TouchSticks', () => {
   it('касание гасит действие по умолчанию, чтобы браузер не рисовал мышь', () => {
     const event = down({ id: 1, x: LEFT_X, y: Y });
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('новый стик берёт текущие настройки, зажатый — не меняется', () => {
+    down({ id: 1, x: LEFT_X, y: Y });
+    settings.stickRadiusPx = 32;
+    settings.fireRing = 0.5;
+    move({ id: 1, x: LEFT_X + 32, y: Y });
+    expect(sticks.stick('move')?.dx).toBeCloseTo(0.5, 6);
+    down({ id: 2, x: RIGHT_X, y: Y });
+    move({ id: 2, x: RIGHT_X + 20, y: Y });
+    expect(sticks.stick('aim')?.radiusPx).toBe(32);
+    expect(sticks.stick('aim')?.dx).toBeCloseTo(20 / 32, 6);
+    expect(sticks.isFiringByStick).toBe(true);
   });
 });

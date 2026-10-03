@@ -1,6 +1,5 @@
 import { clamp, DT, normalizeAngle, TURRET_RATE } from '@tanks/shared/engine';
 
-const STICK_DEAD_ZONE = 0.15;
 const REVERSE_ENTER_ANGLE = (110 * Math.PI) / 180;
 const REVERSE_EXIT_ANGLE = (70 * Math.PI) / 180;
 
@@ -20,14 +19,20 @@ export function stickMagnitude(stick: StickVector): number {
   return Math.min(1, Math.hypot(stick.dx, stick.dy));
 }
 
-export function isStickActive(stick: StickVector): boolean {
-  return stickMagnitude(stick) >= STICK_DEAD_ZONE;
+export function isStickActive(stick: StickVector, deadZone: number): boolean {
+  return stickMagnitude(stick) >= deadZone;
 }
 
 // Стик задаёт желаемый курс; поворот доводит до него за тик, газ падает с ростом угла доворота.
 // Задний ход включается при большом расхождении и выключается при малом — с зазором, чтобы режим не дрожал.
-export function steerHull(stick: StickVector, heading: number, turnRate: number, isReversing: boolean): HullSteering {
-  if (!isStickActive(stick)) {
+export function steerHull(
+  stick: StickVector,
+  deadZone: number,
+  heading: number,
+  turnRate: number,
+  isReversing: boolean,
+): HullSteering {
+  if (!isStickActive(stick, deadZone)) {
     return { throttle: 0, turn: 0, isReversing };
   }
   const wanted = Math.atan2(stick.dy, stick.dx);

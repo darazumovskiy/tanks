@@ -1,9 +1,10 @@
 import { ARENA, KIT, ROUND_SECONDS, ZONE, type Side } from '@tanks/shared/engine';
 import type { WorldView } from '../prediction.js';
+import type { Settings } from '../settings.js';
 import { stickMagnitude } from '../steering.js';
-import { FIRE_RING, STICK_RADIUS_PX, type StickState } from '../touch.js';
+import type { StickState } from '../touch.js';
 import { drawTankSprite, TankArt } from './art.js';
-import { edgeMarker, frameCamera, screenToWorld, type Camera } from './camera.js';
+import { edgeMarker, followCenter, frameCamera, screenToWorld, type Camera, type Point } from './camera.js';
 import type { Effects } from './effects.js';
 import { floorFor } from './floor.js';
 import { BODY_FONT, HEAD_FONT, SIDE_COLORS, clamp, easeOut } from './view.js';
@@ -20,6 +21,8 @@ export interface HudInfo {
   fps: number;
   isMuted: boolean;
   sticks: readonly StickState[];
+  frameMs: number;
+  frameTimes: readonly number[];
 }
 
 export type Overlay =
@@ -40,6 +43,9 @@ const PLATE_BAR_HEIGHT = 7;
 const MARKER_INSET = 36;
 const MARKER_SIZE = 10;
 const ANNOUNCE_SCALE = 0.6;
+const FRAME_GRAPH_HEIGHT = 36;
+const FRAME_GRAPH_BAR_WIDTH = 2;
+const FRAME_BUDGET_MS = 1000 / 60;
 
 const STICK_KNOB_RATIO = 0.42;
 const STICK_BASE_COLOR = 'rgba(244,241,232,0.18)';
@@ -61,11 +67,14 @@ export class Renderer {
   private readonly art: [TankArt, TankArt] = [new TankArt(0), new TankArt(1)];
   private pixelRatio = 1;
   private camera: Camera;
+  private cameraCenter: Point | null = null;
 
+  // На компьютере поле показывается целиком; на устройстве с касанием камера приближает по настройке «обзор».
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly effects: Effects,
-    private readonly viewHeight: number,
+    private readonly settings: Readonly<Settings>,
+    private readonly isTouchDevice: boolean,
   ) {
     const ctx = canvas.getContext('2d');
     if (ctx === null) {
@@ -73,10 +82,27 @@ export class Renderer {
     }
     this.ctx = ctx;
     this.resize();
-    this.camera = frameCamera({ x: ARENA.width / 2, y: ARENA.height / 2 }, canvas.width, canvas.height, viewHeight);
+    this.camera = frameCamera(
+      { x: ARENA.width / 2, y: ARENA.height / 2 },
+      canvas.width,
+      canvas.height,
+      this.viewHeight(),
+    );
     window.addEventListener('resize', () => {
       this.resize();
     });
+  }
+
+  // Новый раунд — танк появляется в другом месте, камера не должна ехать к нему через всё поле.
+  resetCamera(): void {
+    this.cameraCenter = null;
+  }
+
+  private viewHeight(): number {
+    if (!this.isTouchDevice) {
+      return ARENA.height;
+    }
+    return (ARENA.height * this.settings.viewPercent) / 100;
   }
 
   // Координаты окна → координаты поля боя через текущее положение камеры.
@@ -102,7 +128,12 @@ export class Renderer {
   draw(view: WorldView, hud: HudInfo, overlay: Overlay): void {
     const { ctx } = this;
     const me = view.tanks[hud.mySide];
-    this.camera = frameCamera(me, this.canvas.width, this.canvas.height, this.viewHeight);
+    const viewHeight = this.viewHeight();
+    const viewWidth = (this.canvas.width / this.canvas.height) * viewHeight;
+    const follow = { boxPercent: this.settings.cameraBoxPercent, lagMs: this.settings.cameraLagMs };
+    const center = followCenter(this.cameraCenter, me, { width: viewWidth, height: viewHeight }, follow, hud.frameMs);
+    this.camera = frameCamera(center, this.canvas.width, this.canvas.height, viewHeight);
+    this.cameraCenter = { x: this.camera.x + this.camera.width / 2, y: this.camera.y + this.camera.height / 2 };
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#07080a';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -124,7 +155,34 @@ export class Renderer {
       ctx.fillRect(0, 0, screen.width, screen.height);
     }
     this.drawDebug(hud, screen);
+    if (this.settings.showFrameGraph) {
+      this.drawFrameGraph(hud.frameTimes, screen);
+    }
     this.drawSticks(hud.sticks);
+  }
+
+  // Столбик — длительность кадра; линия — бюджет 60 к/с; красные столбики вышли за бюджет вдвое.
+  private drawFrameGraph(frameTimes: readonly number[], screen: Screen): void {
+    const { ctx } = this;
+    const width = frameTimes.length * FRAME_GRAPH_BAR_WIDTH;
+    const x0 = UI_MARGIN;
+    const y0 = screen.height - 24 - FRAME_GRAPH_HEIGHT;
+    const scale = FRAME_GRAPH_HEIGHT / (FRAME_BUDGET_MS * 3);
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(x0, y0, width, FRAME_GRAPH_HEIGHT);
+    frameTimes.forEach((ms, index) => {
+      const height = Math.min(FRAME_GRAPH_HEIGHT, ms * scale);
+      ctx.fillStyle = ms > FRAME_BUDGET_MS * 2 ? 'rgba(255,90,100,0.9)' : 'rgba(93,255,160,0.7)';
+      ctx.fillRect(x0 + index * FRAME_GRAPH_BAR_WIDTH, y0 + FRAME_GRAPH_HEIGHT - height, FRAME_GRAPH_BAR_WIDTH, height);
+    });
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0 + FRAME_GRAPH_HEIGHT - FRAME_BUDGET_MS * scale);
+    ctx.lineTo(x0 + width, y0 + FRAME_GRAPH_HEIGHT - FRAME_BUDGET_MS * scale);
+    ctx.stroke();
+    ctx.restore();
   }
 
   private drawWorld(view: WorldView, hud: HudInfo): void {
@@ -472,27 +530,34 @@ export class Renderer {
     ctx.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
     ctx.lineWidth = 2;
     for (const stick of sticks) {
+      const radius = stick.radiusPx;
       ctx.fillStyle = STICK_BASE_COLOR;
       ctx.strokeStyle = STICK_EDGE_COLOR;
       ctx.beginPath();
-      ctx.arc(stick.baseX, stick.baseY, STICK_RADIUS_PX, 0, Math.PI * 2);
+      ctx.arc(stick.baseX, stick.baseY, radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      ctx.strokeStyle = STICK_EDGE_COLOR;
+      ctx.setLineDash([3, 5]);
+      ctx.beginPath();
+      ctx.arc(stick.baseX, stick.baseY, radius * stick.deadZone, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
       if (stick.role === 'aim') {
-        const isFiring = stickMagnitude(stick) >= FIRE_RING;
+        const isFiring = stickMagnitude(stick) >= stick.fireRing;
         ctx.strokeStyle = isFiring ? FIRE_RING_ACTIVE_COLOR : FIRE_RING_IDLE_COLOR;
         ctx.lineWidth = isFiring ? 4 : 2;
         ctx.beginPath();
-        ctx.arc(stick.baseX, stick.baseY, STICK_RADIUS_PX * FIRE_RING, 0, Math.PI * 2);
+        ctx.arc(stick.baseX, stick.baseY, radius * stick.fireRing, 0, Math.PI * 2);
         ctx.stroke();
         ctx.lineWidth = 2;
       }
       ctx.fillStyle = STICK_KNOB_COLOR;
       ctx.beginPath();
       ctx.arc(
-        stick.baseX + stick.dx * STICK_RADIUS_PX,
-        stick.baseY + stick.dy * STICK_RADIUS_PX,
-        STICK_RADIUS_PX * STICK_KNOB_RATIO,
+        stick.baseX + stick.dx * radius,
+        stick.baseY + stick.dy * radius,
+        radius * STICK_KNOB_RATIO,
         0,
         Math.PI * 2,
       );

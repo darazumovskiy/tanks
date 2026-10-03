@@ -29,6 +29,86 @@ input {
   -webkit-user-select: text;
 }
 
+.settings-toggle {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #f4f1e8;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.settings {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  width: min(300px, 70vw);
+  padding: 12px 14px 60px;
+  overflow-y: auto;
+  background: rgba(8, 9, 12, 0.92);
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 13px;
+  touch-action: pan-y;
+}
+
+.settings-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.settings-row {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.settings-head {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.settings-value {
+  color: #e8825a;
+  font-family: ui-monospace, monospace;
+}
+
+.settings-hint {
+  font-size: 11px;
+  opacity: 0.6;
+  margin: 2px 0 4px;
+}
+
+.settings-row input[type='range'] {
+  width: 100%;
+  margin: 0;
+}
+
+.settings-check {
+  display: block;
+  margin: 8px 0 14px;
+}
+
+.settings-reset {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #f4f1e8;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
 .rotate-hint {
   position: fixed;
   top: 12px;

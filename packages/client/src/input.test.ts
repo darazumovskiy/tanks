@@ -31,7 +31,11 @@ describe('InputReader', () => {
     document.body.innerHTML = '';
     target = document.createElement('div');
     document.body.append(target);
-    input = new InputReader(target, { toWorld: (x, y) => ({ x, y }) });
+    input = new InputReader(
+      target,
+      { toWorld: (x, y) => ({ x, y }) },
+      { stickRadiusPx: 64, deadZone: 0.15, fireRing: 0.85 },
+    );
   });
 
   it('без ввода — пустое действие', () => {
@@ -142,5 +146,12 @@ describe('InputReader', () => {
     const event = new MouseEvent('contextmenu', { cancelable: true, bubbles: true });
     target.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('клавиши в поле ввода панели настроек не управляют танком', () => {
+    const field = document.createElement('input');
+    document.body.append(field);
+    field.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', bubbles: true }));
+    expect(input.read(me).throttle).toBe(0);
   });
 });
