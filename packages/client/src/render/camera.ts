@@ -34,106 +34,79 @@ function clampAxis(start: number, size: number, limit: number): number {
   return clamp(start, 0, limit - size);
 }
 
-// Доли окна, в которых должны лежать цели кадрирования: по бокам и сверху — панели, снизу — большие пальцы на стиках.
-export interface FramingInsets {
-  side: number;
-  top: number;
-  bottom: number;
+// Разрешённая область центра своего танка на экране, долями. Нижняя граница зависит от горизонтали: у боков
+// лежат большие пальцы на стиках, между ними танк может быть ниже; переход линейный, чтобы малый сдвиг
+// танка не давал скачка окна.
+export const TANK_AREA = {
+  left: 0.12,
+  right: 0.88,
+  top: 0.19,
+  bottomAtSides: 0.5,
+  bottomAtCenter: 0.75,
+  sideEnd: 0.32,
+  centerStart: 0.45,
+} as const;
+
+export function tankBottomLimit(fx: number): number {
+  const fromEdge = Math.min(fx, 1 - fx);
+  const t = clamp((fromEdge - TANK_AREA.sideEnd) / (TANK_AREA.centerStart - TANK_AREA.sideEnd), 0, 1);
+  return TANK_AREA.bottomAtSides + (TANK_AREA.bottomAtCenter - TANK_AREA.bottomAtSides) * t;
 }
 
-// Запас вокруг танка в единицах поля, чтобы он не стоял вплотную к границе безопасной области.
-const TARGET_MARGIN = 110;
-
-// Камера дуэли: держит в кадре все цели (свой танк и противника) внутри безопасной области окна, приближая,
-// когда они рядом, и отдаляя до целого поля, когда далеко. Безопасная область сдвинута вверх, поэтому центр
-// целей оказывается выше середины экрана — внизу живут стики. Полностью отдалена (высота окна — всё поле) —
-// центрируется поле; любое приближение — центр событий, даже если за краем поля видна пустота, а дальний край
-// поля ушёл за кадр.
-export function frameTargets(
-  targets: readonly Point[],
-  canvasWidth: number,
-  canvasHeight: number,
-  minViewHeight: number,
-  insets: FramingInsets,
-  fixedHeight: number | null = null,
-): Camera {
-  const aspect = canvasWidth / canvasHeight;
-  const left = Math.min(...targets.map((point) => point.x)) - TARGET_MARGIN;
-  const right = Math.max(...targets.map((point) => point.x)) + TARGET_MARGIN;
-  const top = Math.min(...targets.map((point) => point.y)) - TARGET_MARGIN;
-  const bottom = Math.max(...targets.map((point) => point.y)) + TARGET_MARGIN;
-  const safeWidthFraction = 1 - insets.side * 2;
-  const safeHeightFraction = 1 - insets.top - insets.bottom;
-  const neededHeight = Math.max((bottom - top) / safeHeightFraction, (right - left) / (safeWidthFraction * aspect));
-  const height = clamp(fixedHeight ?? neededHeight, minViewHeight, ARENA.height);
-  const width = height * aspect;
-  const centerX = (left + right) / 2;
-  const centerY = (top + bottom) / 2;
-  const safeCenterYFraction = insets.top + safeHeightFraction / 2;
-  const isFullyOut = height >= ARENA.height;
-  return {
-    x: isFullyOut ? (ARENA.width - width) / 2 : centerX - width / 2,
-    y: isFullyOut ? (ARENA.height - height) / 2 : centerY - height * safeCenterYFraction,
-    width,
-    height,
-    scale: canvasHeight / height,
-  };
+export interface Interval {
+  min: number;
+  max: number;
 }
 
-// Зоны больших пальцев — нижние углы экрана: ближе `side` к боку и ниже `cornerTop` от верха. Сверху — панели.
-export interface ThumbZones {
-  side: number;
-  cornerTop: number;
-  top: number;
+// Начала окна по оси, при которых точка стоит в долях [minFraction, maxFraction] размера окна.
+export function windowRangeFor(value: number, size: number, minFraction: number, maxFraction: number): Interval {
+  return { min: value - size * maxFraction, max: value - size * minFraction };
 }
 
-// Вертикальный сдвиг прячет поле внизу, где идёт бой, поэтому горизонтальный предпочтительнее, пока он не сильно больше.
-const VERTICAL_SHIFT_PREFERENCE = 1.5;
+// Начала окна по оси, при которых пустота за полем не превышает `limit` единиц; окно шире поля с обоими
+// запасами — единственное положение, центр поля.
+export function voidRange(size: number, fieldSize: number, limit: number): Interval {
+  const min = -limit;
+  const max = fieldSize - size + limit;
+  if (min > max) {
+    const center = (fieldSize - size) / 2;
+    return { min: center, max: center };
+  }
+  return { min, max };
+}
 
-// Цель попала в зону пальца — окно сдвигается за край поля ровно до её границы тем способом, что даёт меньше пустоты.
-export function keepTargetOutOfThumbZones(camera: Camera, target: Point, zones: ThumbZones): Camera {
-  let { x, y } = camera;
-  const fy = (target.y - y) / camera.height;
-  if (fy < zones.top) {
-    y = target.y - camera.height * zones.top;
+// Вложенные зажимы: каждый следующий интервал важнее предыдущего — при конфликте побеждает последний,
+// а значение остаётся ближайшим к тому, что требовали менее важные.
+export function resolveAxis(ideal: number, ranges: readonly Interval[]): number {
+  let value = ideal;
+  for (const range of ranges) {
+    value = clamp(value, range.min, range.max);
   }
-  const fx = (target.x - x) / camera.width;
-  const isLow = fy > zones.cornerTop;
-  const isLeft = fx < zones.side;
-  const isRight = fx > 1 - zones.side;
-  if (!isLow || (!isLeft && !isRight)) {
-    return { ...camera, x, y };
-  }
-  const shiftX = (isLeft ? zones.side - fx : fx - (1 - zones.side)) * camera.width;
-  const shiftY = (fy - zones.cornerTop) * camera.height;
-  if (shiftX <= shiftY * VERTICAL_SHIFT_PREFERENCE) {
-    x = isLeft ? target.x - camera.width * zones.side : target.x - camera.width * (1 - zones.side);
-  } else {
-    y = target.y - camera.height * zones.cornerTop;
-  }
+  return value;
+}
+
+// Жёсткая гарантия на уже сглаженном окне: свой танк в разрешённой области в каждом кадре, даже пока камера
+// догоняет цель или переезжает после смены стратегии. Ось x — первой: от неё зависит нижняя граница.
+export function keepTankInArea(camera: Camera, me: Point): Camera {
+  const x = resolveAxis(camera.x, [windowRangeFor(me.x, camera.width, TANK_AREA.left, TANK_AREA.right)]);
+  const fx = (me.x - x) / camera.width;
+  const y = resolveAxis(camera.y, [windowRangeFor(me.y, camera.height, TANK_AREA.top, tankBottomLimit(fx))]);
   return { ...camera, x, y };
 }
 
-// Высота окна меняется ступенями: пока нужная высота отличается от зафиксированной меньше чем на долю
-// deadBand, остаётся зафиксированная — мелкое маневрирование не трогает масштаб.
-export function stabilizedHeight(committed: number | null, needed: number, deadBand: number): number {
-  if (committed === null) {
-    return needed;
-  }
-  if (Math.abs(needed - committed) / committed <= deadBand) {
-    return committed;
-  }
-  return needed;
-}
+// Потолок скорости центра окна, единиц/с: крупные перестановки цели (смена стратегии, уровня масштаба) идут
+// панорамой, а не рывком.
+export const CAMERA_MAX_SPEED = 800;
 
 export interface CameraSmoothing {
   moveLagMs: number;
   zoomInLagMs: number;
   zoomOutLagMs: number;
+  maxSpeed: number;
 }
 
-// Экспоненциальный догон: за lagMs проходится половина пути. Центр и высота сглаживаются раздельно;
-// отдаление быстрее приближения — не видеть противника хуже, чем видеть его чуть мельче. Ноль — мгновенно.
+// Экспоненциальный догон: за lagMs проходится половина пути, центр не быстрее maxSpeed единиц/с. Центр и
+// высота сглаживаются раздельно; отдаление и приближение — со своими задержками. Ноль — мгновенно.
 export function smoothCamera(previous: Camera | null, next: Camera, smoothing: CameraSmoothing, dtMs: number): Camera {
   if (previous === null) {
     return next;
@@ -148,8 +121,16 @@ export function smoothCamera(previous: Camera | null, next: Camera, smoothing: C
   const previousCenterY = previous.y + previous.height / 2;
   const nextCenterX = next.x + next.width / 2;
   const nextCenterY = next.y + next.height / 2;
-  const centerX = previousCenterX + (nextCenterX - previousCenterX) * moveK;
-  const centerY = previousCenterY + (nextCenterY - previousCenterY) * moveK;
+  let stepX = (nextCenterX - previousCenterX) * moveK;
+  let stepY = (nextCenterY - previousCenterY) * moveK;
+  const stepLength = Math.hypot(stepX, stepY);
+  const maxStep = (smoothing.maxSpeed * dtMs) / 1000;
+  if (stepLength > maxStep && stepLength > 0) {
+    stepX *= maxStep / stepLength;
+    stepY *= maxStep / stepLength;
+  }
+  const centerX = previousCenterX + stepX;
+  const centerY = previousCenterY + stepY;
   return {
     x: centerX - width / 2,
     y: centerY - height / 2,
@@ -159,7 +140,7 @@ export function smoothCamera(previous: Camera | null, next: Camera, smoothing: C
   };
 }
 
-function approach(lagMs: number, dtMs: number): number {
+export function approach(lagMs: number, dtMs: number): number {
   if (lagMs <= 0) {
     return 1;
   }

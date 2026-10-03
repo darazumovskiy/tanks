@@ -1,17 +1,25 @@
+import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrategy.js';
+
 // Настройки ощущения игры на устройстве: читаются вводом и рендером каждый тик, меняются из панели в бою,
-// хранятся в localStorage. Умолчания подобраны Димой на Xiaomi 14T Pro (2026-10-03).
+// хранятся в localStorage. Умолчания стиков подобраны Димой на Xiaomi 14T Pro (2026-10-03).
 export interface Settings {
   stickRadiusPx: number;
   deadZone: number;
   fireRing: number;
+  cameraMode: PhoneCameraMode;
   minViewPercent: number;
-  cameraLagMs: number;
+  followLookAhead: number;
+  followLagMs: number;
+  pairLagMs: number;
   zoomLagMs: number;
+  pairVoidPercent: number;
   showFrameGraph: boolean;
 }
 
-export type NumericSettingKey = Exclude<keyof Settings, 'showFrameGraph'>;
+export type NumericSettingKey = Exclude<keyof Settings, 'showFrameGraph' | 'cameraMode'>;
 
+// Поле с `modes` — настройка камеры: показывается только на устройстве с касанием и только для перечисленных
+// стратегий.
 export interface NumericSettingField {
   key: NumericSettingKey;
   label: string;
@@ -19,15 +27,20 @@ export interface NumericSettingField {
   min: number;
   max: number;
   step: number;
+  modes?: readonly PhoneCameraMode[];
 }
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = {
   stickRadiusPx: 40,
   deadZone: 0.07,
   fireRing: 0.89,
+  cameraMode: 'follow',
   minViewPercent: 75,
-  cameraLagMs: 300,
+  followLookAhead: 0.35,
+  followLagMs: 120,
+  pairLagMs: 300,
   zoomLagMs: 600,
+  pairVoidPercent: 25,
   showFrameGraph: false,
 };
 
@@ -37,13 +50,40 @@ export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
   { key: 'fireRing', label: 'Кольцо огня', hint: 'доля радиуса, с которой стреляет', min: 0.5, max: 1, step: 0.01 },
   {
     key: 'minViewPercent',
-    label: 'Максимальное приближение',
-    hint: '% высоты поля в кадре при самом близком подъезде камеры; больше — дальше (только телефон)',
+    label: 'Обзор',
+    hint: '% высоты поля в кадре: «за своим» — постоянно, с отдалением и «оба в кадре» — на ближнем уровне',
     min: 50,
     max: 100,
     step: 5,
+    modes: PHONE_CAMERA_MODES.map((entry) => entry.mode),
   },
-  { key: 'cameraLagMs', label: 'Догон камеры', hint: 'мс до середины пути; 0 — мгновенно', min: 0, max: 500, step: 10 },
+  {
+    key: 'followLookAhead',
+    label: 'Упреждение к противнику',
+    hint: 'доля расстояния до противника, на которую окно сдвигается к нему; 0 — танк всегда в точке покоя',
+    min: 0,
+    max: 0.6,
+    step: 0.05,
+    modes: ['follow', 'followZoom'],
+  },
+  {
+    key: 'followLagMs',
+    label: 'Догон камеры',
+    hint: 'мс до середины пути; 0 — мгновенно',
+    min: 0,
+    max: 500,
+    step: 10,
+    modes: ['follow', 'followZoom'],
+  },
+  {
+    key: 'pairLagMs',
+    label: 'Догон камеры',
+    hint: 'мс до середины пути; 0 — мгновенно',
+    min: 0,
+    max: 500,
+    step: 10,
+    modes: ['pair'],
+  },
   {
     key: 'zoomLagMs',
     label: 'Плавность приближения',
@@ -51,6 +91,16 @@ export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
     min: 0,
     max: 2000,
     step: 50,
+    modes: ['followZoom', 'pair'],
+  },
+  {
+    key: 'pairVoidPercent',
+    label: 'Пустота за полем',
+    hint: '% экрана, на который окно может выйти за поле ради центра пары; дальше — только чтобы оба танка остались в кадре',
+    min: 0,
+    max: 50,
+    step: 5,
+    modes: ['pair'],
   },
 ];
 
@@ -61,6 +111,11 @@ function clampField(field: NumericSettingField, value: unknown): number {
     return DEFAULT_SETTINGS[field.key];
   }
   return Math.min(field.max, Math.max(field.min, value));
+}
+
+function parseCameraMode(value: unknown): PhoneCameraMode {
+  const known = PHONE_CAMERA_MODES.find((entry) => entry.mode === value);
+  return known === undefined ? DEFAULT_SETTINGS.cameraMode : known.mode;
 }
 
 export function parseSettings(raw: string | null): Settings {
@@ -81,6 +136,7 @@ export function parseSettings(raw: string | null): Settings {
   for (const field of NUMERIC_FIELDS) {
     settings[field.key] = clampField(field, record[field.key]);
   }
+  settings.cameraMode = parseCameraMode(record.cameraMode);
   if (typeof record.showFrameGraph === 'boolean') {
     settings.showFrameGraph = record.showFrameGraph;
   }
@@ -100,6 +156,11 @@ export class SettingsStore {
       return;
     }
     this.value[key] = clampField(field, value);
+    this.save();
+  }
+
+  setCameraMode(mode: PhoneCameraMode): void {
+    this.value.cameraMode = mode;
     this.save();
   }
 

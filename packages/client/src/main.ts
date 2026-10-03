@@ -92,6 +92,7 @@ function startDuel(roomCode: string): void {
   canvas.hidden = false;
   document.body.classList.add('duel');
   const store = new SettingsStore(localStorage);
+  const hasTouch = isTouchDevice();
   const game = new Game({
     roomCode,
     nickname,
@@ -99,11 +100,11 @@ function startDuel(roomCode: string): void {
     canvas,
     overlay: byId('overlay', HTMLElement),
     settings: store.value,
-    isTouchDevice: isTouchDevice(),
+    isTouchDevice: hasTouch,
   });
   const settingsToggle = byId('settings-toggle', HTMLButtonElement);
   settingsToggle.hidden = false;
-  const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store);
+  const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store, hasTouch);
   window.addEventListener('keydown', (event) => {
     if (event.code === SETTINGS_KEY_CODE && !event.repeat) {
       panel.toggle();

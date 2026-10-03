@@ -45,8 +45,18 @@ describe('SettingsStore', () => {
 
   it('зажимает значение при записи', () => {
     const store = new SettingsStore(localStorage);
-    store.setNumber('cameraLagMs', 9999);
-    expect(store.value.cameraLagMs).toBe(500);
+    store.setNumber('followLagMs', 9999);
+    expect(store.value.followLagMs).toBe(500);
+  });
+
+  it('режим камеры сохраняется; неизвестный режим и прежний ключ догона — умолчания', () => {
+    const store = new SettingsStore(localStorage);
+    store.setCameraMode('pair');
+    expect(new SettingsStore(localStorage).value.cameraMode).toBe('pair');
+    const legacy = parseSettings(JSON.stringify({ cameraMode: 'orbit', cameraLagMs: 50, zoomLagMs: 10 }));
+    expect(legacy.cameraMode).toBe(DEFAULT_SETTINGS.cameraMode);
+    expect(legacy.followLagMs).toBe(DEFAULT_SETTINGS.followLagMs);
+    expect(legacy.zoomLagMs).toBe(10);
   });
 
   it('сброс возвращает умолчания и сохраняет их', () => {

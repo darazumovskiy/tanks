@@ -1,22 +1,41 @@
+import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrategy.js';
 import { NUMERIC_FIELDS, type NumericSettingField, type SettingsStore } from './settings.js';
 
-// Панель настроек в бою: ползунки меняют хранилище сразу, игра читает его каждый тик — результат виден не выходя из боя.
+const MODE_ACTIVE_CLASS = 'is-active';
+
+// Панель настроек в бою: ползунки меняют хранилище сразу, игра читает его каждый тик — результат виден не выходя
+// из боя. Поля камеры показываются только на устройстве с касанием и только для выбранной стратегии.
 export class SettingsPanel {
-  private readonly rows = new Map<NumericSettingField['key'], { input: HTMLInputElement; value: HTMLElement }>();
+  private readonly rows = new Map<
+    NumericSettingField['key'],
+    { row: HTMLElement; input: HTMLInputElement; value: HTMLElement }
+  >();
+  private readonly modeButtons = new Map<PhoneCameraMode, HTMLButtonElement>();
   private readonly frameGraph: HTMLInputElement;
 
   constructor(
     private readonly root: HTMLElement,
     toggle: HTMLElement,
     private readonly store: SettingsStore,
+    hasCamera: boolean,
   ) {
     root.innerHTML = '';
     const title = document.createElement('div');
     title.className = 'settings-title';
     title.textContent = 'Настройки';
     root.append(title);
+    const cameraFields = NUMERIC_FIELDS.filter((field) => field.modes !== undefined);
     for (const field of NUMERIC_FIELDS) {
+      if (cameraFields.includes(field)) {
+        continue;
+      }
       root.append(this.buildRow(field));
+    }
+    if (hasCamera) {
+      root.append(this.buildModeRow());
+      for (const field of cameraFields) {
+        root.append(this.buildRow(field));
+      }
     }
     const graphLabel = document.createElement('label');
     graphLabel.className = 'settings-check';
@@ -57,6 +76,30 @@ export class SettingsPanel {
     }
   }
 
+  private buildModeRow(): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'settings-row';
+    const head = document.createElement('div');
+    head.className = 'settings-head';
+    head.textContent = 'Камера';
+    const group = document.createElement('div');
+    group.className = 'settings-modes';
+    for (const { mode, label } of PHONE_CAMERA_MODES) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'settings-mode';
+      button.textContent = label;
+      button.addEventListener('click', () => {
+        this.store.setCameraMode(mode);
+        this.refresh();
+      });
+      this.modeButtons.set(mode, button);
+      group.append(button);
+    }
+    row.append(head, group);
+    return row;
+  }
+
   private buildRow(field: NumericSettingField): HTMLElement {
     const row = document.createElement('label');
     row.className = 'settings-row';
@@ -80,11 +123,12 @@ export class SettingsPanel {
       value.textContent = formatValue(this.store.value[field.key], field);
     });
     row.append(head, hint, input);
-    this.rows.set(field.key, { input, value });
+    this.rows.set(field.key, { row, input, value });
     return row;
   }
 
   private refresh(): void {
+    const mode = this.store.value.cameraMode;
     for (const field of NUMERIC_FIELDS) {
       const row = this.rows.get(field.key);
       if (row === undefined) {
@@ -93,6 +137,10 @@ export class SettingsPanel {
       const current = this.store.value[field.key];
       row.input.value = String(current);
       row.value.textContent = formatValue(current, field);
+      row.row.hidden = field.modes !== undefined && !field.modes.includes(mode);
+    }
+    for (const [buttonMode, button] of this.modeButtons) {
+      button.classList.toggle(MODE_ACTIVE_CLASS, buttonMode === mode);
     }
     this.frameGraph.checked = this.store.value.showFrameGraph;
   }

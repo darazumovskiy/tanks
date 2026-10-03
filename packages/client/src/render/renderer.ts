@@ -5,7 +5,7 @@ import { stickMagnitude } from '../steering.js';
 import type { StickState } from '../touch.js';
 import { drawTankSprite, TankArt } from './art.js';
 import { edgeMarker, frameCamera, screenToWorld, type Camera } from './camera.js';
-import { DuelCamera } from './duelCamera.js';
+import { createCameraStrategy, type CameraMode, type CameraStrategy } from './cameraStrategy.js';
 import type { Effects } from './effects.js';
 import { floorFor } from './floor.js';
 import { BODY_FONT, HEAD_FONT, SIDE_COLORS, clamp, easeOut } from './view.js';
@@ -49,6 +49,22 @@ const FRAME_GRAPH_HEIGHT = 36;
 const FRAME_GRAPH_BAR_WIDTH = 2;
 const FRAME_BUDGET_MS = 1000 / 60;
 
+// Кромка за полем: камера может показать пустоту до половины экрана, и она должна выглядеть краем арены,
+// а не фоном холста. Полоса шире любой возможной пустоты.
+const BORDER_WIDTH = 600;
+// Полоса темнеет от поля наружу ступенями: даёт глубину, не требуя градиента на каждый кадр.
+const BORDER_BANDS: readonly { width: number; fill: string }[] = [
+  { width: BORDER_WIDTH, fill: '#0c0e11' },
+  { width: 320, fill: '#121419' },
+  { width: 120, fill: '#191c22' },
+];
+const BORDER_STRIPE_WIDTH = 28;
+const BORDER_STRIPE_DASH = 40;
+const BORDER_STRIPE_COLOR = 'rgba(240,180,40,0.22)';
+const BORDER_STRIPE_GAP_COLOR = 'rgba(255,255,255,0.05)';
+const BORDER_EDGE_COLOR = 'rgba(255,255,255,0.35)';
+const BORDER_EDGE_WIDTH = 3;
+
 const STICK_KNOB_RATIO = 0.42;
 const STICK_BASE_COLOR = 'rgba(244,241,232,0.18)';
 const STICK_EDGE_COLOR = 'rgba(244,241,232,0.45)';
@@ -69,9 +85,10 @@ export class Renderer {
   private readonly art: [TankArt, TankArt] = [new TankArt(0), new TankArt(1)];
   private pixelRatio = 1;
   private camera: Camera;
-  private readonly duelCamera: DuelCamera;
+  private strategy: CameraStrategy;
+  private strategyMode: CameraMode;
 
-  // На компьютере поле показывается целиком; на устройстве с касанием камера кадрирует бой: себя и противника.
+  // На компьютере поле показывается целиком; на устройстве с касанием камеру ведёт стратегия из настроек.
   // `viewport` — размер холста в CSS-пикселях и плотность; по умолчанию окно браузера (лаборатория задаёт своё).
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -85,7 +102,8 @@ export class Renderer {
       throw new Error('Canvas 2D недоступен');
     }
     this.ctx = ctx;
-    this.duelCamera = new DuelCamera(settings);
+    this.strategyMode = this.cameraMode();
+    this.strategy = createCameraStrategy(this.strategyMode, settings);
     this.resize();
     this.camera = frameCamera({ x: ARENA.width / 2, y: ARENA.height / 2 }, canvas.width, canvas.height, ARENA.height);
     window.addEventListener('resize', () => {
@@ -95,25 +113,40 @@ export class Renderer {
 
   // Новый раунд — танки появляются в другом месте, камера не должна ехать к ним через всё поле.
   resetCamera(): void {
-    this.duelCamera.reset();
+    this.strategy.reset();
   }
 
   get currentCamera(): Camera {
     return this.camera;
   }
 
-  private frameBattle(view: WorldView, mySide: Side, frameMs: number): Camera {
-    if (!this.isTouchDevice) {
-      return frameCamera(
-        { x: ARENA.width / 2, y: ARENA.height / 2 },
-        this.canvas.width,
-        this.canvas.height,
-        ARENA.height,
-      );
+  private cameraMode(): CameraMode {
+    return this.isTouchDevice ? this.settings.cameraMode : 'field';
+  }
+
+  // Режим сменили в панели посреди боя — новая стратегия продолжает с текущего окна, камера переезжает плавно.
+  private currentStrategy(): CameraStrategy {
+    const mode = this.cameraMode();
+    if (mode !== this.strategyMode) {
+      this.strategy = createCameraStrategy(mode, this.settings);
+      this.strategy.adopt(this.camera);
+      this.strategyMode = mode;
     }
+    return this.strategy;
+  }
+
+  private frameBattle(view: WorldView, mySide: Side, frameMs: number): Camera {
     const me = view.tanks[mySide];
     const enemy = view.tanks[mySide === 0 ? 1 : 0];
-    return this.duelCamera.update(me, enemy.isAlive ? enemy : null, this.canvas.width, this.canvas.height, frameMs);
+    return this.currentStrategy().update(
+      {
+        me,
+        enemy: enemy.isAlive ? enemy : null,
+        canvasWidth: this.canvas.width,
+        canvasHeight: this.canvas.height,
+      },
+      frameMs,
+    );
   }
 
   // Координаты окна → координаты поля боя через текущее положение камеры.
@@ -198,6 +231,7 @@ export class Renderer {
     ctx.save();
     ctx.setTransform(camera.scale, 0, 0, camera.scale, -camera.x * camera.scale, -camera.y * camera.scale);
     ctx.translate(shakeX, shakeY);
+    this.drawBorder();
     ctx.drawImage(floorFor(view.round.mapIndex), 0, 0, ARENA.width, ARENA.height);
     this.effects.drawDecals(ctx);
     this.drawKits(view);
@@ -220,6 +254,34 @@ export class Renderer {
       }
     }
     this.effects.drawPopups(ctx);
+    ctx.restore();
+  }
+
+  // Полоса за полем, предупредительная штриховка вдоль края и светлая линия границы. Рисуется в координатах
+  // поля под полом; пол закрывает внутреннюю половину штрихов, поэтому они отступают наружу.
+  private drawBorder(): void {
+    const { ctx } = this;
+    ctx.save();
+    for (const band of BORDER_BANDS) {
+      ctx.fillStyle = band.fill;
+      ctx.fillRect(-band.width, -band.width, ARENA.width + band.width * 2, ARENA.height + band.width * 2);
+    }
+    const inset = BORDER_STRIPE_WIDTH / 2;
+    ctx.lineWidth = BORDER_STRIPE_WIDTH;
+    ctx.strokeStyle = BORDER_STRIPE_GAP_COLOR;
+    ctx.strokeRect(-inset, -inset, ARENA.width + inset * 2, ARENA.height + inset * 2);
+    ctx.strokeStyle = BORDER_STRIPE_COLOR;
+    ctx.setLineDash([BORDER_STRIPE_DASH, BORDER_STRIPE_DASH]);
+    ctx.strokeRect(-inset, -inset, ARENA.width + inset * 2, ARENA.height + inset * 2);
+    ctx.setLineDash([]);
+    ctx.lineWidth = BORDER_EDGE_WIDTH;
+    ctx.strokeStyle = BORDER_EDGE_COLOR;
+    ctx.strokeRect(
+      -BORDER_EDGE_WIDTH / 2,
+      -BORDER_EDGE_WIDTH / 2,
+      ARENA.width + BORDER_EDGE_WIDTH,
+      ARENA.height + BORDER_EDGE_WIDTH,
+    );
     ctx.restore();
   }
 

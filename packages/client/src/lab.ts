@@ -2,22 +2,25 @@ import { ARENA, createRound, DEFAULT_STATS, type Round } from '@tanks/shared/eng
 import type { WorldView } from './prediction.js';
 import {
   CAMERA_SCENARIOS,
+  checkScenarioInvariants,
   PHONE_SCREENS,
-  checkCameraInvariants,
+  SETTLE_MS,
   type CameraScenario,
+  type ScreenGeometry,
 } from './render/cameraScenarios.js';
+import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrategy.js';
 import { Effects } from './render/effects.js';
 import { Renderer, type HudInfo } from './render/renderer.js';
-import { DEFAULT_SETTINGS } from './settings.js';
+import { DEFAULT_SETTINGS, type Settings } from './settings.js';
 import type { StickState } from './touch.js';
 
 // Лаборатория камеры (`/?lab=camera`): танки ставятся в позиции сценария без сервера и рисуются настоящим
-// рендером на холсте размером с экран телефона; рядом — установившаяся камера и нарушенные инварианты.
-// Стики нарисованы там, где обычно лежат большие пальцы, чтобы видеть перекрытие.
+// рендером на холсте размером с экран телефона; выбираются стратегия и экран; рядом — установившаяся камера
+// и нарушенные инварианты. Стики нарисованы там, где обычно лежат большие пальцы, чтобы видеть перекрытие.
 
 const THUMB_LEFT = { fx: 0.12, fy: 0.75 };
 const THUMB_RIGHT = { fx: 0.88, fy: 0.75 };
-const SETTLE_MS = 100_000;
+const SPRITE_RETRY_MS = 300;
 
 function fakeRound(scenario: CameraScenario): Round {
   const round = createRound(0, [
@@ -64,38 +67,75 @@ function thumbSticks(width: number, height: number): StickState[] {
   return [make('move', THUMB_LEFT), make('aim', THUMB_RIGHT)];
 }
 
-export function showCameraLab(root: HTMLElement): void {
-  root.hidden = false;
-  root.innerHTML = '';
-  const screen = PHONE_SCREENS[0];
-  if (screen === undefined) {
-    return;
-  }
-  const canvas = document.createElement('canvas');
-  canvas.style.width = `${String(screen.width)}px`;
-  canvas.style.height = `${String(screen.height)}px`;
-  canvas.style.display = 'block';
-  canvas.style.border = '1px solid rgba(255,255,255,0.3)';
+function buildSelect<T extends { id: string }>(items: readonly T[], title: (item: T) => string): HTMLSelectElement {
   const select = document.createElement('select');
-  for (const scenario of CAMERA_SCENARIOS) {
+  for (const item of items) {
     const option = document.createElement('option');
-    option.value = scenario.id;
-    option.textContent = scenario.title;
+    option.value = item.id;
+    option.textContent = title(item);
     select.append(option);
   }
+  return select;
+}
+
+export function showCameraLab(root: HTMLElement): void {
+  const firstScenario = CAMERA_SCENARIOS[0];
+  const firstScreen = PHONE_SCREENS[0];
+  if (firstScenario === undefined || firstScreen === undefined) {
+    return;
+  }
+  root.hidden = false;
+  root.innerHTML = '';
+  const settings: Settings = { ...DEFAULT_SETTINGS };
+  const scenarioSelect = buildSelect(CAMERA_SCENARIOS, (s) => s.title);
+  const modeSelect = buildSelect(
+    PHONE_CAMERA_MODES.map((entry) => ({ id: entry.mode, label: entry.label })),
+    (entry) => entry.label,
+  );
+  const screenSelect = buildSelect(PHONE_SCREENS, (s) => `${s.id} (${String(s.width)}×${String(s.height)})`);
+  const controls = document.createElement('div');
+  controls.className = 'lab-controls';
+  controls.append(scenarioSelect, modeSelect, screenSelect);
+  const stage = document.createElement('div');
   const info = document.createElement('pre');
   info.style.whiteSpace = 'pre-wrap';
-  root.append(select, canvas, info);
+  root.append(controls, stage, info);
 
   const effects = new Effects(() => ['Я', 'Противник']);
-  const renderer = new Renderer(canvas, effects, DEFAULT_SETTINGS, true, () => ({
-    width: screen.width,
-    height: screen.height,
-    pixelRatio: screen.pixelRatio,
-  }));
+  let renderer: Renderer | null = null;
+  let rendererScreen: ScreenGeometry | null = null;
 
-  const draw = (scenario: CameraScenario): void => {
-    renderer.resetCamera();
+  const rendererFor = (screen: ScreenGeometry): Renderer => {
+    if (renderer !== null && rendererScreen === screen) {
+      return renderer;
+    }
+    stage.innerHTML = '';
+    const canvas = document.createElement('canvas');
+    canvas.style.width = `${String(screen.width)}px`;
+    canvas.style.height = `${String(screen.height)}px`;
+    canvas.style.display = 'block';
+    canvas.style.border = '1px solid rgba(255,255,255,0.3)';
+    stage.append(canvas);
+    renderer = new Renderer(canvas, effects, settings, true, () => ({
+      width: screen.width,
+      height: screen.height,
+      pixelRatio: screen.pixelRatio,
+    }));
+    rendererScreen = screen;
+    return renderer;
+  };
+
+  const current = (): { scenario: CameraScenario; mode: PhoneCameraMode; screen: ScreenGeometry } => ({
+    scenario: CAMERA_SCENARIOS.find((s) => s.id === scenarioSelect.value) ?? firstScenario,
+    mode: PHONE_CAMERA_MODES.find((entry) => entry.mode === modeSelect.value)?.mode ?? 'follow',
+    screen: PHONE_SCREENS.find((s) => s.id === screenSelect.value) ?? firstScreen,
+  });
+
+  const draw = (): void => {
+    const { scenario, mode, screen } = current();
+    settings.cameraMode = mode;
+    const target = rendererFor(screen);
+    target.resetCamera();
     const view = viewOf(fakeRound(scenario));
     const hud: HudInfo = {
       names: ['Я', 'Противник'],
@@ -113,11 +153,15 @@ export function showCameraLab(root: HTMLElement): void {
       frameMs: SETTLE_MS,
       frameTimes: [],
     };
-    renderer.draw(view, hud, null);
-    const camera = renderer.currentCamera;
-    const violations = checkCameraInvariants(camera, scenario, DEFAULT_SETTINGS);
+    // Первый кадр после сброса — установившееся состояние; второй нужен, чтобы стратегия сменилась, если её переключили.
+    target.draw(view, hud, null);
+    target.resetCamera();
+    target.draw(view, hud, null);
+    const camera = target.currentCamera;
+    const violations = checkScenarioInvariants(mode, settings, camera, scenario.me, scenario.enemy);
+    const enemyText = scenario.enemy === null ? 'нет' : `(${String(scenario.enemy.x)}, ${String(scenario.enemy.y)})`;
     const lines = [
-      `${scenario.id}: я (${String(scenario.me.x)}, ${String(scenario.me.y)}), противник ${scenario.enemy === null ? 'нет' : `(${String(scenario.enemy.x)}, ${String(scenario.enemy.y)})`}`,
+      `${scenario.id} · ${mode} · ${screen.id}: я (${String(scenario.me.x)}, ${String(scenario.me.y)}), противник ${enemyText}`,
       `камера: x ${camera.x.toFixed(0)}, y ${camera.y.toFixed(0)}, высота ${camera.height.toFixed(0)} из ${String(ARENA.height)}`,
       violations.length === 0
         ? 'инварианты: все выполнены'
@@ -126,30 +170,36 @@ export function showCameraLab(root: HTMLElement): void {
     info.textContent = lines.join('\n');
   };
 
-  const first = CAMERA_SCENARIOS[0];
-  if (first === undefined) {
-    return;
+  for (const select of [scenarioSelect, modeSelect, screenSelect]) {
+    select.addEventListener('change', draw);
   }
-  const current = (): CameraScenario => CAMERA_SCENARIOS.find((s) => s.id === select.value) ?? first;
-  select.addEventListener('change', () => {
-    draw(current());
-  });
-  const fromQuery = new URLSearchParams(location.search).get('scenario');
+  const query = new URLSearchParams(location.search);
+  const fromQuery = query.get('scenario');
   if (fromQuery !== null && CAMERA_SCENARIOS.some((s) => s.id === fromQuery)) {
-    select.value = fromQuery;
+    scenarioSelect.value = fromQuery;
+  }
+  const modeFromQuery = query.get('mode');
+  if (modeFromQuery !== null && PHONE_CAMERA_MODES.some((entry) => entry.mode === modeFromQuery)) {
+    modeSelect.value = modeFromQuery;
   }
   // Спрайты танков — картинки, грузятся асинхронно: первый кадр может быть без них, перерисовываем чуть позже.
-  draw(current());
-  window.setTimeout(() => {
-    draw(current());
-  }, 300);
+  draw();
+  window.setTimeout(draw, SPRITE_RETRY_MS);
   Object.assign(window, {
     tanksLab: {
-      show: (id: string): void => {
-        select.value = id;
-        draw(current());
+      show: (scenarioId: string, mode?: string, screenId?: string): void => {
+        scenarioSelect.value = scenarioId;
+        if (mode !== undefined) {
+          modeSelect.value = mode;
+        }
+        if (screenId !== undefined) {
+          screenSelect.value = screenId;
+        }
+        draw();
       },
       scenarios: CAMERA_SCENARIOS.map((s) => s.id),
+      modes: PHONE_CAMERA_MODES.map((entry) => entry.mode),
+      screens: PHONE_SCREENS.map((s) => s.id),
     },
   });
 }

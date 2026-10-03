@@ -15,16 +15,30 @@ describe('SettingsPanel', () => {
     toggle = document.createElement('button');
     document.body.append(root, toggle);
     store = new SettingsStore(localStorage);
-    new SettingsPanel(root, toggle, store);
+    new SettingsPanel(root, toggle, store, true);
   });
 
   const rangeFor = (key: string): HTMLInputElement => {
-    const index = NUMERIC_FIELDS.findIndex((field) => field.key === key);
-    const input = root.querySelectorAll<HTMLInputElement>('input[type=range]')[index];
-    if (input === undefined) {
+    const field = NUMERIC_FIELDS.find((candidate) => candidate.key === key);
+    const input = Array.from(root.querySelectorAll<HTMLLabelElement>('label.settings-row'))
+      .find(
+        (row) =>
+          row.querySelector('.settings-head span')?.textContent === field?.label &&
+          row.querySelector('.settings-hint')?.textContent === field?.hint,
+      )
+      ?.querySelector<HTMLInputElement>('input[type=range]');
+    if (input === undefined || input === null) {
       throw new Error(`нет ползунка ${key}`);
     }
     return input;
+  };
+
+  const rowOf = (key: string): HTMLElement => {
+    const row = rangeFor(key).closest<HTMLElement>('.settings-row');
+    if (row === null) {
+      throw new Error(`нет строки ${key}`);
+    }
+    return row;
   };
 
   const press = (): void => {
@@ -76,5 +90,34 @@ describe('SettingsPanel', () => {
     store.setNumber('minViewPercent', 50);
     press();
     expect(rangeFor('minViewPercent').value).toBe('50');
+  });
+
+  it('кнопки режима камеры меняют хранилище и показывают только поля выбранного режима', () => {
+    expect(rowOf('followLagMs').hidden).toBe(false);
+    expect(rowOf('zoomLagMs').hidden).toBe(true);
+    const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>('button.settings-mode'));
+    expect(buttons.map((button) => button.textContent)).toEqual(['За своим', 'За своим + отдаление', 'Оба в кадре']);
+    buttons[2]?.click();
+    expect(store.value.cameraMode).toBe('pair');
+    expect(buttons[2]?.classList.contains('is-active')).toBe(true);
+    expect(rowOf('followLagMs').hidden).toBe(true);
+    expect(rowOf('zoomLagMs').hidden).toBe(false);
+    expect(rowOf('pairVoidPercent').hidden).toBe(false);
+    expect(rowOf('minViewPercent').hidden).toBe(false);
+    buttons[1]?.click();
+    expect(rowOf('followLagMs').hidden).toBe(false);
+    expect(rowOf('zoomLagMs').hidden).toBe(false);
+    expect(rowOf('pairVoidPercent').hidden).toBe(true);
+  });
+
+  it('на компьютере полей камеры нет', () => {
+    const desktopRoot = document.createElement('aside');
+    document.body.append(desktopRoot);
+    new SettingsPanel(desktopRoot, document.createElement('button'), store, false);
+    expect(desktopRoot.querySelector('button.settings-mode')).toBeNull();
+    const labels = Array.from(desktopRoot.querySelectorAll('.settings-head span:first-child')).map(
+      (span) => span.textContent,
+    );
+    expect(labels).toEqual(['Размер стика', 'Мёртвая зона', 'Кольцо огня']);
   });
 });

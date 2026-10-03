@@ -1,6 +1,9 @@
 import { ARENA } from '@tanks/shared/engine';
-import type { Camera, Point } from './camera.js';
-import { FRAMING_INSETS, THUMB_ZONES, type DuelCameraTuning } from './duelCamera.js';
+import type { Settings } from '../settings.js';
+import { CAMERA_MAX_SPEED, TANK_AREA, tankBottomLimit, type Camera, type Point } from './camera.js';
+import { FOLLOW_VOID_LIMIT } from './cameraFollow.js';
+import { ENEMY_AREA, FAR_ENEMY_AREA, isFarCamera, type ScreenArea } from './cameraLevels.js';
+import { createCameraStrategy, type CameraInput, type CameraStrategy, type PhoneCameraMode } from './cameraStrategy.js';
 
 // Сценарий — положения танков на поле; противник `null` — мёртв или ушёл.
 export interface CameraScenario {
@@ -20,6 +23,7 @@ export interface ScreenGeometry {
 
 export const PHONE_SCREENS: readonly ScreenGeometry[] = [
   { id: 'xiaomi-14t-pro', width: 834, height: 375, pixelRatio: 3.25 },
+  { id: 'phone-844', width: 844, height: 390, pixelRatio: 2.6 },
   { id: 'tablet-16x9', width: 1024, height: 576, pixelRatio: 2 },
 ];
 
@@ -88,6 +92,12 @@ export const CAMERA_SCENARIOS: readonly CameraScenario[] = [
     enemy: { x: 800, y: 750 },
   },
   {
+    id: 'enemy-above-close',
+    title: 'Противник прямо надо мной, близко',
+    me: { x: 800, y: 700 },
+    enemy: { x: 800, y: 480 },
+  },
+  {
     id: 'alone-corner',
     title: 'Противник мёртв, я в левом нижнем углу',
     me: { x: EDGE, y: ARENA.height - EDGE },
@@ -100,109 +110,223 @@ export const CAMERA_SCENARIOS: readonly CameraScenario[] = [
     me: { x: 800, y: 876 },
     enemy: { x: 800, y: 300 },
   },
+  {
+    id: 'me-bottom-left-enemy-right',
+    title: 'Я внизу слева, противник справа на той же высоте',
+    me: { x: 200, y: 850 },
+    enemy: { x: 1100, y: 850 },
+  },
 ];
+
+// Траектория: точки с временем удержания; конвейер гоняется кадрами по 16 мс без сброса между точками.
+export interface TrajectoryStep {
+  me: Point;
+  enemy: Point | null;
+  holdMs: number;
+}
+
+export const FRAME_MS = 16;
+// Самое медленное звено — приближение в `pair` с полупериодом 600 мс: за 8 с остаток пути меньше единицы.
+export const SETTLE_MS = 8000;
+
+export function runTrajectory(
+  strategy: CameraStrategy,
+  steps: readonly TrajectoryStep[],
+  screen: ScreenGeometry,
+  onFrame?: (camera: Camera, step: TrajectoryStep) => void,
+): Camera[] {
+  const canvasWidth = screen.width * screen.pixelRatio;
+  const canvasHeight = screen.height * screen.pixelRatio;
+  const settled: Camera[] = [];
+  for (const step of steps) {
+    const input: CameraInput = { me: step.me, enemy: step.enemy, canvasWidth, canvasHeight };
+    let camera = strategy.update(input, FRAME_MS);
+    onFrame?.(camera, step);
+    for (let elapsed = FRAME_MS; elapsed < step.holdMs; elapsed += FRAME_MS) {
+      camera = strategy.update(input, FRAME_MS);
+      onFrame?.(camera, step);
+    }
+    settled.push(camera);
+  }
+  return settled;
+}
+
+export function settle(
+  mode: PhoneCameraMode,
+  settings: Readonly<Settings>,
+  scenario: CameraScenario,
+  screen: ScreenGeometry,
+): Camera {
+  const strategy = createCameraStrategy(mode, settings);
+  const [camera] = runTrajectory(strategy, [{ me: scenario.me, enemy: scenario.enemy, holdMs: SETTLE_MS }], screen);
+  if (camera === undefined) {
+    throw new Error('пустая траектория');
+  }
+  return camera;
+}
 
 export interface Violation {
   invariant: string;
   detail: string;
 }
 
-interface ScreenFraction {
+export interface ScreenFraction {
   fx: number;
   fy: number;
 }
 
-function fractionOf(camera: Camera, point: Point): ScreenFraction {
+export function fractionOf(camera: Camera, point: Point): ScreenFraction {
   return { fx: (point.x - camera.x) / camera.width, fy: (point.y - camera.y) / camera.height };
 }
 
 const EPS = 1e-6;
+// Запас на округление сглаживания: за 4 с камера подходит к цели ближе единицы, но не точно.
+const SETTLE_TOLERANCE = 1;
 
-// Инварианты камеры дуэли в установившемся состоянии. Нумерация — для ссылок из документов и разговора.
-export function checkCameraInvariants(
+export interface VoidLimits {
+  x: number;
+  y: number;
+}
+
+export function voidLimitsFor(mode: PhoneCameraMode, settings: Readonly<Settings>): VoidLimits {
+  if (mode === 'pair') {
+    const share = settings.pairVoidPercent / 100;
+    return { x: share, y: share };
+  }
+  return FOLLOW_VOID_LIMIT;
+}
+
+// Коробка противника, ради которой стратегия вправе выйти за лимит пустоты; `null` — стратегия так не делает.
+export function enemyAreaFor(mode: PhoneCameraMode, camera: Camera): ScreenArea | null {
+  if (isFarCamera(camera) && mode !== 'follow') {
+    return FAR_ENEMY_AREA;
+  }
+  return mode === 'pair' ? ENEMY_AREA : null;
+}
+
+// Полный набор общих инвариантов для сценария: стратегия задаёт лимит пустоты и коробку противника.
+export function checkScenarioInvariants(
+  mode: PhoneCameraMode,
+  settings: Readonly<Settings>,
   camera: Camera,
-  scenario: CameraScenario,
-  tuning: Readonly<DuelCameraTuning>,
+  me: Point,
+  enemy: Point | null,
 ): Violation[] {
-  const violations: Violation[] = [];
-  const me = fractionOf(camera, scenario.me);
-  const minViewHeight = (ARENA.height * tuning.minViewPercent) / 100;
+  return checkCommonInvariants({
+    camera,
+    me,
+    enemy,
+    minViewPercent: settings.minViewPercent,
+    voidLimits: voidLimitsFor(mode, settings),
+    enemyArea: enemyAreaFor(mode, camera),
+  });
+}
 
-  // I1. Высота окна — между максимальным приближением и целым полем.
-  if (camera.height < minViewHeight - EPS || camera.height > ARENA.height + EPS) {
+// Пустота за полем по сторонам, в единицах поля.
+export function voidAround(camera: Camera): { left: number; right: number; top: number; bottom: number } {
+  return {
+    left: Math.max(0, -camera.x),
+    right: Math.max(0, camera.x + camera.width - ARENA.width),
+    top: Math.max(0, -camera.y),
+    bottom: Math.max(0, camera.y + camera.height - ARENA.height),
+  };
+}
+
+export interface CommonInvariantInput {
+  camera: Camera;
+  me: Point;
+  minViewPercent: number;
+  voidLimits: VoidLimits;
+  // Противник и коробка, ради которой стратегия вправе выйти за лимит пустоты; `null` — стратегия так не делает.
+  enemy: Point | null;
+  enemyArea: ScreenArea | null;
+}
+
+const BOUND_TOLERANCE = 1e-3;
+
+function isAtBound(value: number, bounds: readonly number[]): boolean {
+  return bounds.some((bound) => Math.abs(value - bound) < BOUND_TOLERANCE);
+}
+
+// Общие инварианты установившегося окна для любой стратегии на телефоне. Лимит пустоты — долями окна;
+// он может быть превышен, только когда по этой оси свой танк стоит ровно на границе разрешённой области
+// или противник — на границе своей коробки.
+export function checkCommonInvariants(input: CommonInvariantInput): Violation[] {
+  const { camera, me, minViewPercent, voidLimits } = input;
+  const violations: Violation[] = [];
+  const f = fractionOf(camera, me);
+  const bottom = tankBottomLimit(f.fx);
+  const isInsideX = f.fx >= TANK_AREA.left - EPS && f.fx <= TANK_AREA.right + EPS;
+  const isInsideY = f.fy >= TANK_AREA.top - EPS && f.fy <= bottom + EPS;
+  if (!isInsideX || !isInsideY) {
     violations.push({
-      invariant: 'I1',
+      invariant: 'C1',
+      detail: `свой танк на ${pct(f.fx)} / ${pct(f.fy)} экрана, нижняя граница ${pct(bottom)}`,
+    });
+  }
+  const minViewHeight = (ARENA.height * minViewPercent) / 100;
+  if (camera.height < minViewHeight - SETTLE_TOLERANCE || camera.height > ARENA.height + SETTLE_TOLERANCE) {
+    violations.push({
+      invariant: 'C2',
       detail: `высота ${camera.height.toFixed(0)} вне [${minViewHeight.toFixed(0)}, ${String(ARENA.height)}]`,
     });
   }
-
-  // I2. Живой противник — в кадре целиком, с запасом безопасной области по бокам и сверху.
-  if (scenario.enemy !== null) {
-    const enemy = fractionOf(camera, scenario.enemy);
-    const isInside =
-      enemy.fx >= FRAMING_INSETS.side - EPS &&
-      enemy.fx <= 1 - FRAMING_INSETS.side + EPS &&
-      enemy.fy >= FRAMING_INSETS.top - EPS &&
-      enemy.fy <= 1 - FRAMING_INSETS.bottom + EPS;
-    if (!isInside) {
-      violations.push({ invariant: 'I2', detail: `противник на ${pct(enemy.fx)} / ${pct(enemy.fy)} экрана` });
-    }
+  const around = voidAround(camera);
+  const limitX = voidLimits.x * camera.width + SETTLE_TOLERANCE;
+  const limitY = voidLimits.y * camera.height + SETTLE_TOLERANCE;
+  const isWiderThanField = camera.width - 2 * voidLimits.x * camera.width > ARENA.width;
+  const enemyF = input.enemy === null ? null : fractionOf(camera, input.enemy);
+  const enemyArea = input.enemyArea;
+  const isEnemyAtSideBound =
+    enemyF !== null && enemyArea !== null && isAtBound(enemyF.fx, [enemyArea.left, enemyArea.right]);
+  const isEnemyAtVerticalBound =
+    enemyF !== null && enemyArea !== null && isAtBound(enemyF.fy, [enemyArea.top, enemyArea.bottom]);
+  const isAtSideBound = isAtBound(f.fx, [TANK_AREA.left, TANK_AREA.right]) || isEnemyAtSideBound;
+  const isAtVerticalBound = isAtBound(f.fy, [TANK_AREA.top, bottom]) || isEnemyAtVerticalBound;
+  const isVoidX = around.left > limitX || around.right > limitX;
+  const isVoidY = around.top > limitY || around.bottom > limitY;
+  if (isVoidX && !isAtSideBound && !isWiderThanField) {
+    violations.push({
+      invariant: 'C8',
+      detail: `пустота по x: слева ${around.left.toFixed(0)}, справа ${around.right.toFixed(0)}`,
+    });
   }
-
-  // I3. Свой танк не в нижних углах (зоны пальцев) и не под панелями.
-  const isLow = me.fy > THUMB_ZONES.cornerTop + EPS;
-  const isSide = me.fx < THUMB_ZONES.side - EPS || me.fx > 1 - THUMB_ZONES.side + EPS;
-  if (isLow && isSide) {
-    violations.push({ invariant: 'I3', detail: `свой танк в зоне пальца: ${pct(me.fx)} / ${pct(me.fy)}` });
+  if (isVoidY && !isAtVerticalBound) {
+    violations.push({
+      invariant: 'C8',
+      detail: `пустота по y: сверху ${around.top.toFixed(0)}, снизу ${around.bottom.toFixed(0)}`,
+    });
   }
-  if (me.fy < THUMB_ZONES.top - EPS) {
-    violations.push({ invariant: 'I3', detail: `свой танк под панелями: ${pct(me.fy)} от верха` });
-  }
-
-  // I4. Свой танк в кадре целиком (не за экраном).
-  if (me.fx < 0 || me.fx > 1 || me.fy < 0 || me.fy > 1) {
-    violations.push({ invariant: 'I4', detail: `свой танк за кадром: ${pct(me.fx)} / ${pct(me.fy)}` });
-  }
-
-  // I5. Полное отдаление — поле центрировано, пустота только симметричными полями по бокам.
-  const isFullyOut = camera.height >= ARENA.height - EPS;
-  if (isFullyOut) {
-    const left = -camera.x;
-    const right = camera.x + camera.width - ARENA.width;
-    if (Math.abs(left - right) > 1 || Math.abs(camera.y) > 1) {
-      violations.push({
-        invariant: 'I5',
-        detail: `поле не центрировано: слева ${left.toFixed(0)}, справа ${right.toFixed(0)}, сверху ${(-camera.y).toFixed(0)}`,
-      });
-    }
-  }
-
-  // I6. Приближение — центр пары (или свой танк, если противника нет) в средней части экрана.
-  if (!isFullyOut) {
-    const focus =
-      scenario.enemy === null
-        ? scenario.me
-        : { x: (scenario.me.x + scenario.enemy.x) / 2, y: (scenario.me.y + scenario.enemy.y) / 2 };
-    const f = fractionOf(camera, focus);
-    const isCentered = f.fx >= 0.3 - EPS && f.fx <= 0.7 + EPS && f.fy >= 0.25 - EPS && f.fy <= 0.6 + EPS;
-    if (!isCentered) {
-      violations.push({ invariant: 'I6', detail: `центр событий на ${pct(f.fx)} / ${pct(f.fy)} экрана` });
-    }
-  }
-
-  // I7. Пустота за полем — не больше трети экрана по каждой оси.
-  const voidLeft = Math.max(0, -camera.x) / camera.width;
-  const voidRight = Math.max(0, camera.x + camera.width - ARENA.width) / camera.width;
-  const voidTop = Math.max(0, -camera.y) / camera.height;
-  const voidBottom = Math.max(0, camera.y + camera.height - ARENA.height) / camera.height;
-  const worst = Math.max(voidLeft, voidRight, voidTop, voidBottom);
-  if (!isFullyOut && worst > 1 / 3 + EPS) {
-    violations.push({ invariant: 'I7', detail: `пустота ${pct(worst)} экрана` });
-  }
-
   return violations;
 }
 
-function pct(value: number): string {
+// Скорость центра по кадрам траектории: потолок соблюдается всюду, кроме первого кадра после сброса.
+export function centerSpeedViolations(frames: readonly Camera[]): Violation[] {
+  const violations: Violation[] = [];
+  for (let i = 1; i < frames.length; i++) {
+    const previous = frames[i - 1];
+    const current = frames[i];
+    if (previous === undefined || current === undefined) {
+      continue;
+    }
+    const dx = current.x + current.width / 2 - (previous.x + previous.width / 2);
+    const dy = current.y + current.height / 2 - (previous.y + previous.height / 2);
+    const speed = (Math.hypot(dx, dy) * 1000) / FRAME_MS;
+    if (speed > CAMERA_MAX_SPEED + EPS) {
+      violations.push({ invariant: 'C9', detail: `кадр ${String(i)}: скорость центра ${speed.toFixed(0)} ед/с` });
+    }
+  }
+  return violations;
+}
+
+export function pct(value: number): string {
   return `${(value * 100).toFixed(0)} %`;
+}
+
+export function mirrorX(point: Point): Point {
+  return { x: ARENA.width - point.x, y: point.y };
+}
+
+export function mirrorCamera(camera: Camera): Camera {
+  return { ...camera, x: ARENA.width - camera.x - camera.width };
 }
