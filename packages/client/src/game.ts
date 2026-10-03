@@ -120,9 +120,13 @@ export class Game {
 
   debugState(): {
     side: Side | null;
+    roundIndex: number;
+    score: [number, number];
+    isFighting: boolean;
     rttMs: number;
     serverTick: number;
     me: unknown;
+    enemy: { x: number; y: number; heading: number; isAlive: boolean };
     bullets: number;
     pending: number;
     fps: number;
@@ -130,15 +134,20 @@ export class Game {
     correctionPx: number;
     camera: { x: number; y: number; height: number };
   } | null {
-    if (this.prediction === null) {
+    if (this.prediction === null || this.roundStart === null || this.side === null) {
       return null;
     }
     const view = this.prediction.view(performance.now());
+    const enemy = view.tanks[this.side === 0 ? 1 : 0];
     return {
       side: this.side,
+      roundIndex: this.roundStart.roundIndex,
+      score: this.roundStart.score,
+      isFighting: this.prediction.isFighting,
       rttMs: this.net.rttMs,
       serverTick: this.net.serverTick,
       me: { ...this.prediction.me, tally: undefined, stats: undefined },
+      enemy: { x: enemy.x, y: enemy.y, heading: enemy.heading, isAlive: enemy.isAlive },
       bullets: view.bullets.length,
       pending: this.prediction.pendingCount,
       fps: this.fps,

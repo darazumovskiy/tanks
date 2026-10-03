@@ -4,6 +4,7 @@ import {
   DEFAULT_STATS,
   roundPlan,
   stepRound,
+  TICK_RATE,
   type Action,
   type Round,
   type RoundEvent,
@@ -22,7 +23,13 @@ import { toSnapshotEvent } from './events.js';
 
 export interface Connection {
   send(bytes: Uint8Array): void;
-  close(): void;
+}
+
+// Место игрока в комнате: всё, что игрок может сделать после входа.
+export interface Seat {
+  input(seq: number, action: Action): void;
+  ping(clientTime: number): void;
+  leave(): void;
 }
 
 export interface RoomOptions {
@@ -33,7 +40,7 @@ export interface RoomOptions {
 
 export const DEFAULT_ROOM_OPTIONS: RoomOptions = { countdownTicks: 90, roundEndTicks: 90, maxInputsPerSecond: 90 };
 
-type Phase = 'waiting' | 'countdown' | 'fight' | 'roundEnd';
+type DuelPhase = 'countdown' | 'fight' | 'roundEnd';
 
 interface Player {
   connection: Connection;
@@ -45,7 +52,14 @@ interface Player {
   pending: { seq: number; action: Action } | null;
   lastAction: Action;
   inputsThisSecond: number;
-  droppedInputs: number;
+}
+
+// Бой существует, только пока в комнате двое.
+interface Duel {
+  players: [Player, Player];
+  round: Round;
+  phase: DuelPhase;
+  phaseTicksLeft: number;
 }
 
 const IDLE: Action = { throttle: 0, turn: 0, turretTurn: 0, isFiring: false };
@@ -67,9 +81,7 @@ export class Room {
   readonly code: string;
   private readonly options: RoomOptions;
   private readonly players: [Player | null, Player | null] = [null, null];
-  private phase: Phase = 'waiting';
-  private phaseTicksLeft = 0;
-  private round: Round | null = null;
+  private duel: Duel | null = null;
   private roundIndex = 0;
   private score: [number, number] = [0, 0];
   private tick = 0;
@@ -79,51 +91,11 @@ export class Room {
     this.options = options;
   }
 
-  get playerCount(): number {
-    return this.players.filter((player) => player !== null).length;
-  }
-
   get isEmpty(): boolean {
-    return this.playerCount === 0;
+    return this.players.every((player) => player === null);
   }
 
-  join(connection: Connection, nickname: string, stats: Stats): Side | null {
-    const side = this.freeSide();
-    if (side === null) {
-      return null;
-    }
-    this.players[side] = {
-      connection,
-      nickname: sanitizeNickname(nickname),
-      stats: sanitizeStats(stats),
-      lastSeq: 0,
-      lastInputTick: 0,
-      ackSeq: 0,
-      pending: null,
-      lastAction: { ...IDLE },
-      inputsThisSecond: 0,
-      droppedInputs: 0,
-    };
-    this.sendTo(side, { type: MessageType.Welcome, side, roomCode: this.code });
-    this.broadcast(this.roomStateMessage());
-    if (this.playerCount === 2) {
-      this.startRound();
-    }
-    return side;
-  }
-
-  leave(connection: Connection): void {
-    const side = this.sideOf(connection);
-    if (side === null) {
-      return;
-    }
-    this.players[side] = null;
-    this.round = null;
-    this.phase = 'waiting';
-    this.broadcast(this.roomStateMessage());
-  }
-
-  private freeSide(): Side | null {
+  freeSide(): Side | null {
     if (this.players[0] === null) {
       return 0;
     }
@@ -133,29 +105,44 @@ export class Room {
     return null;
   }
 
-  sideOf(connection: Connection): Side | null {
-    if (this.players[0]?.connection === connection) {
-      return 0;
+  join(side: Side, connection: Connection, nickname: string, stats: Stats): Seat {
+    const player: Player = {
+      connection,
+      nickname: sanitizeNickname(nickname),
+      stats: sanitizeStats(stats),
+      lastSeq: 0,
+      lastInputTick: 0,
+      ackSeq: 0,
+      pending: null,
+      lastAction: { ...IDLE },
+      inputsThisSecond: 0,
+    };
+    this.players[side] = player;
+    this.sendTo(player, { type: MessageType.Welcome, side, roomCode: this.code });
+    this.broadcast(this.roomStateMessage());
+    const [a, b] = this.players;
+    if (a !== null && b !== null) {
+      this.startRound([a, b]);
     }
-    if (this.players[1]?.connection === connection) {
-      return 1;
-    }
-    return null;
+    return {
+      input: (seq, action) => {
+        this.acceptInput(player, seq, action);
+      },
+      ping: (clientTime) => {
+        this.sendTo(player, { type: MessageType.Pong, clientTime, serverTick: this.tick });
+      },
+      leave: () => {
+        this.players[side] = null;
+        this.duel = null;
+        this.broadcast(this.roomStateMessage());
+      },
+    };
   }
 
   // Новое пересиливает старое: за тик применяется последняя пришедшая команда, остальные теряются.
-  input(connection: Connection, seq: number, action: Action): void {
-    const side = this.sideOf(connection);
-    if (side === null) {
-      return;
-    }
-    const player = this.players[side];
-    if (player === null) {
-      return;
-    }
+  private acceptInput(player: Player, seq: number, action: Action): void {
     player.inputsThisSecond++;
     if (seq <= player.lastSeq || player.inputsThisSecond > this.options.maxInputsPerSecond) {
-      player.droppedInputs++;
       return;
     }
     player.lastSeq = seq;
@@ -163,53 +150,45 @@ export class Room {
     player.pending = { seq, action };
   }
 
-  ping(connection: Connection, clientTime: number): void {
-    const side = this.sideOf(connection);
-    if (side === null) {
-      return;
-    }
-    this.sendTo(side, { type: MessageType.Pong, clientTime, serverTick: this.tick });
-  }
-
   step(): void {
     this.tick++;
-    if (this.tick % 30 === 0) {
-      for (const player of this.players) {
-        if (player !== null) {
-          player.inputsThisSecond = 0;
-        }
+    if (this.tick % TICK_RATE === 0) {
+      for (const player of this.presentPlayers()) {
+        player.inputsThisSecond = 0;
       }
     }
-    if (this.phase === 'waiting' || this.round === null) {
+    const duel = this.duel;
+    if (duel === null) {
       return;
     }
-    const actions = this.takeActions();
-    const events = this.phase === 'fight' ? stepRound(this.round, actions) : [];
-    if (this.phase === 'countdown' || this.phase === 'roundEnd') {
-      this.phaseTicksLeft--;
+    const actions = this.takeActions(duel.players);
+    const events = duel.phase === 'fight' ? stepRound(duel.round, actions) : [];
+    if (duel.phase !== 'fight') {
+      duel.phaseTicksLeft--;
     }
-    this.broadcastSnapshot(events);
-    if (this.phase === 'countdown' && this.phaseTicksLeft <= 0) {
-      this.phase = 'fight';
-    } else if (this.phase === 'fight' && this.round.isOver) {
-      if (this.round.winner !== null) {
-        this.score[this.round.winner]++;
+    this.broadcastSnapshot(duel, events);
+    if (duel.phase === 'countdown' && duel.phaseTicksLeft <= 0) {
+      duel.phase = 'fight';
+    } else if (duel.phase === 'fight' && duel.round.isOver) {
+      if (duel.round.winner !== null) {
+        this.score[duel.round.winner]++;
       }
-      this.phase = 'roundEnd';
-      this.phaseTicksLeft = this.options.roundEndTicks;
-    } else if (this.phase === 'roundEnd' && this.phaseTicksLeft <= 0) {
+      duel.phase = 'roundEnd';
+      duel.phaseTicksLeft = this.options.roundEndTicks;
+    } else if (duel.phase === 'roundEnd' && duel.phaseTicksLeft <= 0) {
       this.roundIndex++;
-      this.startRound();
+      this.startRound(duel.players);
     }
   }
 
-  private takeActions(): [Action, Action] {
+  private presentPlayers(): Player[] {
+    return this.players.filter((player): player is Player => player !== null);
+  }
+
+  private takeActions(players: [Player, Player]): [Action, Action] {
     const result: [Action, Action] = [IDLE, IDLE];
     for (const side of [0, 1] as const) {
-      const player = this.players[side];
-      if (player === null) {
-        continue;
-      }
+      const player = players[side];
       if (player.pending !== null) {
         player.lastAction = player.pending.action;
         player.ackSeq = player.pending.seq;
@@ -221,22 +200,18 @@ export class Room {
     return result;
   }
 
-  private startRound(): void {
-    const [a, b] = this.players;
-    if (a === null || b === null) {
-      return;
-    }
+  private startRound(players: [Player, Player]): void {
+    const [a, b] = players;
     const plan = roundPlan(this.roundIndex);
-    this.round = createRound(plan.mapIndex, [
+    const round = createRound(plan.mapIndex, [
       { name: a.nickname, stats: a.stats },
       { name: b.nickname, stats: b.stats },
     ]);
-    for (const player of [a, b]) {
+    for (const player of players) {
       player.pending = null;
       player.lastAction = { ...IDLE };
     }
-    this.phase = 'countdown';
-    this.phaseTicksLeft = this.options.countdownTicks;
+    this.duel = { players, round, phase: 'countdown', phaseTicksLeft: this.options.countdownTicks };
     const message: RoundStartMessage = {
       type: MessageType.RoundStart,
       roundIndex: this.roundIndex,
@@ -251,11 +226,8 @@ export class Room {
     this.broadcast(message);
   }
 
-  private broadcastSnapshot(events: RoundEvent[]): void {
-    const round = this.round;
-    if (round === null) {
-      return;
-    }
+  private broadcastSnapshot(duel: Duel, events: RoundEvent[]): void {
+    const round = duel.round;
     const base: Omit<SnapshotMessage, 'ackSeq'> = {
       type: MessageType.Snapshot,
       tick: round.tick,
@@ -299,11 +271,8 @@ export class Room {
       kits: round.kits.map((kit) => ({ isActive: kit.isActive, respawnIn: kit.respawnIn })),
       events: events.map(toSnapshotEvent),
     };
-    for (const side of [0, 1] as const) {
-      const player = this.players[side];
-      if (player !== null) {
-        this.sendTo(side, { ...base, ackSeq: player.ackSeq });
-      }
+    for (const player of duel.players) {
+      this.sendTo(player, { ...base, ackSeq: player.ackSeq });
     }
   }
 
@@ -315,14 +284,14 @@ export class Room {
     return { type: MessageType.RoomState, slots: [slot(this.players[0]), slot(this.players[1])] };
   }
 
-  private sendTo(side: Side, message: ServerMessage): void {
-    this.players[side]?.connection.send(encode(message));
+  private sendTo(player: Player, message: ServerMessage): void {
+    player.connection.send(encode(message));
   }
 
   private broadcast(message: ServerMessage): void {
     const bytes = encode(message);
-    for (const player of this.players) {
-      player?.connection.send(bytes);
+    for (const player of this.presentPlayers()) {
+      player.connection.send(bytes);
     }
   }
 }

@@ -1,4 +1,5 @@
-import { createServer, type IncomingMessage, type Server } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { TICK_RATE } from '@tanks/shared/engine';
 import {
@@ -10,10 +11,10 @@ import {
   PROTOCOL_VERSION,
   type ClientMessage,
 } from '@tanks/shared/protocol';
-import { WebSocket, WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { DEFAULT_ROOM_OPTIONS, type Connection, type RoomOptions } from './room.js';
 import { isValidRoomCode, RoomManager } from './roomManager.js';
-import { APK_ROUTE, serveApk, serveStatic } from './static.js';
+import { APK_ROUTE, requestPath, serveApk, serveStatic } from './static.js';
 
 export interface AppOptions {
   staticRoot?: string;
@@ -24,8 +25,6 @@ export interface AppOptions {
 }
 
 export interface App {
-  server: Server;
-  rooms: RoomManager;
   stats(): AppStats;
   listen(port: number, host?: string): Promise<number>;
   close(): Promise<void>;
@@ -38,6 +37,11 @@ export interface AppStats {
   tickDurationMaxMs: number;
 }
 
+const WS_PATH = '/ws';
+const HEALTH_PATH = '/healthz';
+// Отставание расписания больше этого числа тиков не навёрстывается пачкой — расписание начинается заново.
+const CATCH_UP_LIMIT_TICKS = 5;
+
 class SocketConnection implements Connection {
   constructor(private readonly socket: WebSocket) {}
 
@@ -46,28 +50,20 @@ class SocketConnection implements Connection {
       this.socket.send(bytes);
     }
   }
-
-  close(): void {
-    this.socket.close();
-  }
 }
 
-function toBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
-  if (Array.isArray(data)) {
-    return new Uint8Array(Buffer.concat(data));
-  }
-  if (data instanceof ArrayBuffer) {
-    return new Uint8Array(data);
-  }
-  return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+// binaryType сервера — nodebuffer (умолчание ws): сообщение всегда приходит одним Buffer.
+function toBytes(data: RawData): Uint8Array {
+  const buffer = data as Buffer;
+  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 }
 
 export function createApp(options: AppOptions = {}): App {
   const rooms = new RoomManager(options.room ?? DEFAULT_ROOM_OPTIONS, options.random ?? Math.random);
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
   const server = createServer((request, response) => {
-    const path = request.url ?? '/';
-    if (path === '/healthz') {
+    const path = requestPath(request);
+    if (path === HEALTH_PATH) {
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify(stats()));
       return;
@@ -85,7 +81,7 @@ export function createApp(options: AppOptions = {}): App {
   const connections = new Set<WebSocket>();
   let tick = 0;
   let tickDurationMaxMs = 0;
-  let timer: NodeJS.Timeout | null = null;
+  let timer: NodeJS.Timeout | undefined;
 
   function stats(): AppStats {
     return { rooms: rooms.roomCount, connections: connections.size, tick, tickDurationMaxMs };
@@ -97,9 +93,9 @@ export function createApp(options: AppOptions = {}): App {
   }
 
   function handleMessage(socket: WebSocket, connection: Connection, message: ClientMessage): void {
-    const room = rooms.roomOf(connection);
+    const seat = rooms.seatOf(connection);
     if (message.type === MessageType.Join) {
-      if (room !== undefined) {
+      if (seat !== undefined) {
         return;
       }
       if (message.protocolVersion !== PROTOCOL_VERSION) {
@@ -110,29 +106,29 @@ export function createApp(options: AppOptions = {}): App {
         sendError(socket, ErrorCode.BadMessage, 'неверный код комнаты');
         return;
       }
-      const target = rooms.getOrCreate(message.roomCode);
-      const side = target.join(connection, message.nickname, message.stats);
+      const room = rooms.getOrCreate(message.roomCode);
+      const side = room.freeSide();
       if (side === null) {
         sendError(socket, ErrorCode.RoomFull, 'в комнате уже два игрока');
         return;
       }
-      rooms.attach(connection, target);
+      rooms.attach(connection, room, room.join(side, connection, message.nickname, message.stats));
       return;
     }
-    if (room === undefined) {
+    if (seat === undefined) {
       return;
     }
     if (message.type === MessageType.Input) {
-      room.input(connection, message.seq, message.action);
+      seat.input(message.seq, message.action);
       return;
     }
-    room.ping(connection, message.clientTime);
+    seat.ping(message.clientTime);
   }
 
   wss.on('connection', (socket: WebSocket) => {
     connections.add(socket);
     const connection = new SocketConnection(socket);
-    socket.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
+    socket.on('message', (data: RawData) => {
       let message;
       try {
         message = decode(toBytes(data));
@@ -150,14 +146,12 @@ export function createApp(options: AppOptions = {}): App {
       connections.delete(socket);
       rooms.detach(connection);
     });
-    socket.on('error', () => {
-      socket.close();
-    });
+    // Ошибка протокола WebSocket: ws сам закрывает соединение, слушатель нужен, чтобы ошибка не уронила процесс.
+    socket.on('error', () => undefined);
   });
 
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const path = new URL(request.url ?? '/', 'http://localhost').pathname;
-    if (path !== '/ws') {
+    if (requestPath(request) !== WS_PATH) {
       socket.destroy();
       return;
     }
@@ -182,7 +176,7 @@ export function createApp(options: AppOptions = {}): App {
       tickDurationMaxMs = Math.max(tickDurationMaxMs, duration);
       next += tickMs;
       const delay = next - performance.now();
-      if (delay < -5 * tickMs) {
+      if (delay < -CATCH_UP_LIMIT_TICKS * tickMs) {
         next = performance.now() + tickMs;
       }
       timer = setTimeout(run, Math.max(0, delay));
@@ -191,23 +185,20 @@ export function createApp(options: AppOptions = {}): App {
   }
 
   return {
-    server,
-    rooms,
     stats,
     listen(port: number, host = '0.0.0.0'): Promise<number> {
       return new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(port, host, () => {
-          const address = server.address();
+          // TCP-сокет: address() — всегда AddressInfo.
+          const address = server.address() as AddressInfo;
           startLoop();
-          resolve(typeof address === 'object' && address !== null ? address.port : port);
+          resolve(address.port);
         });
       });
     },
     close(): Promise<void> {
-      if (timer !== null) {
-        clearTimeout(timer);
-      }
+      clearTimeout(timer);
       for (const socket of connections) {
         socket.terminate();
       }

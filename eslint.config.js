@@ -10,6 +10,8 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/*.config.*',
       'coverage/**',
+      'test-results/**',
+      'playwright-report/**',
       'packages/mobile/android/**',
       'packages/mobile/ios/**',
     ],

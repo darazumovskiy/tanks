@@ -65,6 +65,11 @@ export class TestClient {
     return this.seq;
   }
 
+  // Забирает всё, что уже пришло, не дожидаясь нового: скрипт может реагировать на свежий снимок, а не на очередь.
+  takeQueued(): ServerMessage[] {
+    return this.queue.splice(0);
+  }
+
   next(timeoutMs = 2000): Promise<ServerMessage> {
     const queued = this.queue.shift();
     if (queued !== undefined) {

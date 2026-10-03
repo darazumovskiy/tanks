@@ -1,21 +1,17 @@
+import { randomBytes } from 'node:crypto';
+import { once } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { connect as connectTcp } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MessageType, PROTOCOL_VERSION, ErrorCode, type SnapshotMessage } from '@tanks/shared/protocol';
 import { createApp, type App } from '../src/app.js';
 import { TestClient } from './client.js';
+import { seededRandom, sleep } from './support.js';
 
 const FAST_ROOM = { countdownTicks: 3, roundEndTicks: 3, maxInputsPerSecond: 90 };
-
-// Детерминированная случайность для манекена: тест не должен зависеть от удачи.
-function seededRandom(seed: number): () => number {
-  let state = seed >>> 0 || 1;
-  return () => {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    return state / 4294967296;
-  };
-}
+const TICK_MS = 4;
 
 let app: App;
 let port: number;
@@ -48,11 +44,18 @@ async function snapshotAfterCountdown(client: TestClient): Promise<SnapshotMessa
   return snapshot;
 }
 
+async function healthz(): Promise<{ rooms: number; connections: number; tick: number }> {
+  const response = await fetch(`http://127.0.0.1:${String(port)}/healthz`);
+  expect(response.status).toBe(200);
+  return (await response.json()) as { rooms: number; connections: number; tick: number };
+}
+
 beforeEach(async () => {
   staticRoot = mkdtempSync(join(tmpdir(), 'tanks-static-'));
   writeFileSync(join(staticRoot, 'index.html'), '<html>tanks</html>');
   writeFileSync(join(staticRoot, 'app.js'), 'console.log(1)');
-  app = createApp({ staticRoot, room: FAST_ROOM, random: seededRandom(42) });
+  writeFileSync(join(staticRoot, 'data.bin'), 'raw');
+  app = createApp({ staticRoot, room: FAST_ROOM, random: seededRandom(42), tickMs: TICK_MS });
   port = await app.listen(0, '127.0.0.1');
 });
 
@@ -65,9 +68,7 @@ afterEach(async () => {
 
 describe('HTTP', () => {
   it('отдаёт состояние на /healthz', async () => {
-    const response = await fetch(`http://127.0.0.1:${String(port)}/healthz`);
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as { rooms: number; connections: number };
+    const body = await healthz();
     expect(body.rooms).toBe(0);
     expect(body.connections).toBe(0);
   });
@@ -78,6 +79,10 @@ describe('HTTP', () => {
     expect(await (await fetch(`${base}/`)).text()).toBe('<html>tanks</html>');
     expect(await (await fetch(`${base}/d/abc123`)).text()).toBe('<html>tanks</html>');
     expect((await fetch(`${base}/nope.js`)).status).toBe(404);
+
+    const binary = await fetch(`${base}/data.bin`);
+    expect(binary.headers.get('content-type')).toBe('application/octet-stream');
+    expect(await binary.text()).toBe('raw');
 
     const outside = join(staticRoot, '..', 'tanks-outside-secret.txt');
     writeFileSync(outside, 'secret');
@@ -90,6 +95,34 @@ describe('HTTP', () => {
 
   it('не принимает WebSocket на чужом пути', async () => {
     await expect(TestClient.connect(port, '/other')).rejects.toThrow();
+  });
+
+  it('битый кадр WebSocket закрывает соединение, сервер живёт дальше', async () => {
+    const socket = connectTcp(port, '127.0.0.1');
+    await once(socket, 'connect');
+    socket.write(
+      [
+        'GET /ws HTTP/1.1',
+        `Host: 127.0.0.1:${String(port)}`,
+        'Upgrade: websocket',
+        'Connection: Upgrade',
+        `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}`,
+        'Sec-WebSocket-Version: 13',
+        '',
+        '',
+      ].join('\r\n'),
+    );
+    const [handshake] = (await once(socket, 'data')) as [Buffer];
+    expect(handshake.toString()).toContain('101');
+    expect((await healthz()).connections).toBe(1);
+
+    // Кадр от клиента обязан быть замаскирован; без маски ws отвечает кадром закрытия.
+    socket.write(Buffer.from([0x82, 0x01, 0x00]));
+    await once(socket, 'data');
+    socket.end();
+    await once(socket, 'close');
+    await sleep(20);
+    expect((await healthz()).connections).toBe(0);
   });
 
   it('отдаёт APK приложения по /app/tanks.apk, пока файл есть', async () => {
@@ -120,6 +153,31 @@ describe('HTTP', () => {
   });
 });
 
+describe('процесс', () => {
+  it('createApp() без параметров работает с умолчаниями, close() без listen() не падает', async () => {
+    await createApp().close();
+    const plain = createApp();
+    const plainPort = await plain.listen(0, '127.0.0.1');
+    try {
+      const response = await fetch(`http://127.0.0.1:${String(plainPort)}/healthz`);
+      expect(response.status).toBe(200);
+      expect((await fetch(`http://127.0.0.1:${String(plainPort)}/`)).status).toBe(404);
+    } finally {
+      await plain.close();
+    }
+  });
+
+  it('после остановки процесса дольше пяти тиков расписание сбрасывается, тики не навёрстываются пачкой', async () => {
+    await sleep(50);
+    const before = (await healthz()).tick;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 * TICK_MS);
+    await sleep(10 * TICK_MS);
+    const after = (await healthz()).tick;
+    expect(after - before).toBeGreaterThanOrEqual(5);
+    expect(after - before).toBeLessThan(25);
+  });
+});
+
 describe('вход в комнату', () => {
   it('два игрока получают стороны 0 и 1, состояние комнаты и старт раунда', async () => {
     const a = await connect();
@@ -143,10 +201,15 @@ describe('вход в комнату', () => {
     expect(app.stats().rooms).toBe(1);
   });
 
+  it('повторный Join из комнаты игнорируется', async () => {
+    const [a] = await joinedPair('again');
+    a.join('other', 'Алиса-2');
+    await expect(a.nextOfType(MessageType.Welcome, 200)).rejects.toThrow();
+    expect(await a.closed(100)).toBe(false);
+    expect(app.stats().rooms).toBe(1);
+  });
+
   it('код с префиксом bot — дуэль против манекена: он уже сидит первым, раунд стартует сразу', async () => {
-    await app.close();
-    app = createApp({ staticRoot, room: FAST_ROOM, random: seededRandom(42), tickMs: 4 });
-    port = await app.listen(0, '127.0.0.1');
     const human = await connect();
     human.join('botxyz1', 'Дима');
     const welcome = await human.nextOfType(MessageType.Welcome);
@@ -177,14 +240,11 @@ describe('вход в комнату', () => {
     expect((await stranger.nextOfType(MessageType.Error)).code).toBe(ErrorCode.RoomFull);
 
     human.close();
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await sleep(100);
     expect(app.stats().rooms).toBe(0);
   });
 
   it('клиент замолчал — его танк останавливается, а не едет по последней команде вечно', async () => {
-    await app.close();
-    app = createApp({ staticRoot, room: FAST_ROOM, random: seededRandom(1), tickMs: 4 });
-    port = await app.listen(0, '127.0.0.1');
     const [a] = await joinedPair('silent');
     await snapshotAfterCountdown(a);
     a.input({ throttle: 1 });
@@ -250,7 +310,7 @@ describe('вход в комнату', () => {
     await expect(a.nextOfType(MessageType.Snapshot, 300)).rejects.toThrow();
     a.close();
     await a.closed();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await sleep(50);
     expect(app.stats().rooms).toBe(0);
   });
 });
@@ -305,7 +365,7 @@ describe('бой', () => {
     expect(isDone()).toBe(true);
   }, 10000);
 
-  it('устаревший и слишком частый ввод отбрасывается', async () => {
+  it('устаревший и слишком частый ввод отбрасывается, через секунду лимит сбрасывается', async () => {
     const [a] = await joinedPair('spam');
     await snapshotAfterCountdown(a);
     for (let i = 0; i < 200; i++) {
@@ -318,6 +378,15 @@ describe('бой', () => {
     }
     expect(snapshot.ackSeq).toBeLessThanOrEqual(FAST_ROOM.maxInputsPerSecond);
     expect(snapshot.tanks[0].speed).toBeGreaterThan(0);
+
+    await sleep(40 * TICK_MS);
+    const lateSeq = a.input({ throttle: 1 });
+    const deadline = Date.now() + 2000;
+    let acked = await a.nextOfType(MessageType.Snapshot);
+    while (acked.ackSeq < lateSeq && Date.now() < deadline) {
+      acked = await a.nextOfType(MessageType.Snapshot);
+    }
+    expect(acked.ackSeq).toBe(lateSeq);
   });
 
   it('отвечает на ping текущим тиком', async () => {

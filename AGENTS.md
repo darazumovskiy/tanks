@@ -36,7 +36,7 @@
 | `packages/client` | Браузерный клиент: Vite, Canvas 2D |
 | `packages/mobile` | Оболочка Capacitor (Android, iOS): открывает клиент с игрового сервера; APK собирается в Docker — `deploy/android/build.sh`, см. [android-app.md](docs/tech/impl/infra/android-app.md) |
 
-Команды из корня: `npm test` (Vitest), `npm run test:coverage` (с порогами), `npm run lint` (ESLint + Prettier), `npm run typecheck`, `npm run build`. Тесты лежат рядом с кодом (`*.test.ts`) или в `packages/*/test/`. Перед финализацией любого шага — все команды зелёные.
+Команды из корня: `npm test` (Vitest), `npm run test:coverage` (с порогами), `npm run test:e2e` (Playwright: собранные сервер и клиент, два браузера), `npm run lint` (ESLint + Prettier), `npm run typecheck`, `npm run build`. Тесты лежат рядом с кодом (`*.test.ts`) или в `packages/*/test/`. Перед финализацией любого шага — все команды зелёные.
 
 **Определение готовности** (ADR `tests.md`): план тестирования с крайними случаями написан до кода и исполнен; всё видимое игроку агент проверил сам в браузере двумя клиентами (chrome-devtools MCP, `window.tanksGame.debugState()` на странице боя). Без этого о готовности не сообщать.
 
