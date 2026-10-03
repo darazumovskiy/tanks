@@ -11,6 +11,7 @@ import {
   keepTargetInSafeZone,
   screenToWorld,
   smoothCamera,
+  stabilizedHeight,
   type Camera,
   type FramingInsets,
   type Point,
@@ -57,7 +58,11 @@ const ANNOUNCE_SCALE = 0.6;
 // Доли окна под панели (сверху) и большие пальцы на стиках (снизу, по бокам): цели кадрирования держатся вне их.
 const FRAMING_INSETS: FramingInsets = { side: 0.12, top: 0.14, bottom: 0.32 };
 // Свой танк не заходит в эти доли даже ценой пустоты за полем — иначе он уехал бы под стик.
-const SELF_INSETS: FramingInsets = { side: 0.1, top: 0.12, bottom: 0.3 };
+const SELF_INSETS: FramingInsets = { side: 0.24, top: 0.12, bottom: 0.36 };
+// Масштаб переключается ступенями: пока нужная высота в пределах ±20 % от зафиксированной, она не меняется.
+const ZOOM_DEAD_BAND = 0.2;
+// Отдаление вдвое быстрее приближения.
+const ZOOM_OUT_RATIO = 0.5;
 const FRAME_GRAPH_HEIGHT = 36;
 const FRAME_GRAPH_BAR_WIDTH = 2;
 const FRAME_BUDGET_MS = 1000 / 60;
@@ -83,6 +88,7 @@ export class Renderer {
   private pixelRatio = 1;
   private camera: Camera;
   private smoothedCamera: Camera | null = null;
+  private committedHeight: number | null = null;
 
   // На компьютере поле показывается целиком; на устройстве с касанием камера кадрирует бой: себя и противника.
   constructor(
@@ -106,6 +112,11 @@ export class Renderer {
   // Новый раунд — танки появляются в другом месте, камера не должна ехать к ним через всё поле.
   resetCamera(): void {
     this.smoothedCamera = null;
+    this.committedHeight = null;
+  }
+
+  get currentCamera(): Camera {
+    return this.camera;
   }
 
   private frameBattle(view: WorldView, mySide: Side, frameMs: number): Camera {
@@ -121,9 +132,22 @@ export class Renderer {
     const enemy = view.tanks[mySide === 0 ? 1 : 0];
     const targets: Point[] = enemy.isAlive ? [me, enemy] : [me];
     const minViewHeight = (ARENA.height * this.settings.minViewPercent) / 100;
-    const framed = frameTargets(targets, this.canvas.width, this.canvas.height, minViewHeight, FRAMING_INSETS);
+    const needed = frameTargets(targets, this.canvas.width, this.canvas.height, minViewHeight, FRAMING_INSETS);
+    this.committedHeight = stabilizedHeight(this.committedHeight, needed.height, ZOOM_DEAD_BAND);
+    const framed = frameTargets(
+      targets,
+      this.canvas.width,
+      this.canvas.height,
+      minViewHeight,
+      FRAMING_INSETS,
+      this.committedHeight,
+    );
     const wanted = keepTargetInSafeZone(framed, me, SELF_INSETS);
-    const smoothing = { moveLagMs: this.settings.cameraLagMs, zoomLagMs: this.settings.zoomLagMs };
+    const smoothing = {
+      moveLagMs: this.settings.cameraLagMs,
+      zoomInLagMs: this.settings.zoomLagMs,
+      zoomOutLagMs: this.settings.zoomLagMs * ZOOM_OUT_RATIO,
+    };
     this.smoothedCamera = smoothCamera(this.smoothedCamera, wanted, smoothing, frameMs);
     return this.smoothedCamera;
   }

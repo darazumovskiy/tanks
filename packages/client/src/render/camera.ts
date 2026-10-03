@@ -53,6 +53,7 @@ export function frameTargets(
   canvasHeight: number,
   minViewHeight: number,
   insets: FramingInsets,
+  fixedHeight: number | null = null,
 ): Camera {
   const aspect = canvasWidth / canvasHeight;
   const left = Math.min(...targets.map((point) => point.x)) - TARGET_MARGIN;
@@ -62,7 +63,7 @@ export function frameTargets(
   const safeWidthFraction = 1 - insets.side * 2;
   const safeHeightFraction = 1 - insets.top - insets.bottom;
   const neededHeight = Math.max((bottom - top) / safeHeightFraction, (right - left) / (safeWidthFraction * aspect));
-  const height = clamp(neededHeight, minViewHeight, ARENA.height);
+  const height = clamp(fixedHeight ?? neededHeight, minViewHeight, ARENA.height);
   const width = height * aspect;
   const centerX = (left + right) / 2;
   const centerY = (top + bottom) / 2;
@@ -85,19 +86,33 @@ export function keepTargetInSafeZone(camera: Camera, target: Point, insets: Fram
   return { ...camera, x: clamp(camera.x, minX, maxX), y: clamp(camera.y, minY, maxY) };
 }
 
-export interface CameraSmoothing {
-  moveLagMs: number;
-  zoomLagMs: number;
+// Высота окна меняется ступенями: пока нужная высота отличается от зафиксированной меньше чем на долю
+// deadBand, остаётся зафиксированная — мелкое маневрирование не трогает масштаб.
+export function stabilizedHeight(committed: number | null, needed: number, deadBand: number): number {
+  if (committed === null) {
+    return needed;
+  }
+  if (Math.abs(needed - committed) / committed <= deadBand) {
+    return committed;
+  }
+  return needed;
 }
 
-// Экспоненциальный догон: за lagMs проходится половина пути. Центр и высота сглаживаются раздельно —
-// приближение медленнее, чтобы кадр не «дышал». Ноль — мгновенно.
+export interface CameraSmoothing {
+  moveLagMs: number;
+  zoomInLagMs: number;
+  zoomOutLagMs: number;
+}
+
+// Экспоненциальный догон: за lagMs проходится половина пути. Центр и высота сглаживаются раздельно;
+// отдаление быстрее приближения — не видеть противника хуже, чем видеть его чуть мельче. Ноль — мгновенно.
 export function smoothCamera(previous: Camera | null, next: Camera, smoothing: CameraSmoothing, dtMs: number): Camera {
   if (previous === null) {
     return next;
   }
   const moveK = approach(smoothing.moveLagMs, dtMs);
-  const zoomK = approach(smoothing.zoomLagMs, dtMs);
+  const isZoomingOut = next.height > previous.height;
+  const zoomK = approach(isZoomingOut ? smoothing.zoomOutLagMs : smoothing.zoomInLagMs, dtMs);
   const height = previous.height + (next.height - previous.height) * zoomK;
   const aspect = next.width / next.height;
   const width = height * aspect;

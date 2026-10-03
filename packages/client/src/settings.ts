@@ -25,9 +25,9 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = {
   stickRadiusPx: 40,
   deadZone: 0.07,
   fireRing: 0.89,
-  minViewPercent: 60,
+  minViewPercent: 65,
   cameraLagMs: 120,
-  zoomLagMs: 300,
+  zoomLagMs: 900,
   showFrameGraph: false,
 };
 
@@ -47,10 +47,10 @@ export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
   {
     key: 'zoomLagMs',
     label: 'Плавность приближения',
-    hint: 'мс до середины пути; 0 — мгновенно',
+    hint: 'мс до середины пути при приближении; отдаление вдвое быстрее',
     min: 0,
-    max: 1000,
-    step: 25,
+    max: 2000,
+    step: 50,
   },
 ];
 

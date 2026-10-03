@@ -128,6 +128,7 @@ export class Game {
     fps: number;
     worstFrameMs: number;
     correctionPx: number;
+    camera: { x: number; y: number; height: number };
   } | null {
     if (this.prediction === null) {
       return null;
@@ -143,6 +144,11 @@ export class Game {
       fps: this.fps,
       worstFrameMs: this.worstFrameMs,
       correctionPx: this.prediction.lastCorrectionPx,
+      camera: {
+        x: this.renderer.currentCamera.x,
+        y: this.renderer.currentCamera.y,
+        height: this.renderer.currentCamera.height,
+      },
     };
   }
 

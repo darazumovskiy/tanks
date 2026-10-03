@@ -7,6 +7,7 @@ import {
   keepTargetInSafeZone,
   screenToWorld,
   smoothCamera,
+  stabilizedHeight,
   worldToScreen,
 } from './camera.js';
 
@@ -204,6 +205,16 @@ describe('frameTargets', () => {
     expect(camera.height).toBeCloseTo((80 + 220) / (1 - insets.top - insets.bottom), 6);
   });
 
+  it('зафиксированная высота используется вместо нужной, но в пределах минимума и поля', () => {
+    const targets = [
+      { x: 800, y: 600 },
+      { x: 900, y: 560 },
+    ];
+    expect(frameTargets(targets, 2200, 1000, MIN_VIEW, insets, 700).height).toBe(700);
+    expect(frameTargets(targets, 2200, 1000, MIN_VIEW, insets, 100).height).toBe(MIN_VIEW);
+    expect(frameTargets(targets, 2200, 1000, MIN_VIEW, insets, 5000).height).toBe(ARENA.height);
+  });
+
   it('одна цель — минимальное приближение вокруг неё', () => {
     const camera = frameTargets([{ x: 800, y: 450 }], 2200, 1000, MIN_VIEW, insets);
     expect(camera.height).toBe(MIN_VIEW);
@@ -211,8 +222,21 @@ describe('frameTargets', () => {
   });
 });
 
+describe('stabilizedHeight', () => {
+  it('без зафиксированной — нужная', () => {
+    expect(stabilizedHeight(null, 700, 0.2)).toBe(700);
+  });
+
+  it('внутри порога — зафиксированная, за порогом — нужная', () => {
+    expect(stabilizedHeight(700, 800, 0.2)).toBe(700);
+    expect(stabilizedHeight(700, 600, 0.2)).toBe(700);
+    expect(stabilizedHeight(700, 900, 0.2)).toBe(900);
+    expect(stabilizedHeight(700, 540, 0.2)).toBe(540);
+  });
+});
+
 describe('smoothCamera', () => {
-  const smoothing = { moveLagMs: 100, zoomLagMs: 200 };
+  const smoothing = { moveLagMs: 100, zoomInLagMs: 400, zoomOutLagMs: 200 };
   const from = { x: 0, y: 0, width: 1000, height: 500, scale: 2 };
   const to = { x: 400, y: 200, width: 1600, height: 800, scale: 1.25 };
 
@@ -226,11 +250,13 @@ describe('smoothCamera', () => {
     const toCenterX = to.x + to.width / 2;
     expect(step.x + step.width / 2).toBeCloseTo((fromCenterX + toCenterX) / 2, 6);
     expect(step.height).toBeCloseTo(500 + 300 * (1 - Math.pow(0.5, 100 / 200)), 6);
+    const back = smoothCamera(to, from, smoothing, 100);
+    expect(back.height).toBeCloseTo(800 - 300 * (1 - Math.pow(0.5, 100 / 400)), 6);
     expect(step.width / step.height).toBeCloseTo(to.width / to.height, 6);
     expect(step.scale * step.height).toBeCloseTo(to.scale * to.height, 6);
   });
 
   it('нулевые паузы — мгновенно', () => {
-    expect(smoothCamera(from, to, { moveLagMs: 0, zoomLagMs: 0 }, 16)).toEqual(to);
+    expect(smoothCamera(from, to, { moveLagMs: 0, zoomInLagMs: 0, zoomOutLagMs: 0 }, 16)).toEqual(to);
   });
 });
