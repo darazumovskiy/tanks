@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { TAP_MAX_MS, TouchSticks, type StickSettings } from './touch.js';
+import { EDGE_GAP_RATIO, TAP_MAX_MS, TouchSticks, type StickSettings } from './touch.js';
 
 const STICK_RADIUS_PX = 64;
 
@@ -201,5 +201,30 @@ describe('TouchSticks', () => {
     expect(sticks.stick('aim')?.radiusPx).toBe(32);
     expect(sticks.stick('aim')?.dx).toBeCloseTo(20 / 32, 6);
     expect(sticks.isFiringByStick).toBe(true);
+  });
+
+  it('касание у края экрана — основание отступает от края, отклонение считается от основания', () => {
+    down({ id: 1, x: 5, y: Y });
+    const stick = sticks.stick('move');
+    const inset = STICK_RADIUS_PX * (1 + EDGE_GAP_RATIO);
+    expect(stick?.baseX).toBeCloseTo(inset, 6);
+    expect(stick?.baseY).toBe(Y);
+    expect(stick?.dx).toBeCloseTo(-Math.min(1, (inset - 5) / STICK_RADIUS_PX), 6);
+    move({ id: 1, x: inset, y: Y });
+    expect(stick?.dx).toBeCloseTo(0, 6);
+  });
+
+  it('касание в нижнем правом углу — отступ и по горизонтали, и по вертикали', () => {
+    down({ id: 2, x: window.innerWidth - 2, y: window.innerHeight - 2 });
+    const stick = sticks.stick('aim');
+    const inset = STICK_RADIUS_PX * (1 + EDGE_GAP_RATIO);
+    expect(stick?.baseX).toBeCloseTo(window.innerWidth - inset, 6);
+    expect(stick?.baseY).toBeCloseTo(window.innerHeight - inset, 6);
+  });
+
+  it('касание вдали от края — основание в точке касания', () => {
+    down({ id: 1, x: LEFT_X, y: Y });
+    expect(sticks.stick('move')?.baseX).toBe(LEFT_X);
+    expect(sticks.stick('move')?.dx).toBe(0);
   });
 });

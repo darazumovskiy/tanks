@@ -2,6 +2,8 @@ import type { Settings } from './settings.js';
 import { isStickActive, stickMagnitude, type StickVector } from './steering.js';
 
 export const TAP_MAX_MS = 200;
+// Основание стика отступает от края экрана на эту долю радиуса, чтобы ручку можно было довести до упора в любую сторону.
+export const EDGE_GAP_RATIO = 0.12;
 
 export type StickRole = 'move' | 'aim';
 
@@ -77,19 +79,23 @@ export class TouchSticks {
     if (this.active.has(role)) {
       return;
     }
-    this.active.set(role, {
+    const radiusPx = this.settings.stickRadiusPx;
+    const inset = radiusPx * (1 + EDGE_GAP_RATIO);
+    const stick: ActiveStick = {
       role,
       pointerId: event.pointerId,
-      baseX: event.clientX,
-      baseY: event.clientY,
+      baseX: clampToScreen(event.clientX, inset, window.innerWidth),
+      baseY: clampToScreen(event.clientY, inset, window.innerHeight),
       dx: 0,
       dy: 0,
-      radiusPx: this.settings.stickRadiusPx,
+      radiusPx,
       deadZone: this.settings.deadZone,
       fireRing: this.settings.fireRing,
       startedAt: this.now(),
       hasLeftDeadZone: false,
-    });
+    };
+    this.active.set(role, stick);
+    this.deflect(stick, event.clientX, event.clientY);
   }
 
   private move(event: PointerEvent): void {
@@ -97,8 +103,12 @@ export class TouchSticks {
     if (stick === null) {
       return;
     }
-    const rawX = (event.clientX - stick.baseX) / stick.radiusPx;
-    const rawY = (event.clientY - stick.baseY) / stick.radiusPx;
+    this.deflect(stick, event.clientX, event.clientY);
+  }
+
+  private deflect(stick: ActiveStick, clientX: number, clientY: number): void {
+    const rawX = (clientX - stick.baseX) / stick.radiusPx;
+    const rawY = (clientY - stick.baseY) / stick.radiusPx;
     const length = Math.hypot(rawX, rawY);
     const scale = length > 1 ? 1 / length : 1;
     stick.dx = rawX * scale;
@@ -128,4 +138,11 @@ export class TouchSticks {
     }
     return null;
   }
+}
+
+function clampToScreen(value: number, inset: number, size: number): number {
+  if (size <= inset * 2) {
+    return size / 2;
+  }
+  return Math.min(size - inset, Math.max(inset, value));
 }
