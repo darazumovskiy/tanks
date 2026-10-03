@@ -17,6 +17,7 @@
 | Что в `tank-arena` берём, что меняем | [research/tank-arena-audit.md](../../research/tank-arena-audit.md) |
 | Замеры хостинга | [research/hosting.md](../../research/hosting.md) |
 | Как проверять на телефоне и эмуляторе, замеры на устройстве | [knowledge/device-testing.md](knowledge/device-testing.md) |
+| Камера и управление: что сделано, что в ветке `camera-lab`, открытое решение, порядок работ | [knowledge/camera-handoff.md](knowledge/camera-handoff.md) |
 | Ревью камеры по коду: инварианты, контрпримеры, дыры | [knowledge/camera-review.md](knowledge/camera-review.md) |
 | Ревью сенсорного управления: инварианты, непокрытые случаи, рекомендации | [knowledge/controls-review.md](knowledge/controls-review.md) |
 | Как делают камеры в геймдеве и схема для дуэли | [research/camera-techniques.md](../../research/camera-techniques.md) |
