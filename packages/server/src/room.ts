@@ -7,19 +7,22 @@ import {
   TICK_RATE,
   type Action,
   type Round,
-  type RoundEvent,
   type Side,
   type Stats,
 } from '@tanks/shared/engine';
 import {
   encode,
+  gameTimecode,
   MessageType,
   type RoomStateMessage,
   type RoundStartMessage,
   type ServerMessage,
+  type SnapshotEvent,
   type SnapshotMessage,
 } from '@tanks/shared/protocol';
+import { randomInt } from 'node:crypto';
 import { toSnapshotEvent } from './events.js';
+import { LOG_SOURCE_SERVER, NO_LOG, type GameLog } from './gameLog.js';
 
 export interface Connection {
   send(bytes: Uint8Array): void;
@@ -43,6 +46,7 @@ export const DEFAULT_ROOM_OPTIONS: RoomOptions = { countdownTicks: 90, roundEndT
 type DuelPhase = 'countdown' | 'fight' | 'roundEnd';
 
 interface Player {
+  side: Side;
   connection: Connection;
   nickname: string;
   stats: Stats;
@@ -52,10 +56,13 @@ interface Player {
   pending: { seq: number; action: Action } | null;
   lastAction: Action;
   inputsThisSecond: number;
+  inputsThisTick: number;
 }
 
-// Бой существует, только пока в комнате двое.
+// Бой существует, только пока в комнате двое. id и startTick — идентификатор и начало отсчёта таймкода журнала.
 interface Duel {
+  id: string;
+  startTick: number;
   players: [Player, Player];
   round: Round;
   phase: DuelPhase;
@@ -66,6 +73,25 @@ const IDLE: Action = { throttle: 0, turn: 0, turretTurn: 0, isFiring: false };
 // Клиент замолчал (ушёл в фон, завис) — его танк не должен ехать и стрелять по последней команде вечно.
 export const INPUT_TIMEOUT_TICKS = 15;
 const NICKNAME_MAX = 16;
+// Без похожих знаков (0/O, 1/I/L): идентификатор игрок читает с экрана и называет вслух.
+const GAME_ID_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const GAME_ID_LENGTH = 4;
+const PHASE_MARKS: Readonly<Record<DuelPhase, string>> = { countdown: 'c', fight: 'f', roundEnd: 'e' };
+
+function randomGameId(): string {
+  return Array.from({ length: GAME_ID_LENGTH }, () => GAME_ID_ALPHABET.charAt(randomInt(GAME_ID_ALPHABET.length))).join(
+    '',
+  );
+}
+
+function formatAction(action: Action): string {
+  const fire = action.isFiring ? '1' : '0';
+  return `${action.throttle.toFixed(2)},${action.turn.toFixed(2)},${action.turretTurn.toFixed(2)},${fire}`;
+}
+
+function formatPose(tank: Round['tanks'][number]): string {
+  return `${tank.x.toFixed(1)},${tank.y.toFixed(1)},${tank.heading.toFixed(2)},${tank.turret.toFixed(2)}`;
+}
 
 export function sanitizeNickname(raw: string): string {
   const trimmed = raw.trim().slice(0, NICKNAME_MAX);
@@ -85,10 +111,12 @@ export class Room {
   private roundIndex = 0;
   private score: [number, number] = [0, 0];
   private tick = 0;
+  private readonly log: GameLog;
 
-  constructor(code: string, options: RoomOptions = DEFAULT_ROOM_OPTIONS) {
+  constructor(code: string, options: RoomOptions = DEFAULT_ROOM_OPTIONS, log: GameLog = NO_LOG) {
     this.code = code;
     this.options = options;
+    this.log = log;
   }
 
   get isEmpty(): boolean {
@@ -107,6 +135,7 @@ export class Room {
 
   join(side: Side, connection: Connection, nickname: string, stats: Stats): Seat {
     const player: Player = {
+      side,
       connection,
       nickname: sanitizeNickname(nickname),
       stats: sanitizeStats(stats),
@@ -116,13 +145,14 @@ export class Room {
       pending: null,
       lastAction: { ...IDLE },
       inputsThisSecond: 0,
+      inputsThisTick: 0,
     };
     this.players[side] = player;
     this.sendTo(player, { type: MessageType.Welcome, side, roomCode: this.code });
     this.broadcast(this.roomStateMessage());
     const [a, b] = this.players;
     if (a !== null && b !== null) {
-      this.startRound([a, b]);
+      this.startDuel([a, b]);
     }
     return {
       input: (seq, action) => {
@@ -133,6 +163,7 @@ export class Room {
       },
       leave: () => {
         this.players[side] = null;
+        this.writeLog(`leave side=${String(side)} nick=${player.nickname}`);
         this.duel = null;
         this.broadcast(this.roomStateMessage());
       },
@@ -142,15 +173,22 @@ export class Room {
   // Новое пересиливает старое: за тик применяется последняя пришедшая команда, остальные теряются.
   private acceptInput(player: Player, seq: number, action: Action): void {
     player.inputsThisSecond++;
-    if (seq <= player.lastSeq || player.inputsThisSecond > this.options.maxInputsPerSecond) {
+    if (seq <= player.lastSeq) {
+      this.writeLog(`input stale side=${String(player.side)} seq=${String(seq)} last=${String(player.lastSeq)}`);
+      return;
+    }
+    if (player.inputsThisSecond > this.options.maxInputsPerSecond) {
+      this.writeLog(`input limit side=${String(player.side)} seq=${String(seq)}`);
       return;
     }
     player.lastSeq = seq;
     player.lastInputTick = this.tick;
+    player.inputsThisTick++;
     player.pending = { seq, action };
   }
 
-  step(): void {
+  // lateMs — на сколько тик начался позже расписания; попадает в журнал, на игру не влияет.
+  step(lateMs = 0): void {
     this.tick++;
     if (this.tick % TICK_RATE === 0) {
       for (const player of this.presentPlayers()) {
@@ -162,11 +200,18 @@ export class Room {
       return;
     }
     const actions = this.takeActions(duel.players);
-    const events = duel.phase === 'fight' ? stepRound(duel.round, actions) : [];
+    const events = duel.phase === 'fight' ? stepRound(duel.round, actions).map(toSnapshotEvent) : [];
     if (duel.phase !== 'fight') {
       duel.phaseTicksLeft--;
     }
     this.broadcastSnapshot(duel, events);
+    this.logTick(duel, actions, lateMs);
+    for (const event of events) {
+      const side = event.side === null ? '-' : String(event.side);
+      this.writeLog(
+        `ev kind=${event.kind} side=${side} x=${event.x.toFixed(1)} y=${event.y.toFixed(1)} v=${event.value.toFixed(1)}`,
+      );
+    }
     if (duel.phase === 'countdown' && duel.phaseTicksLeft <= 0) {
       duel.phase = 'fight';
     } else if (duel.phase === 'fight' && duel.round.isOver) {
@@ -177,8 +222,39 @@ export class Room {
       duel.phaseTicksLeft = this.options.roundEndTicks;
     } else if (duel.phase === 'roundEnd' && duel.phaseTicksLeft <= 0) {
       this.roundIndex++;
-      this.startRound(duel.players);
+      this.startRound(duel);
     }
+  }
+
+  private gameTick(duel: Duel): number {
+    return this.tick - duel.startTick;
+  }
+
+  private writeLog(text: string): void {
+    const duel = this.duel;
+    if (duel === null) {
+      return;
+    }
+    const gameTick = this.gameTick(duel);
+    this.log.write(duel.id, LOG_SOURCE_SERVER, `gt=${String(gameTick)} tc=${gameTimecode(gameTick)} ${text}`);
+  }
+
+  private logTick(duel: Duel, actions: [Action, Action], lateMs: number): void {
+    const parts: string[] = [
+      `tick rt=${String(duel.round.tick)} ph=${PHASE_MARKS[duel.phase]} late=${lateMs.toFixed(1)}`,
+    ];
+    for (const side of [0, 1] as const) {
+      const player = duel.players[side];
+      const s = String(side);
+      const isSilent = this.tick - player.lastInputTick > INPUT_TIMEOUT_TICKS ? '1' : '0';
+      parts.push(
+        `a${s}=${formatAction(actions[side])} ack${s}=${String(player.ackSeq)} in${s}=${String(player.inputsThisTick)}`,
+        `sil${s}=${isSilent} p${s}=${formatPose(duel.round.tanks[side])}`,
+      );
+      player.inputsThisTick = 0;
+    }
+    parts.push(`b=${String(duel.round.bullets.length)}`);
+    this.writeLog(parts.join(' '));
   }
 
   private presentPlayers(): Player[] {
@@ -200,20 +276,43 @@ export class Room {
     return result;
   }
 
-  private startRound(players: [Player, Player]): void {
+  private startDuel(players: [Player, Player]): void {
     const [a, b] = players;
+    const duel: Duel = {
+      id: randomGameId(),
+      startTick: this.tick,
+      players,
+      round: createRound(roundPlan(this.roundIndex).mapIndex, [
+        { name: a.nickname, stats: a.stats },
+        { name: b.nickname, stats: b.stats },
+      ]),
+      phase: 'countdown',
+      phaseTicksLeft: this.options.countdownTicks,
+    };
+    this.duel = duel;
+    this.writeLog(`game start room=${this.code} p0=${a.nickname} p1=${b.nickname}`);
+    this.startRound(duel);
+  }
+
+  private startRound(duel: Duel): void {
+    const [a, b] = duel.players;
     const plan = roundPlan(this.roundIndex);
-    const round = createRound(plan.mapIndex, [
+    duel.round = createRound(plan.mapIndex, [
       { name: a.nickname, stats: a.stats },
       { name: b.nickname, stats: b.stats },
     ]);
-    for (const player of players) {
+    duel.phase = 'countdown';
+    duel.phaseTicksLeft = this.options.countdownTicks;
+    for (const player of duel.players) {
       player.pending = null;
       player.lastAction = { ...IDLE };
     }
-    this.duel = { players, round, phase: 'countdown', phaseTicksLeft: this.options.countdownTicks };
+    this.writeLog(
+      `round start idx=${String(this.roundIndex)} map=${String(plan.mapIndex)} score=${String(this.score[0])}:${String(this.score[1])}`,
+    );
     const message: RoundStartMessage = {
       type: MessageType.RoundStart,
+      gameId: duel.id,
       roundIndex: this.roundIndex,
       mapIndex: plan.mapIndex,
       countdownTicks: this.options.countdownTicks,
@@ -226,11 +325,12 @@ export class Room {
     this.broadcast(message);
   }
 
-  private broadcastSnapshot(duel: Duel, events: RoundEvent[]): void {
+  private broadcastSnapshot(duel: Duel, events: SnapshotEvent[]): void {
     const round = duel.round;
     const base: Omit<SnapshotMessage, 'ackSeq'> = {
       type: MessageType.Snapshot,
       tick: round.tick,
+      gameTick: this.gameTick(duel),
       isOver: round.isOver,
       winner: round.winner,
       endReason: round.endReason,
@@ -269,7 +369,7 @@ export class Room {
         age: bullet.age,
       })),
       kits: round.kits.map((kit) => ({ isActive: kit.isActive, respawnIn: kit.respawnIn })),
-      events: events.map(toSnapshotEvent),
+      events,
     };
     for (const player of duel.players) {
       this.sendTo(player, { ...base, ackSeq: player.ackSeq });

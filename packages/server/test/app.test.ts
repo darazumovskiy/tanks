@@ -1,11 +1,17 @@
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect as connectTcp } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { MessageType, PROTOCOL_VERSION, ErrorCode, type SnapshotMessage } from '@tanks/shared/protocol';
+import {
+  MessageType,
+  PROTOCOL_VERSION,
+  ErrorCode,
+  type RoundStartMessage,
+  type SnapshotMessage,
+} from '@tanks/shared/protocol';
 import { createApp, type App } from '../src/app.js';
 import { TestClient } from './client.js';
 import { seededRandom, sleep } from './support.js';
@@ -24,6 +30,9 @@ async function connect(): Promise<TestClient> {
   return client;
 }
 
+// Старт раунда последней пары — для проверок идентификатора дуэли.
+let lastRoundStart: RoundStartMessage;
+
 async function joinedPair(code = 'duel1'): Promise<[TestClient, TestClient]> {
   const a = await connect();
   const b = await connect();
@@ -31,7 +40,7 @@ async function joinedPair(code = 'duel1'): Promise<[TestClient, TestClient]> {
   await a.nextOfType(MessageType.Welcome);
   b.join(code, 'Боб');
   await b.nextOfType(MessageType.Welcome);
-  await a.nextOfType(MessageType.RoundStart);
+  lastRoundStart = await a.nextOfType(MessageType.RoundStart);
   await b.nextOfType(MessageType.RoundStart);
   return [a, b];
 }
@@ -150,6 +159,14 @@ describe('HTTP', () => {
 
   it('без настроенного APK маршрут /app/tanks.apk отвечает 404', async () => {
     expect((await fetch(`http://127.0.0.1:${String(port)}/app/tanks.apk`)).status).toBe(404);
+  });
+
+  it('без папки журнала POST /log отвечает 404', async () => {
+    const response = await fetch(`http://127.0.0.1:${String(port)}/log?key=K7MF&src=C1`, {
+      method: 'POST',
+      body: 'x',
+    });
+    expect(response.status).toBe(404);
   });
 });
 
@@ -312,6 +329,114 @@ describe('вход в комнату', () => {
     await a.closed();
     await sleep(50);
     expect(app.stats().rooms).toBe(0);
+  });
+});
+
+describe('журнал игры', () => {
+  let logDir: string;
+  const GAME_ID = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
+  const LINE = /^\d{2}:\d{2}:\d{2}\.\d{3} (S|C\d) /;
+
+  beforeEach(async () => {
+    await app.close();
+    logDir = mkdtempSync(join(tmpdir(), 'tanks-log-'));
+    app = createApp({ staticRoot, logDir, room: FAST_ROOM, random: seededRandom(42), tickMs: TICK_MS });
+    port = await app.listen(0, '127.0.0.1');
+  });
+
+  afterEach(async () => {
+    await app.close();
+    rmSync(logDir, { recursive: true, force: true });
+  });
+
+  function logLines(gameId: string): string[] {
+    return readFileSync(join(logDir, `${gameId}.log`), 'utf8')
+      .split('\n')
+      .filter((line) => line !== '');
+  }
+
+  it('дуэль получает идентификатор, таймкод растёт по тикам, новая дуэль — новый идентификатор', async () => {
+    const [a, b] = await joinedPair('ids');
+    const start = lastRoundStart;
+    expect(start.gameId).toMatch(GAME_ID);
+    const first = await a.nextOfType(MessageType.Snapshot);
+    const second = await a.nextOfType(MessageType.Snapshot);
+    expect(second.gameTick).toBe(first.gameTick + 1);
+
+    b.close();
+    await sleep(50);
+    const c = await connect();
+    c.join('ids', 'Вера');
+    await c.nextOfType(MessageType.Welcome);
+    const restart = await c.nextOfType(MessageType.RoundStart);
+    expect(restart.gameId).toMatch(GAME_ID);
+    expect(restart.gameId).not.toBe(start.gameId);
+  });
+
+  it('сервер пишет старт, тики, команды, события и уход в файл дуэли', async () => {
+    const [a, b] = await joinedPair('srvlog');
+    const start = lastRoundStart;
+    await snapshotAfterCountdown(a);
+    const seq = a.input({ throttle: 1, isFiring: true });
+    let snapshot = await a.nextOfType(MessageType.Snapshot);
+    while (snapshot.ackSeq < seq) {
+      snapshot = await a.nextOfType(MessageType.Snapshot);
+    }
+    a.send({ type: MessageType.Input, seq, action: { throttle: 0, turn: 0, turretTurn: 0, isFiring: false } });
+    for (let i = 0; i < FAST_ROOM.maxInputsPerSecond + 5; i++) {
+      a.input({ throttle: 1 });
+    }
+    while (snapshot.events.every((event) => event.kind !== 'shot')) {
+      snapshot = await a.nextOfType(MessageType.Snapshot);
+    }
+    await sleep(700);
+    const flushed = logLines(start.gameId);
+    expect(flushed.length).toBeGreaterThan(0);
+
+    b.close();
+    await sleep(50);
+    await app.close();
+    const lines = logLines(start.gameId);
+    for (const line of lines) {
+      expect(line).toMatch(LINE);
+    }
+    const text = lines.join('\n');
+    expect(text).toContain(`S gt=0 tc=00:00 game start room=srvlog p0=Алиса p1=Боб`);
+    expect(text).toContain('round start idx=0 map=0 score=0:0');
+    expect(text).toMatch(/tick rt=\d+ ph=c late=\d+\.\d a0=0\.00,0\.00,0\.00,0 ack0=0 in0=0 sil0=\d p0=140\.0,450\.0/);
+    expect(text).toMatch(/tick rt=\d+ ph=f .*a0=1\.00,0\.00,0\.00,1 ack0=1 in0=1 /);
+    expect(text).toContain(`input stale side=0 seq=${String(seq)} last=${String(seq)}`);
+    expect(text).toMatch(/input limit side=0 seq=\d+/);
+    expect(text).toMatch(/ev kind=shot side=0 x=\d+\.\d y=450\.0 v=/);
+    expect(text).toContain('leave side=1 nick=Боб');
+  });
+
+  it('принимает строки клиента на POST /log и пишет их в файл ключа с источником', async () => {
+    const base = `http://127.0.0.1:${String(port)}`;
+    const posted = await fetch(`${base}/log?key=K7MF&src=C1`, { method: 'POST', body: 'gt=1 snap a\n\ngt=2 in b\n' });
+    expect(posted.status).toBe(204);
+    const again = await fetch(`${base}/log?key=K7MF&src=C1`, { method: 'POST', body: 'gt=3 sec c' });
+    expect(again.status).toBe(204);
+    expect((await fetch(`${base}/log?key=K7MF&src=C1`, { method: 'POST', body: '' })).status).toBe(204);
+    await app.close();
+    const lines = logLines('K7MF');
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3} C1 gt=1 snap a$/);
+    expect(lines[1]).toMatch(/ C1 gt=2 in b$/);
+    expect(lines[2]).toMatch(/ C1 gt=3 sec c$/);
+  });
+
+  it('отвергает недопустимый ключ или источник, слишком большое тело и не-POST', async () => {
+    const base = `http://127.0.0.1:${String(port)}`;
+    expect((await fetch(`${base}/log?key=../etc&src=C1`, { method: 'POST', body: 'x' })).status).toBe(400);
+    expect((await fetch(`${base}/log?key=K7MF&src=client-0`, { method: 'POST', body: 'x' })).status).toBe(400);
+    expect((await fetch(`${base}/log?src=C1`, { method: 'POST', body: 'x' })).status).toBe(400);
+    expect((await fetch(`${base}/log?key=K7MF`, { method: 'POST', body: 'x' })).status).toBe(400);
+    const huge = 'y'.repeat(300 * 1024);
+    expect((await fetch(`${base}/log?key=K7MF&src=C1`, { method: 'POST', body: huge })).status).toBe(413);
+    expect((await fetch(`${base}/log?key=K7MF&src=C1`)).status).toBe(404);
+    await app.close();
+    expect(existsSync(join(logDir, 'K7MF.log'))).toBe(false);
   });
 });
 

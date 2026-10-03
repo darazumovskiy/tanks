@@ -218,13 +218,14 @@ export function encode(message: Message): Uint8Array {
       writeSlot(writer, message.slots[1]);
       break;
     case MessageType.RoundStart:
+      writer.string(message.gameId);
       writer.u16(message.roundIndex).u8(message.mapIndex).u16(message.countdownTicks);
       writer.u16(message.score[0]).u16(message.score[1]);
       writeTankInfo(writer, message.tanks[0]);
       writeTankInfo(writer, message.tanks[1]);
       break;
     case MessageType.Snapshot:
-      writer.u32(message.tick).u32(message.ackSeq).bool(message.isOver);
+      writer.u32(message.tick).u32(message.gameTick).u32(message.ackSeq).bool(message.isOver);
       writeSide(writer, message.winner);
       writer.u8(message.endReason === null ? NO_SIDE : END_REASONS.indexOf(message.endReason));
       writer.f64(message.zoneRadius);
@@ -267,6 +268,7 @@ function readEndReason(reader: ByteReader): EndReason | null {
 
 function readSnapshot(reader: ByteReader): ServerMessage {
   const tick = reader.u32();
+  const gameTick = reader.u32();
   const ackSeq = reader.u32();
   const isOver = reader.bool();
   const winner = readNullableSide(reader);
@@ -291,6 +293,7 @@ function readSnapshot(reader: ByteReader): ServerMessage {
   return {
     type: MessageType.Snapshot,
     tick,
+    gameTick,
     ackSeq,
     isOver,
     winner,
@@ -334,6 +337,7 @@ export function decode(data: Uint8Array): Message {
     case MessageType.RoundStart:
       return {
         type,
+        gameId: reader.string(),
         roundIndex: reader.u16(),
         mapIndex: reader.u8(),
         countdownTicks: reader.u16(),

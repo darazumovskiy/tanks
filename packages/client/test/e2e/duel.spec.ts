@@ -13,6 +13,8 @@ const ARRIVE_DISTANCE = 30;
 const DRIVE_MS = 800;
 const MIN_DRIVE_DISTANCE = 20;
 const KILL_TIMEOUT_MS = 60_000;
+// Клиент шлёт строки раз в секунду, сервер пишет на диск раз в полсекунды.
+const LOG_TIMEOUT_MS = 5_000;
 
 const server = new GameServer();
 
@@ -41,10 +43,15 @@ async function openPair(
   return [a, b];
 }
 
-test('два браузера входят по ссылке, движение одного видно другому', async ({ browser }) => {
+test('два браузера входят по ссылке, движение одного видно другому, журнал игры собирает обе стороны', async ({
+  browser,
+}) => {
   const [a, b] = await openPair(browser, roomCode());
-  expect((await a.waitForBattle()).side).toBe(0);
+  const stateA = await a.waitForBattle();
+  expect(stateA.side).toBe(0);
   expect((await b.waitForBattle()).side).toBe(1);
+  expect(stateA.gameId).toMatch(/^[A-Z0-9]{4}$/);
+  expect((await b.waitForBattle()).gameId).toBe(stateA.gameId);
 
   const seenBefore = (await b.waitForFight()).enemy;
   expect(await a.driveForward(DRIVE_MS)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
@@ -55,6 +62,16 @@ test('два браузера входят по ссылке, движение �
     },
     5_000,
     'второй игрок не увидел движение первого',
+  );
+
+  await until(
+    () => {
+      const log = server.gameLog(stateA.gameId);
+      const hasAll = [' S gt=', ' C0 gt=', ' C1 gt='].every((mark) => log.includes(mark));
+      return Promise.resolve(hasAll && log.includes(' in seq=') && log.includes(' snap rt=') ? true : null);
+    },
+    LOG_TIMEOUT_MS,
+    'в журнале игры нет строк сервера и обоих клиентов',
   );
 
   await a.close();

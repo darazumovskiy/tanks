@@ -75,6 +75,7 @@ export class Prediction {
   private seq: number;
   lastCorrectionPx = 0;
   latestTick = 0;
+  latestGameTick = 0;
 
   // Номер команды сквозной на всё соединение: сервер отбрасывает номера не больше уже принятого,
   // поэтому новый раунд продолжает счёт, а не начинает с единицы.
@@ -99,6 +100,10 @@ export class Prediction {
     return this.pending.length;
   }
 
+  get myBulletCount(): number {
+    return this.round.bullets.filter((bullet) => bullet.owner === this.side).length;
+  }
+
   get lastSeq(): number {
     return this.seq;
   }
@@ -119,6 +124,7 @@ export class Prediction {
 
   applySnapshot(message: SnapshotMessage, receivedAt: number): void {
     this.latestTick = message.tick;
+    this.latestGameTick = message.gameTick;
     this.snapshots.push({ message, receivedAt });
     while (this.snapshots.length > 0 && receivedAt - (this.snapshots[0]?.receivedAt ?? 0) > SNAPSHOT_BUFFER_MS) {
       this.snapshots.shift();

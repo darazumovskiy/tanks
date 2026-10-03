@@ -1,4 +1,5 @@
 import { ARENA, KIT, ROUND_SECONDS, ZONE, type Side } from '@tanks/shared/engine';
+import { gameTimecode } from '@tanks/shared/protocol';
 import type { WorldView } from '../prediction.js';
 import type { Settings } from '../settings.js';
 import { stickMagnitude } from '../steering.js';
@@ -14,6 +15,8 @@ export interface HudInfo {
   names: [string, string];
   score: [number, number];
   roundIndex: number;
+  gameId: string;
+  gameTick: number;
   mySide: Side;
   rttMs: number;
   serverTick: number;
@@ -45,6 +48,9 @@ const PLATE_BAR_HEIGHT = 7;
 const MARKER_INSET = 36;
 const MARKER_SIZE = 10;
 const ANNOUNCE_SCALE = 0.6;
+// Идентификатор игры и таймкод игрок называет при разборе сбоя — крупнее служебных подписей.
+const GAME_ID_FONT_SIZE = 11;
+const GAME_ID_Y = 72;
 const FRAME_GRAPH_HEIGHT = 36;
 const FRAME_GRAPH_BAR_WIDTH = 2;
 const FRAME_BUDGET_MS = 1000 / 60;
@@ -118,6 +124,10 @@ export class Renderer {
 
   get currentCamera(): Camera {
     return this.camera;
+  }
+
+  get activeCameraMode(): CameraMode {
+    return this.strategyMode;
   }
 
   private cameraMode(): CameraMode {
@@ -430,6 +440,9 @@ export class Renderer {
     ctx.font = `600 ${String(9 * u)}px ${BODY_FONT}`;
     ctx.fillStyle = 'rgba(255,255,255,0.45)';
     ctx.fillText(`РАУНД ${String(hud.roundIndex + 1)} · ${view.round.map.name.toUpperCase()}`, centerX, 58 * u);
+    ctx.font = `600 ${String(GAME_ID_FONT_SIZE * u)}px ui-monospace, monospace`;
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText(`ИГРА ${hud.gameId} · ${gameTimecode(hud.gameTick)}`, centerX, GAME_ID_Y * u);
     ctx.restore();
   }
 
@@ -593,7 +606,7 @@ export class Renderer {
     ctx.fillStyle = 'rgba(244,241,232,0.55)';
     const sound = hud.isMuted ? 'звук выкл · M' : 'M — звук';
     ctx.fillText(
-      `${hud.fps.toFixed(0)} к/с · худший кадр ${hud.worstFrameMs.toFixed(0)} мс · задержка ${hud.rttMs.toFixed(0)} мс · поправка ${hud.correctionPx.toFixed(1)} px · ${sound}`,
+      `${hud.gameId} ${gameTimecode(hud.gameTick)} · ${hud.fps.toFixed(0)} к/с · худший кадр ${hud.worstFrameMs.toFixed(0)} мс · задержка ${hud.rttMs.toFixed(0)} мс · поправка ${hud.correctionPx.toFixed(1)} px · ${sound}`,
       UI_MARGIN,
       screen.height - 8,
     );

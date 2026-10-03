@@ -18,6 +18,7 @@
 | Замеры хостинга | [research/hosting.md](../../research/hosting.md) |
 | Как проверять на телефоне и эмуляторе, замеры на устройстве | [knowledge/device-testing.md](knowledge/device-testing.md) |
 | Камера дуэли: стратегии, правила, настройки, инварианты, лаборатория, план тестирования | [tech/impl/frontend/duel-camera.md](../../tech/impl/frontend/duel-camera.md) |
+| Журнал игры: идентификатор и таймкод на экране, файлы `/opt/tanks-logs/<id>.log`, что пишут сервер и клиент, как читать | [tech/impl/backend/game-log.md](../../tech/impl/backend/game-log.md) |
 | Камера и управление: передача 2026-10-03 (задел `camera-lab`, порядок работ по управлению) | [knowledge/camera-handoff.md](knowledge/camera-handoff.md) |
 | Ревью камеры по коду: инварианты, контрпримеры, дыры | [knowledge/camera-review.md](knowledge/camera-review.md) |
 | Ревью сенсорного управления: инварианты, непокрытые случаи, рекомендации | [knowledge/controls-review.md](knowledge/controls-review.md) |

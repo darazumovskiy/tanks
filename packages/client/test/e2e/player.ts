@@ -15,6 +15,7 @@ export interface TankState extends Point {
 // Срез `window.tanksGame.debugState()` в той части, которой пользуются сценарии.
 export interface DebugState {
   side: 0 | 1;
+  gameId: string;
   roundIndex: number;
   score: [number, number];
   isFighting: boolean;

@@ -6,6 +6,7 @@ import { ErrorCode, MESSAGE_TYPE_NAMES, MessageType, type Message, type Snapshot
 const snapshot: SnapshotMessage = {
   type: MessageType.Snapshot,
   tick: 123456,
+  gameTick: 654321,
   ackSeq: 77,
   isOver: true,
   winner: 1,
@@ -51,6 +52,7 @@ const samples: Message[] = [
   },
   {
     type: MessageType.RoundStart,
+    gameId: 'K7MF',
     roundIndex: 7,
     mapIndex: 3,
     countdownTicks: 90,
@@ -112,9 +114,9 @@ describe('кодек протокола', () => {
     });
   });
 
-  it('снимок пустого боя помещается в 140 байт', () => {
+  it('снимок пустого боя помещается в 144 байта', () => {
     const empty: SnapshotMessage = { ...snapshot, bullets: [], kits: [], events: [] };
-    expect(encode(empty).byteLength).toBeLessThanOrEqual(140);
+    expect(encode(empty).byteLength).toBeLessThanOrEqual(144);
   });
 
   it('отвергает неизвестный тип и обрывок', () => {
@@ -132,14 +134,14 @@ describe('кодек протокола', () => {
     expect(() => decode(error)).toThrow(RangeError);
 
     const badWinner = encode(snapshot);
-    badWinner[10] = 7;
+    badWinner[14] = 7;
     expect(() => decode(badWinner)).toThrow(RangeError);
 
     const badReason = encode(snapshot);
-    badReason[11] = 9;
+    badReason[15] = 9;
     expect(() => decode(badReason)).toThrow(RangeError);
 
-    const headerBytes = 1 + 4 + 4 + 1 + 1 + 1 + 8 + 2 * 57;
+    const headerBytes = 1 + 4 + 4 + 4 + 1 + 1 + 1 + 8 + 2 * 57;
     const badBulletOwner = encode({ ...snapshot, kits: [], events: [] });
     badBulletOwner[headerBytes + 2 + 4] = 5;
     expect(() => decode(badBulletOwner)).toThrow(RangeError);

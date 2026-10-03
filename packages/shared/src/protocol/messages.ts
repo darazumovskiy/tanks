@@ -1,6 +1,6 @@
 import type { Action, EndReason, Side, Stats } from '../engine/index.js';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export const MessageType = {
   Join: 1,
@@ -59,8 +59,10 @@ export interface RoundTankInfo {
   stats: Stats;
 }
 
+// gameId — идентификатор дуэли для журнала; один на все раунды, пока оба игрока в комнате.
 export interface RoundStartMessage {
   type: typeof MessageType.RoundStart;
+  gameId: string;
   roundIndex: number;
   mapIndex: number;
   countdownTicks: number;
@@ -130,9 +132,11 @@ export interface SnapshotEvent {
   flags: number;
 }
 
+// tick — тик раунда (с нуля каждый раунд); gameTick — тиков с создания дуэли, таймкод журнала.
 export interface SnapshotMessage {
   type: typeof MessageType.Snapshot;
   tick: number;
+  gameTick: number;
   ackSeq: number;
   isOver: boolean;
   winner: Side | null;

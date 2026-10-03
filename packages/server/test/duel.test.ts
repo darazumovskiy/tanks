@@ -3,6 +3,7 @@ import { DT, normalizeAngle, TURRET_RATE, type Action, type Stats } from '@tanks
 import {
   EventFlag,
   MessageType,
+  type RoundStartMessage,
   type ServerMessage,
   type SnapshotEvent,
   type SnapshotMessage,
@@ -99,6 +100,9 @@ interface PlayResult {
   events: SnapshotEvent[];
 }
 
+// Старт первого раунда последней пары: идентификатор дуэли должен пережить смену раунда.
+let firstRoundStart: RoundStartMessage;
+
 async function connectPair(code: string, statsA: Stats, statsB: Stats): Promise<[TestClient, TestClient]> {
   const a = await TestClient.connect(port);
   const b = await TestClient.connect(port);
@@ -107,7 +111,7 @@ async function connectPair(code: string, statsA: Stats, statsB: Stats): Promise<
   await a.nextOfType(MessageType.Welcome);
   b.join(code, 'Б', statsB);
   await b.nextOfType(MessageType.Welcome);
-  await a.nextOfType(MessageType.RoundStart);
+  firstRoundStart = await a.nextOfType(MessageType.RoundStart);
   await b.nextOfType(MessageType.RoundStart);
   return [a, b];
 }
@@ -199,6 +203,10 @@ describe('полный раунд', () => {
     expect(next.roundIndex).toBe(1);
     expect(next.mapIndex).toBe(1);
     expect(next.score).toEqual([1, 0]);
+    expect(next.gameId).toBe(firstRoundStart.gameId);
+    const nextSnapshot = await pair[0].nextOfType(MessageType.Snapshot);
+    expect(nextSnapshot.tick).toBe(0);
+    expect(nextSnapshot.gameTick).toBeGreaterThan(last.gameTick);
   }, 60000);
 
   it('выстрел в центральную стенку возвращается рикошетом в стрелка', async () => {

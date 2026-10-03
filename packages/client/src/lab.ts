@@ -141,6 +141,8 @@ export function showCameraLab(root: HTMLElement): void {
       names: ['Я', 'Противник'],
       score: [0, 0],
       roundIndex: 0,
+      gameId: 'LAB',
+      gameTick: 0,
       mySide: 0,
       rttMs: 0,
       serverTick: 0,

@@ -12,13 +12,16 @@ import {
   type ClientMessage,
 } from '@tanks/shared/protocol';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
+import { FileGameLog, LOG_ROUTE, NO_LOG, receiveClientLog, type GameLog } from './gameLog.js';
 import { DEFAULT_ROOM_OPTIONS, type Connection, type RoomOptions } from './room.js';
 import { isValidRoomCode, RoomManager } from './roomManager.js';
 import { APK_ROUTE, requestPath, serveApk, serveStatic } from './static.js';
 
+// logDir — папка журналов игр; без неё журнал не ведётся и приёмщик строк клиента отключён.
 export interface AppOptions {
   staticRoot?: string;
   apkPath?: string;
+  logDir?: string;
   room?: RoomOptions;
   tickMs?: number;
   random?: () => number;
@@ -59,13 +62,19 @@ function toBytes(data: RawData): Uint8Array {
 }
 
 export function createApp(options: AppOptions = {}): App {
-  const rooms = new RoomManager(options.room ?? DEFAULT_ROOM_OPTIONS, options.random ?? Math.random);
+  const fileLog = options.logDir === undefined ? null : new FileGameLog(options.logDir);
+  const log: GameLog = fileLog ?? NO_LOG;
+  const rooms = new RoomManager(options.room ?? DEFAULT_ROOM_OPTIONS, options.random ?? Math.random, log);
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
   const server = createServer((request, response) => {
     const path = requestPath(request);
     if (path === HEALTH_PATH) {
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify(stats()));
+      return;
+    }
+    if (path === LOG_ROUTE && request.method === 'POST' && fileLog !== null) {
+      receiveClientLog(fileLog, request, response);
       return;
     }
     if (path === APK_ROUTE && options.apkPath !== undefined && serveApk(options.apkPath, request, response)) {
@@ -166,7 +175,7 @@ export function createApp(options: AppOptions = {}): App {
     let windowStart = performance.now();
     const run = (): void => {
       const started = performance.now();
-      rooms.step();
+      rooms.step(Math.max(0, started - next));
       tick++;
       const duration = performance.now() - started;
       if (started - windowStart > 1000) {
@@ -199,6 +208,7 @@ export function createApp(options: AppOptions = {}): App {
     },
     close(): Promise<void> {
       clearTimeout(timer);
+      fileLog?.close();
       for (const socket of connections) {
         socket.terminate();
       }

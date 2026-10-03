@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
@@ -12,14 +15,21 @@ const PORT_LINE = /tanks server on :(\d+)/;
 export class GameServer {
   private child: ChildProcess | null = null;
   private port = 0;
+  readonly logDir = mkdtempSync(join(tmpdir(), 'tanks-e2e-log-'));
 
   get baseUrl(): string {
     return `http://127.0.0.1:${String(this.port)}`;
   }
 
+  // Файл появляется с первым сбросом буфера; до того — пустая строка.
+  gameLog(gameId: string): string {
+    const file = join(this.logDir, `${gameId}.log`);
+    return existsSync(file) ? readFileSync(file, 'utf8') : '';
+  }
+
   async start(port = 0): Promise<void> {
     const child = spawn(process.execPath, [SERVER_ENTRY], {
-      env: { ...process.env, PORT: String(port), STATIC_ROOT },
+      env: { ...process.env, PORT: String(port), STATIC_ROOT, LOG_DIR: this.logDir },
       stdio: ['ignore', 'pipe', 'inherit'],
     });
     this.child = child;

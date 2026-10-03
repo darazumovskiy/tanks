@@ -1,5 +1,6 @@
 import { DEFAULT_STATS } from '@tanks/shared/engine';
 import { BOT_NICKNAME, BOT_SIDE, DummyBot } from './bot.js';
+import { NO_LOG, type GameLog } from './gameLog.js';
 import { DEFAULT_ROOM_OPTIONS, Room, type Connection, type RoomOptions, type Seat } from './room.js';
 
 const CODE_PATTERN = /^[a-z0-9]{3,16}$/;
@@ -28,6 +29,7 @@ export class RoomManager {
   constructor(
     private readonly options: RoomOptions = DEFAULT_ROOM_OPTIONS,
     private readonly random: () => number = Math.random,
+    private readonly log: GameLog = NO_LOG,
   ) {}
 
   get roomCount(): number {
@@ -37,7 +39,7 @@ export class RoomManager {
   getOrCreate(code: string): Room {
     let room = this.rooms.get(code);
     if (room === undefined) {
-      room = new Room(code, this.options);
+      room = new Room(code, this.options, this.log);
       this.rooms.set(code, room);
       if (isBotRoomCode(code)) {
         this.seatBot(room);
@@ -72,9 +74,9 @@ export class RoomManager {
     }
   }
 
-  step(): void {
+  step(lateMs: number): void {
     for (const room of this.rooms.values()) {
-      room.step();
+      room.step(lateMs);
     }
   }
 
