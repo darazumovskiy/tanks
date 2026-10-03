@@ -1,17 +1,25 @@
 import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrategy.js';
-import { NUMERIC_FIELDS, type NumericSettingField, type SettingsStore } from './settings.js';
+import {
+  BOOLEAN_FIELDS,
+  NUMERIC_FIELDS,
+  type BooleanSettingField,
+  type BooleanSettingKey,
+  type NumericSettingField,
+  type SettingsStore,
+} from './settings.js';
 
 const MODE_ACTIVE_CLASS = 'is-active';
 
 // Панель настроек в бою: ползунки меняют хранилище сразу, игра читает его каждый тик — результат виден не выходя
 // из боя. Поля камеры показываются только на устройстве с касанием и только для выбранной стратегии.
+// Флажок, от которого зависит ползунок, стоит прямо перед ним; остальные флажки — после всех ползунков.
 export class SettingsPanel {
   private readonly rows = new Map<
     NumericSettingField['key'],
     { row: HTMLElement; input: HTMLInputElement; value: HTMLElement }
   >();
+  private readonly checks = new Map<BooleanSettingKey, HTMLInputElement>();
   private readonly modeButtons = new Map<PhoneCameraMode, HTMLButtonElement>();
-  private readonly frameGraph: HTMLInputElement;
 
   constructor(
     private readonly root: HTMLElement,
@@ -29,6 +37,7 @@ export class SettingsPanel {
       if (cameraFields.includes(field)) {
         continue;
       }
+      this.appendFlagBefore(field);
       root.append(this.buildRow(field));
     }
     if (hasCamera) {
@@ -37,15 +46,11 @@ export class SettingsPanel {
         root.append(this.buildRow(field));
       }
     }
-    const graphLabel = document.createElement('label');
-    graphLabel.className = 'settings-check';
-    this.frameGraph = document.createElement('input');
-    this.frameGraph.type = 'checkbox';
-    this.frameGraph.addEventListener('change', () => {
-      this.store.setShowFrameGraph(this.frameGraph.checked);
-    });
-    graphLabel.append(this.frameGraph, document.createTextNode(' График кадров'));
-    root.append(graphLabel);
+    for (const field of BOOLEAN_FIELDS) {
+      if (!this.checks.has(field.key)) {
+        root.append(this.buildCheck(field));
+      }
+    }
     const reset = document.createElement('button');
     reset.type = 'button';
     reset.className = 'settings-reset';
@@ -74,6 +79,36 @@ export class SettingsPanel {
     if (!this.root.hidden) {
       this.refresh();
     }
+  }
+
+  private appendFlagBefore(field: NumericSettingField): void {
+    const flag = BOOLEAN_FIELDS.find((candidate) => candidate.key === field.requiresFlag);
+    if (flag === undefined || this.checks.has(flag.key)) {
+      return;
+    }
+    this.root.append(this.buildCheck(flag));
+  }
+
+  private buildCheck(field: BooleanSettingField): HTMLElement {
+    const row = document.createElement('label');
+    row.className = 'settings-check';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.addEventListener('change', () => {
+      this.store.setFlag(field.key, input.checked);
+      this.refresh();
+    });
+    const name = document.createElement('span');
+    name.textContent = field.label;
+    const head = document.createElement('div');
+    head.className = 'settings-head';
+    head.append(input, name);
+    const hint = document.createElement('div');
+    hint.className = 'settings-hint';
+    hint.textContent = field.hint;
+    row.append(head, hint);
+    this.checks.set(field.key, input);
+    return row;
   }
 
   private buildModeRow(): HTMLElement {
@@ -137,12 +172,16 @@ export class SettingsPanel {
       const current = this.store.value[field.key];
       row.input.value = String(current);
       row.value.textContent = formatValue(current, field);
-      row.row.hidden = field.modes !== undefined && !field.modes.includes(mode);
+      const isHiddenByMode = field.modes !== undefined && !field.modes.includes(mode);
+      const isHiddenByFlag = field.requiresFlag !== undefined && !this.store.value[field.requiresFlag];
+      row.row.hidden = isHiddenByMode || isHiddenByFlag;
     }
     for (const [buttonMode, button] of this.modeButtons) {
       button.classList.toggle(MODE_ACTIVE_CLASS, buttonMode === mode);
     }
-    this.frameGraph.checked = this.store.value.showFrameGraph;
+    for (const [key, input] of this.checks) {
+      input.checked = this.store.value[key];
+    }
   }
 }
 

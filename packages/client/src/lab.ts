@@ -62,7 +62,7 @@ function thumbSticks(width: number, height: number): StickState[] {
     dy: 0,
     radiusPx: DEFAULT_SETTINGS.stickRadiusPx,
     deadZone: DEFAULT_SETTINGS.deadZone,
-    fireRing: DEFAULT_SETTINGS.fireRing,
+    fireRing: DEFAULT_SETTINGS.hasFireRing ? DEFAULT_SETTINGS.fireRing : null,
   });
   return [make('move', THUMB_LEFT), make('aim', THUMB_RIGHT)];
 }

@@ -46,6 +46,33 @@ input {
   touch-action: manipulation;
 }
 
+/* Тогл авто-огня прилеплен к правому краю на середине высоты: вдали от места, где лежит большой палец.
+   Открытая панель настроек его накрывает. */
+.autofire-toggle {
+  position: fixed;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 0;
+  width: 52px;
+  height: 52px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #f4f1e8;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.autofire-toggle.is-active {
+  background: rgba(232, 130, 90, 0.85);
+  border-color: #ffd1b8;
+  color: #0b0f0d;
+}
+
 .settings {
   position: fixed;
   top: 0;
@@ -118,7 +145,17 @@ input {
 
 .settings-check {
   display: block;
-  margin: 8px 0 14px;
+  margin-bottom: 12px;
+}
+
+.settings-check .settings-head {
+  justify-content: flex-start;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-check input {
+  margin: 0;
 }
 
 .settings-reset {

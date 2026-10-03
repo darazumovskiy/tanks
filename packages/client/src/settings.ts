@@ -5,6 +5,7 @@ import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrateg
 export interface Settings {
   stickRadiusPx: number;
   deadZone: number;
+  hasFireRing: boolean;
   fireRing: number;
   cameraMode: PhoneCameraMode;
   minViewPercent: number;
@@ -16,10 +17,17 @@ export interface Settings {
   showFrameGraph: boolean;
 }
 
-export type NumericSettingKey = Exclude<keyof Settings, 'showFrameGraph' | 'cameraMode'>;
+export type BooleanSettingKey = 'hasFireRing' | 'showFrameGraph';
+export type NumericSettingKey = Exclude<keyof Settings, BooleanSettingKey | 'cameraMode'>;
+
+export interface BooleanSettingField {
+  key: BooleanSettingKey;
+  label: string;
+  hint: string;
+}
 
 // Поле с `modes` — настройка камеры: показывается только на устройстве с касанием и только для перечисленных
-// стратегий.
+// стратегий. Поле с `requiresFlag` показывается, пока включён указанный флажок.
 export interface NumericSettingField {
   key: NumericSettingKey;
   label: string;
@@ -28,11 +36,13 @@ export interface NumericSettingField {
   max: number;
   step: number;
   modes?: readonly PhoneCameraMode[];
+  requiresFlag?: BooleanSettingKey;
 }
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = {
   stickRadiusPx: 40,
   deadZone: 0.07,
+  hasFireRing: false,
   fireRing: 0.89,
   cameraMode: 'follow',
   minViewPercent: 75,
@@ -44,10 +54,27 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = {
   showFrameGraph: false,
 };
 
+export const BOOLEAN_FIELDS: readonly BooleanSettingField[] = [
+  {
+    key: 'hasFireRing',
+    label: 'Кольцо огня',
+    hint: 'стрелять только у края правого стика; без кольца стреляет любое касание правой половины',
+  },
+  { key: 'showFrameGraph', label: 'График кадров', hint: 'длительность последних кадров внизу слева' },
+];
+
 export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
   { key: 'stickRadiusPx', label: 'Размер стика', hint: 'радиус круга, px', min: 40, max: 110, step: 2 },
   { key: 'deadZone', label: 'Мёртвая зона', hint: 'доля радиуса без реакции', min: 0, max: 0.5, step: 0.01 },
-  { key: 'fireRing', label: 'Кольцо огня', hint: 'доля радиуса, с которой стреляет', min: 0.5, max: 1, step: 0.01 },
+  {
+    key: 'fireRing',
+    label: 'Радиус кольца огня',
+    hint: 'доля радиуса стика, с которой стреляет',
+    min: 0.5,
+    max: 1,
+    step: 0.01,
+    requiresFlag: 'hasFireRing',
+  },
   {
     key: 'minViewPercent',
     label: 'Обзор',
@@ -137,8 +164,11 @@ export function parseSettings(raw: string | null): Settings {
     settings[field.key] = clampField(field, record[field.key]);
   }
   settings.cameraMode = parseCameraMode(record.cameraMode);
-  if (typeof record.showFrameGraph === 'boolean') {
-    settings.showFrameGraph = record.showFrameGraph;
+  for (const field of BOOLEAN_FIELDS) {
+    const value = record[field.key];
+    if (typeof value === 'boolean') {
+      settings[field.key] = value;
+    }
   }
   return settings;
 }
@@ -164,8 +194,8 @@ export class SettingsStore {
     this.save();
   }
 
-  setShowFrameGraph(isShown: boolean): void {
-    this.value.showFrameGraph = isShown;
+  setFlag(key: BooleanSettingKey, isOn: boolean): void {
+    this.value[key] = isOn;
     this.save();
   }
 

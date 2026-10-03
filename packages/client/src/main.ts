@@ -12,6 +12,7 @@ const APK_ROUTE = '/app/tanks.apk';
 // Код с этим префиксом сервер понимает как дуэль против манекена.
 const BOT_ROOM_PREFIX = 'bot';
 const SETTINGS_KEY_CODE = 'KeyO';
+const AUTOFIRE_ACTIVE_CLASS = 'is-active';
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 
 function randomCode(): string {
@@ -75,6 +76,18 @@ async function showAndroidDownload(): Promise<void> {
   byId('android', HTMLElement).hidden = false;
 }
 
+// Кнопка авто-огня — только на устройстве с касанием; реагирует на само касание, как шестерёнка, чтобы работать
+// вторым пальцем при зажатом стике.
+function bindAutoFire(button: HTMLButtonElement, game: Game, hasTouch: boolean): void {
+  button.hidden = !hasTouch;
+  button.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    const isOn = game.toggleAutoFire();
+    button.classList.toggle(AUTOFIRE_ACTIVE_CLASS, isOn);
+    button.setAttribute('aria-pressed', String(isOn));
+  });
+}
+
 // Подсказка «поверни телефон» — только на устройствах с касанием и только в портрете.
 function bindRotateHint(hint: HTMLElement): void {
   const portraitTouch = matchMedia('(orientation: portrait) and (pointer: coarse)');
@@ -110,6 +123,7 @@ function startDuel(roomCode: string): void {
       panel.toggle();
     }
   });
+  bindAutoFire(byId('autofire', HTMLButtonElement), game, hasTouch);
   bindRotateHint(byId('rotate', HTMLElement));
   // Точка доступа для сквозных тестов и отладки из консоли браузера.
   Object.assign(window, { tanksGame: game });

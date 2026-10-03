@@ -166,6 +166,13 @@ export class Game {
     this.net.close();
   }
 
+  toggleAutoFire(): boolean {
+    const isOn = !this.input.isAutoFiring;
+    this.input.setAutoFire(isOn);
+    this.diag.write(`autofire on=${isOn ? '1' : '0'}`);
+    return isOn;
+  }
+
   private logSnapshot(prediction: Prediction, message: SnapshotMessage, receivedAt: number): void {
     const side = this.side ?? 0;
     const enemySide: Side = side === 0 ? 1 : 0;
@@ -205,6 +212,7 @@ export class Game {
     roundIndex: number;
     score: [number, number];
     isFighting: boolean;
+    isAutoFiring: boolean;
     rttMs: number;
     serverTick: number;
     me: unknown;
@@ -228,6 +236,7 @@ export class Game {
       roundIndex: this.roundStart.roundIndex,
       score: this.roundStart.score,
       isFighting: this.prediction.isFighting,
+      isAutoFiring: this.input.isAutoFiring,
       rttMs: this.net.rttMs,
       serverTick: this.net.serverTick,
       me: { ...this.prediction.me, tally: undefined, stats: undefined },

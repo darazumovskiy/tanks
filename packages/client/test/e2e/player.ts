@@ -19,13 +19,18 @@ export interface DebugState {
   roundIndex: number;
   score: [number, number];
   isFighting: boolean;
+  isAutoFiring: boolean;
   me: TankState;
   enemy: Point & { heading: number; isAlive: boolean };
+  bullets: number;
   camera: { x: number; y: number; height: number };
 }
 
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
+const AUTOFIRE_BUTTON = '#autofire';
+// Экран телефона в альбомной ориентации; с эмуляцией касания клиент видит `pointer: coarse` и показывает кнопки.
+const PHONE_VIEWPORT = { width: 844, height: 390 };
 const POLL_MS = 50;
 const HULL_TURN_TOLERANCE = 0.12;
 const HULL_DRIVE_TOLERANCE = 0.3;
@@ -55,7 +60,8 @@ export async function until<T>(read: () => Promise<T | null | undefined>, timeou
   throw new Error(`не дождались: ${what}`);
 }
 
-// Игрок в настоящем браузере: отдельный контекст (свои cookie и localStorage), управление клавишами и мышью.
+// Игрок в настоящем браузере: отдельный контекст (свои cookie и localStorage), управление клавишами и мышью;
+// с `isTouch` — экран телефона с эмуляцией касаний.
 export class Player {
   private readonly held = new Set<string>();
 
@@ -65,8 +71,17 @@ export class Player {
     readonly name: string,
   ) {}
 
-  static async open(browser: Browser, baseUrl: string, roomCode: string, name: string, stats: string): Promise<Player> {
-    const context = await browser.newContext();
+  static async open(
+    browser: Browser,
+    baseUrl: string,
+    roomCode: string,
+    name: string,
+    stats: string,
+    isTouch = false,
+  ): Promise<Player> {
+    const context = isTouch
+      ? await browser.newContext({ hasTouch: true, isMobile: true, viewport: PHONE_VIEWPORT })
+      : await browser.newContext();
     await context.addInitScript(
       (entries: Record<string, string>) => {
         for (const [key, value] of Object.entries(entries)) {
@@ -182,6 +197,15 @@ export class Player {
       return;
     }
     await this.page.mouse.up();
+  }
+
+  async tapAutoFire(): Promise<boolean> {
+    await this.page.tap(AUTOFIRE_BUTTON);
+    return (await this.waitForBattle()).isAutoFiring;
+  }
+
+  isAutoFireButtonVisible(): Promise<boolean> {
+    return this.page.locator(AUTOFIRE_BUTTON).isVisible();
   }
 
   async releaseAll(): Promise<void> {

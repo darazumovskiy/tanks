@@ -19,12 +19,14 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 // Клавиатура — корпус, мышь — башня и выстрел; активный стик касания замещает свой источник.
+// Авто-огонь — выстрел в каждом тике независимо от остальных источников, пока включён.
 export class InputReader {
   private readonly keys = new Set<string>();
   private readonly sticks: TouchSticks;
   private mouse: { x: number; y: number } | null = null;
   private isMouseDown = false;
   private isReversing = false;
+  private isAutoFireOn = false;
 
   constructor(
     target: HTMLElement,
@@ -72,10 +74,19 @@ export class InputReader {
     return this.sticks.states;
   }
 
+  get isAutoFiring(): boolean {
+    return this.isAutoFireOn;
+  }
+
+  setAutoFire(isOn: boolean): void {
+    this.isAutoFireOn = isOn;
+  }
+
   read(me: SteeredTank): Action {
     const hull = this.readHull(me);
     const hasTapFire = this.sticks.takeTapFire();
-    const isFiring = this.isMouseDown || this.keys.has('Space') || this.sticks.isFiringByStick || hasTapFire;
+    const isFiringByHand = this.isMouseDown || this.keys.has('Space') || this.sticks.isFiringByStick || hasTapFire;
+    const isFiring = this.isAutoFireOn || isFiringByHand;
     return { throttle: hull.throttle, turn: hull.turn, turretTurn: this.readTurretTurn(me), isFiring };
   }
 

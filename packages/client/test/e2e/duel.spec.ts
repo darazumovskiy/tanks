@@ -15,6 +15,11 @@ const MIN_DRIVE_DISTANCE = 20;
 const KILL_TIMEOUT_MS = 60_000;
 // Клиент шлёт строки раз в секунду, сервер пишет на диск раз в полсекунды.
 const LOG_TIMEOUT_MS = 5_000;
+const AUTOFIRE_START_TIMEOUT_MS = 5_000;
+// Снаряд живёт до 4 с — столько выпущенные до выключения могут оставаться в полёте.
+const AUTOFIRE_STOP_TIMEOUT_MS = 8_000;
+// Дольше перезарядки: за это время выключенный авто-огонь выпустил бы новый снаряд.
+const NO_FIRE_CHECK_MS = 2_000;
 
 const server = new GameServer();
 
@@ -140,6 +145,42 @@ test('сервер перезапущен под открытыми страни
 
   await a.close();
   await b.close();
+});
+
+test('телефон: кнопка авто-огня стреляет без касания стика, повторное касание выключает', async ({ browser }) => {
+  const code = roomCode();
+  const phone = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, true);
+  const desktop = await Player.open(browser, server.baseUrl, code, 'Компьютер', DEFAULT_STATS);
+  await phone.waitForFight();
+  await desktop.waitForFight();
+  expect(await phone.isAutoFireButtonVisible()).toBe(true);
+  expect(await desktop.isAutoFireButtonVisible()).toBe(false);
+  expect((await phone.state())?.isAutoFiring).toBe(false);
+
+  expect(await phone.tapAutoFire()).toBe(true);
+  await until(
+    async () => {
+      const state = await desktop.state();
+      return state !== null && state.bullets > 0 ? true : null;
+    },
+    AUTOFIRE_START_TIMEOUT_MS,
+    'снаряды авто-огня не появились у второго игрока',
+  );
+
+  expect(await phone.tapAutoFire()).toBe(false);
+  await until(
+    async () => {
+      const state = await desktop.state();
+      return state !== null && state.bullets === 0 ? true : null;
+    },
+    AUTOFIRE_STOP_TIMEOUT_MS,
+    'после выключения авто-огня снаряды не закончились',
+  );
+  await sleep(NO_FIRE_CHECK_MS);
+  expect((await desktop.state())?.bullets).toBe(0);
+
+  await phone.close();
+  await desktop.close();
 });
 
 test('комната с манекеном: раунд стартует сразу, манекен двигается', async ({ browser }) => {

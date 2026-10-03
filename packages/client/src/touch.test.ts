@@ -51,7 +51,7 @@ describe('TouchSticks', () => {
     target = document.createElement('div');
     document.body.append(target);
     time = 0;
-    settings = { stickRadiusPx: STICK_RADIUS_PX, deadZone: 0.15, fireRing: 0.85 };
+    settings = { stickRadiusPx: STICK_RADIUS_PX, deadZone: 0.15, hasFireRing: true, fireRing: 0.85 };
     sticks = new TouchSticks(target, settings, () => time);
   });
 
@@ -172,6 +172,35 @@ describe('TouchSticks', () => {
     expect(sticks.isFiringByStick).toBe(true);
     up({ id: 2, x: RIGHT_X, y: Y - 200 });
     expect(sticks.isFiringByStick).toBe(false);
+  });
+
+  it('без кольца огня стреляет само касание правой половины, даже в мёртвой зоне', () => {
+    settings.hasFireRing = false;
+    down({ id: 2, x: RIGHT_X, y: Y });
+    expect(sticks.stick('aim')?.fireRing).toBeNull();
+    expect(sticks.isFiringByStick).toBe(true);
+    move({ id: 2, x: RIGHT_X + 4, y: Y });
+    expect(sticks.isFiringByStick).toBe(true);
+    move({ id: 2, x: RIGHT_X + 200, y: Y });
+    expect(sticks.isFiringByStick).toBe(true);
+    up({ id: 2, x: RIGHT_X + 200, y: Y });
+    expect(sticks.isFiringByStick).toBe(false);
+  });
+
+  it('без кольца огня касание левой половины не стреляет', () => {
+    settings.hasFireRing = false;
+    down({ id: 1, x: LEFT_X, y: Y });
+    move({ id: 1, x: LEFT_X + 200, y: Y });
+    expect(sticks.isFiringByStick).toBe(false);
+  });
+
+  it('кольцо выключили при зажатом стике — зажатый стреляет по кольцу, новый — касанием', () => {
+    down({ id: 2, x: RIGHT_X, y: Y });
+    settings.hasFireRing = false;
+    expect(sticks.isFiringByStick).toBe(false);
+    up({ id: 2, x: RIGHT_X, y: Y });
+    down({ id: 2, x: RIGHT_X, y: Y });
+    expect(sticks.isFiringByStick).toBe(true);
   });
 
   it('мышь стиками не обрабатывается', () => {

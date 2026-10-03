@@ -23,8 +23,11 @@ describe('parseSettings', () => {
     expect(settings.showFrameGraph).toBe(false);
   });
 
-  it('булев флаг читается', () => {
-    expect(parseSettings(JSON.stringify({ showFrameGraph: true })).showFrameGraph).toBe(true);
+  it('булевы флаги читаются; запись без флага кольца получает умолчание', () => {
+    const settings = parseSettings(JSON.stringify({ showFrameGraph: true, hasFireRing: true }));
+    expect(settings.showFrameGraph).toBe(true);
+    expect(settings.hasFireRing).toBe(true);
+    expect(parseSettings(JSON.stringify({ stickRadiusPx: 60 })).hasFireRing).toBe(DEFAULT_SETTINGS.hasFireRing);
   });
 });
 
@@ -36,10 +39,12 @@ describe('SettingsStore', () => {
   it('сохраняет изменения и восстанавливает их при следующем запуске', () => {
     const store = new SettingsStore(localStorage);
     store.setNumber('stickRadiusPx', 80);
-    store.setShowFrameGraph(true);
+    store.setFlag('showFrameGraph', true);
+    store.setFlag('hasFireRing', true);
     const again = new SettingsStore(localStorage);
     expect(again.value.stickRadiusPx).toBe(80);
     expect(again.value.showFrameGraph).toBe(true);
+    expect(again.value.hasFireRing).toBe(true);
     expect(localStorage.getItem(SETTINGS_STORAGE_KEY)).not.toBeNull();
   });
 

@@ -34,7 +34,7 @@ describe('InputReader', () => {
     input = new InputReader(
       target,
       { toWorld: (x, y) => ({ x, y }) },
-      { stickRadiusPx: 64, deadZone: 0.15, fireRing: 0.85 },
+      { stickRadiusPx: 64, deadZone: 0.15, hasFireRing: true, fireRing: 0.85 },
     );
   });
 
@@ -133,6 +133,27 @@ describe('InputReader', () => {
     expect(input.read(me).isFiring).toBe(true);
     window.dispatchEvent(key('keyup', 'Space'));
     expect(input.read(me).isFiring).toBe(false);
+  });
+
+  it('авто-огонь стреляет каждое чтение без ввода и не трогает корпус и башню', () => {
+    expect(input.isAutoFiring).toBe(false);
+    input.setAutoFire(true);
+    expect(input.isAutoFiring).toBe(true);
+    expect(input.read(me)).toEqual({ throttle: 0, turn: 0, turretTurn: 0, isFiring: true });
+    expect(input.read(me).isFiring).toBe(true);
+    input.setAutoFire(false);
+    expect(input.read(me).isFiring).toBe(false);
+  });
+
+  it('при авто-огне правый стик только ведёт башню, после выключения огонь — по стику', () => {
+    input.setAutoFire(true);
+    target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
+    target.dispatchEvent(pointer('pointermove', 2, RIGHT_X, Y + 20));
+    expect(input.read(me)).toMatchObject({ turretTurn: 1, isFiring: true });
+    input.setAutoFire(false);
+    expect(input.read(me)).toMatchObject({ turretTurn: 1, isFiring: false });
+    target.dispatchEvent(pointer('pointermove', 2, RIGHT_X, Y + 64));
+    expect(input.read(me).isFiring).toBe(true);
   });
 
   it('состояние стиков доступно для рисования', () => {

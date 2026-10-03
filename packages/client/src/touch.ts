@@ -8,13 +8,14 @@ export const EDGE_GAP_RATIO = 0.12;
 export type StickRole = 'move' | 'aim';
 
 // Размеры и пороги фиксируются в момент касания: смена настроек в панели не дёргает уже зажатый стик.
+// `fireRing` — доля радиуса, с которой стик башни стреляет; `null` — кольца нет, стреляет само касание.
 export interface StickState extends StickVector {
   role: StickRole;
   baseX: number;
   baseY: number;
   radiusPx: number;
   deadZone: number;
-  fireRing: number;
+  fireRing: number | null;
 }
 
 interface ActiveStick extends StickState {
@@ -23,7 +24,14 @@ interface ActiveStick extends StickState {
   hasLeftDeadZone: boolean;
 }
 
-export type StickSettings = Pick<Settings, 'stickRadiusPx' | 'deadZone' | 'fireRing'>;
+export type StickSettings = Pick<Settings, 'stickRadiusPx' | 'deadZone' | 'hasFireRing' | 'fireRing'>;
+
+export function isStickFiring(stick: StickState): boolean {
+  if (stick.role !== 'aim') {
+    return false;
+  }
+  return stick.fireRing === null || stickMagnitude(stick) >= stick.fireRing;
+}
 
 // Плавающие стики: касание левой половины экрана рождает стик корпуса, правой — стик башни.
 // Основание — в точке касания, ручка следует за пальцем в пределах радиуса.
@@ -76,7 +84,7 @@ export class TouchSticks {
 
   get isFiringByStick(): boolean {
     const aim = this.active.get('aim');
-    return aim !== undefined && stickMagnitude(aim) >= aim.fireRing;
+    return aim !== undefined && isStickFiring(aim);
   }
 
   // Тап по правой половине — одиночный выстрел; флаг снимается при чтении.
@@ -102,7 +110,7 @@ export class TouchSticks {
       dy: 0,
       radiusPx,
       deadZone: this.settings.deadZone,
-      fireRing: this.settings.fireRing,
+      fireRing: this.settings.hasFireRing ? this.settings.fireRing : null,
       startedAt: this.now(),
       hasLeftDeadZone: false,
     };

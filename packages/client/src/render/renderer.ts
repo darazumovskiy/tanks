@@ -2,8 +2,7 @@ import { ARENA, KIT, ROUND_SECONDS, ZONE, type Side } from '@tanks/shared/engine
 import { gameTimecode } from '@tanks/shared/protocol';
 import type { WorldView } from '../prediction.js';
 import type { Settings } from '../settings.js';
-import { stickMagnitude } from '../steering.js';
-import type { StickState } from '../touch.js';
+import { isStickFiring, type StickState } from '../touch.js';
 import { drawTankSprite, TankArt } from './art.js';
 import { edgeMarker, frameCamera, screenToWorld, type Camera } from './camera.js';
 import { createCameraStrategy, type CameraMode, type CameraStrategy } from './cameraStrategy.js';
@@ -621,20 +620,24 @@ export class Renderer {
     ctx.lineWidth = 2;
     for (const stick of sticks) {
       const radius = stick.radiusPx;
+      const isFiring = isStickFiring(stick);
+      // Без кольца стреляет само касание — огонь показывает контур основания.
+      const isEdgeFiring = isFiring && stick.fireRing === null;
       ctx.fillStyle = STICK_BASE_COLOR;
-      ctx.strokeStyle = STICK_EDGE_COLOR;
+      ctx.strokeStyle = isEdgeFiring ? FIRE_RING_ACTIVE_COLOR : STICK_EDGE_COLOR;
+      ctx.lineWidth = isEdgeFiring ? 4 : 2;
       ctx.beginPath();
       ctx.arc(stick.baseX, stick.baseY, radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      ctx.lineWidth = 2;
       ctx.strokeStyle = STICK_EDGE_COLOR;
       ctx.setLineDash([3, 5]);
       ctx.beginPath();
       ctx.arc(stick.baseX, stick.baseY, radius * stick.deadZone, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
-      if (stick.role === 'aim') {
-        const isFiring = stickMagnitude(stick) >= stick.fireRing;
+      if (stick.role === 'aim' && stick.fireRing !== null) {
         ctx.strokeStyle = isFiring ? FIRE_RING_ACTIVE_COLOR : FIRE_RING_IDLE_COLOR;
         ctx.lineWidth = isFiring ? 4 : 2;
         ctx.beginPath();

@@ -41,6 +41,16 @@ describe('SettingsPanel', () => {
     return row;
   };
 
+  const checkFor = (label: string): HTMLInputElement => {
+    const input = Array.from(root.querySelectorAll<HTMLLabelElement>('label.settings-check'))
+      .find((row) => row.querySelector('.settings-head span')?.textContent === label)
+      ?.querySelector<HTMLInputElement>('input[type=checkbox]');
+    if (input === undefined || input === null) {
+      throw new Error(`нет флажка ${label}`);
+    }
+    return input;
+  };
+
   const press = (): void => {
     toggle.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 7, pointerType: 'touch', isPrimary: false }));
   };
@@ -67,14 +77,30 @@ describe('SettingsPanel', () => {
   });
 
   it('флажок графика кадров', () => {
-    const checkbox = root.querySelector<HTMLInputElement>('input[type=checkbox]');
-    expect(checkbox).not.toBeNull();
-    if (checkbox === null) {
-      return;
-    }
+    const checkbox = checkFor('График кадров');
     checkbox.checked = true;
     checkbox.dispatchEvent(new Event('change'));
     expect(store.value.showFrameGraph).toBe(true);
+  });
+
+  it('флажок кольца огня стоит перед ползунком радиуса и показывает его только включённым', () => {
+    expect(store.value.hasFireRing).toBe(false);
+    expect(rowOf('fireRing').hidden).toBe(true);
+    const checkbox = checkFor('Кольцо огня');
+    expect(checkbox.checked).toBe(false);
+    const order = Array.from(root.querySelectorAll('.settings-check, .settings-row'));
+    const checkRow = checkbox.closest('.settings-check');
+    expect(checkRow).not.toBeNull();
+    if (checkRow !== null) {
+      expect(order.indexOf(checkRow)).toBe(order.indexOf(rowOf('fireRing')) - 1);
+    }
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+    expect(store.value.hasFireRing).toBe(true);
+    expect(rowOf('fireRing').hidden).toBe(false);
+    root.querySelector<HTMLButtonElement>('button.settings-reset')?.click();
+    expect(checkFor('Кольцо огня').checked).toBe(false);
+    expect(rowOf('fireRing').hidden).toBe(true);
   });
 
   it('сброс возвращает умолчания и обновляет ползунки', () => {
@@ -118,6 +144,6 @@ describe('SettingsPanel', () => {
     const labels = Array.from(desktopRoot.querySelectorAll('.settings-head span:first-child')).map(
       (span) => span.textContent,
     );
-    expect(labels).toEqual(['Размер стика', 'Мёртвая зона', 'Кольцо огня']);
+    expect(labels).toEqual(['Размер стика', 'Мёртвая зона', 'Радиус кольца огня']);
   });
 });
