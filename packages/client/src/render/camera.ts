@@ -1,4 +1,4 @@
-import { ARENA, clamp } from '@tanks/shared/engine';
+import { ARENA } from '@tanks/shared/engine';
 
 export interface Camera {
   x: number;
@@ -13,8 +13,8 @@ export interface Point {
   y: number;
 }
 
-// Окно заданной высоты в единицах поля, ширина — по пропорциям экрана. Центрируется на цели и прижимается
-// к краям поля; поле уже окна — окно центрируется на поле.
+// Окно заданной высоты в единицах поля, ширина — по пропорциям экрана. Центрируется на цели даже у края поля —
+// за полем показывается пустота, зато танк не уезжает под стик; поле уже окна — окно центрируется на поле.
 export function frameCamera(target: Point, canvasWidth: number, canvasHeight: number, viewHeight: number): Camera {
   const scale = canvasHeight / viewHeight;
   const width = canvasWidth / scale;
@@ -31,7 +31,7 @@ function clampAxis(start: number, size: number, limit: number): number {
   if (size >= limit) {
     return (limit - size) / 2;
   }
-  return clamp(start, 0, limit - size);
+  return start;
 }
 
 export interface CameraFollow {

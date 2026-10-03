@@ -1,5 +1,5 @@
 // Настройки ощущения игры на устройстве: читаются вводом и рендером каждый тик, меняются из панели в бою,
-// хранятся в localStorage. Значения по умолчанию — текущие умолчания проекта; подбираются Димой на телефоне.
+// хранятся в localStorage. Умолчания подобраны Димой на Xiaomi 14T Pro (2026-10-03).
 export interface Settings {
   stickRadiusPx: number;
   deadZone: number;
@@ -23,12 +23,12 @@ export interface NumericSettingField {
 }
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = {
-  stickRadiusPx: 64,
-  deadZone: 0.15,
-  fireRing: 0.85,
-  viewPercent: 75,
-  cameraBoxXPercent: 15,
-  cameraBoxYPercent: 35,
+  stickRadiusPx: 40,
+  deadZone: 0.07,
+  fireRing: 0.89,
+  viewPercent: 80,
+  cameraBoxXPercent: 0,
+  cameraBoxYPercent: 0,
   cameraLagMs: 120,
   showFrameGraph: false,
 };

@@ -96,10 +96,13 @@ export class Game {
         onError: (message): void => {
           this.showOverlay(message.text, true);
         },
-        onClose: (): void => {
-          if (!this.isClosed) {
-            this.showOverlay('Связь с сервером потеряна. Обнови страницу.', true);
+        onDisconnect: (retryInMs): void => {
+          if (this.isClosed) {
+            return;
           }
+          this.prediction = null;
+          this.roundStart = null;
+          this.showOverlay(`Связь потеряна, переподключаюсь через ${String(Math.round(retryInMs / 1000))} с…`, true);
         },
       },
       { roomCode: options.roomCode, nickname: options.nickname, stats: options.stats ?? { ...DEFAULT_STATS } },

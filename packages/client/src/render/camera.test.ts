@@ -19,13 +19,11 @@ describe('frameCamera', () => {
     expect(camera.y + camera.height / 2).toBeCloseTo(450, 6);
   });
 
-  it('у края поля окно прижимается к краю, а не показывает пустоту', () => {
+  it('у края поля окно не прижимается: цель остаётся в центре, за полем — пустота', () => {
     const corner = frameCamera({ x: 140, y: 100 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
-    expect(corner.x).toBe(0);
-    expect(corner.y).toBe(0);
-    const far = frameCamera({ x: 1550, y: 850 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
-    expect(far.x + far.width).toBeCloseTo(ARENA.width, 6);
-    expect(far.y + far.height).toBeCloseTo(ARENA.height, 6);
+    expect(corner.x + corner.width / 2).toBeCloseTo(140, 6);
+    expect(corner.y + corner.height / 2).toBeCloseTo(100, 6);
+    expect(corner.x).toBeLessThan(0);
   });
 
   it('экран шире поля — окно центрируется на поле', () => {

@@ -18,27 +18,88 @@ export interface NetHandlers {
   onRoundStart(message: RoundStartMessage): void;
   onSnapshot(message: SnapshotMessage, receivedAt: number): void;
   onError(message: ErrorMessage): void;
-  onClose(): void;
+  onDisconnect(retryInMs: number): void;
+}
+
+// Подмножество WebSocket, которое нужно клиенту; в тестах заменяется поддельным сокетом.
+export interface SocketLike {
+  binaryType: BinaryType;
+  readyState: number;
+  onopen: ((event: Event) => void) | null;
+  onmessage: ((event: MessageEvent<ArrayBuffer>) => void) | null;
+  onclose: ((event: CloseEvent) => void) | null;
+  send(data: Uint8Array): void;
+  close(): void;
+}
+
+export interface NetOptions {
+  createSocket?: (url: string) => SocketLike;
+  now?: () => number;
 }
 
 const PING_INTERVAL_MS = 1000;
 const RTT_SMOOTHING = 0.3;
+export const RECONNECT_BASE_MS = 1000;
+export const RECONNECT_MAX_MS = 5000;
+const SOCKET_OPEN = 1;
 
 // Соединение с сервером: кодирует и декодирует сообщения, меряет задержку туда-обратно.
+// Разрыв не по нашей воле — переподключение с удвоением паузы (до 5 с: выкладка сервера длится ~2 с) и повторный вход в ту же комнату;
+// возврат вкладки или приложения на экран — попытка сразу. Ошибка от сервера — окончательна, без повторов.
 export class NetClient {
-  private readonly socket: WebSocket;
+  private socket: SocketLike | null = null;
   private pingTimer: number | null = null;
+  private reconnectTimer: number | null = null;
+  private attempt = 0;
+  private isClosedByUs = false;
+  private isFatal = false;
+  private readonly createSocket: (url: string) => SocketLike;
+  private readonly now: () => number;
   rttMs = 0;
   serverTick = 0;
 
   constructor(
-    url: string,
+    private readonly url: string,
     private readonly handlers: NetHandlers,
     private readonly join: { roomCode: string; nickname: string; stats: Stats },
+    options: NetOptions = {},
   ) {
-    this.socket = new WebSocket(url);
-    this.socket.binaryType = 'arraybuffer';
-    this.socket.onopen = (): void => {
+    this.createSocket = options.createSocket ?? ((target): SocketLike => new WebSocket(target));
+    this.now = options.now ?? ((): number => performance.now());
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && this.reconnectTimer !== null) {
+        window.clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+        this.connect();
+      }
+    });
+    this.connect();
+  }
+
+  get isConnected(): boolean {
+    return this.socket !== null && this.socket.readyState === SOCKET_OPEN;
+  }
+
+  sendInput(seq: number, action: Action): void {
+    this.send(encode({ type: MessageType.Input, seq, action }));
+  }
+
+  close(): void {
+    this.isClosedByUs = true;
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.stopPing();
+    this.socket?.close();
+  }
+
+  private connect(): void {
+    const socket = this.createSocket(this.url);
+    this.socket = socket;
+    socket.binaryType = 'arraybuffer';
+    socket.onopen = (): void => {
+      this.attempt = 0;
       this.send(
         encode({
           type: MessageType.Join,
@@ -49,30 +110,40 @@ export class NetClient {
         }),
       );
       this.pingTimer = window.setInterval(() => {
-        this.send(encode({ type: MessageType.Ping, clientTime: performance.now() }));
+        this.send(encode({ type: MessageType.Ping, clientTime: this.now() }));
       }, PING_INTERVAL_MS);
     };
-    this.socket.onmessage = (event: MessageEvent<ArrayBuffer>): void => {
-      this.dispatch(decode(new Uint8Array(event.data)) as ServerMessage, performance.now());
+    socket.onmessage = (event: MessageEvent<ArrayBuffer>): void => {
+      this.dispatch(decode(new Uint8Array(event.data)) as ServerMessage, this.now());
     };
-    this.socket.onclose = (): void => {
-      if (this.pingTimer !== null) {
-        window.clearInterval(this.pingTimer);
+    socket.onclose = (): void => {
+      this.stopPing();
+      if (this.isClosedByUs || this.isFatal) {
+        return;
       }
-      this.handlers.onClose();
+      this.scheduleReconnect();
     };
   }
 
-  sendInput(seq: number, action: Action): void {
-    this.send(encode({ type: MessageType.Input, seq, action }));
+  private scheduleReconnect(): void {
+    this.attempt++;
+    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** (this.attempt - 1));
+    this.handlers.onDisconnect(delay);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
   }
 
-  close(): void {
-    this.socket.close();
+  private stopPing(): void {
+    if (this.pingTimer !== null) {
+      window.clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
   }
 
   private send(bytes: Uint8Array): void {
-    if (this.socket.readyState === WebSocket.OPEN) {
+    if (this.socket !== null && this.socket.readyState === SOCKET_OPEN) {
       this.socket.send(bytes);
     }
   }
@@ -98,6 +169,7 @@ export class NetClient {
         break;
       }
       case MessageType.Error:
+        this.isFatal = true;
         this.handlers.onError(message);
         break;
     }
