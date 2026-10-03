@@ -8,13 +8,14 @@ import {
   edgeMarker,
   frameCamera,
   frameTargets,
-  keepTargetInSafeZone,
+  keepTargetOutOfThumbZones,
   screenToWorld,
   smoothCamera,
   stabilizedHeight,
   type Camera,
   type FramingInsets,
   type Point,
+  type ThumbZones,
 } from './camera.js';
 import type { Effects } from './effects.js';
 import { floorFor } from './floor.js';
@@ -57,8 +58,8 @@ const MARKER_SIZE = 10;
 const ANNOUNCE_SCALE = 0.6;
 // Доли окна под панели (сверху) и большие пальцы на стиках (снизу, по бокам): цели кадрирования держатся вне их.
 const FRAMING_INSETS: FramingInsets = { side: 0.12, top: 0.14, bottom: 0.32 };
-// Свой танк не заходит в эти доли даже ценой пустоты за полем — иначе он уехал бы под стик.
-const SELF_INSETS: FramingInsets = { side: 0.24, top: 0.12, bottom: 0.36 };
+// Свой танк не заходит в нижние углы (зоны пальцев) и под панели даже ценой пустоты за полем.
+const THUMB_ZONES: ThumbZones = { side: 0.24, cornerTop: 0.55, top: 0.12 };
 // Масштаб переключается ступенями: пока нужная высота в пределах ±20 % от зафиксированной, она не меняется.
 const ZOOM_DEAD_BAND = 0.2;
 // Отдаление вдвое быстрее приближения.
@@ -142,7 +143,7 @@ export class Renderer {
       FRAMING_INSETS,
       this.committedHeight,
     );
-    const wanted = keepTargetInSafeZone(framed, me, SELF_INSETS);
+    const wanted = keepTargetOutOfThumbZones(framed, me, THUMB_ZONES);
     const smoothing = {
       moveLagMs: this.settings.cameraLagMs,
       zoomInLagMs: this.settings.zoomLagMs,

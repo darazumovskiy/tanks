@@ -4,7 +4,7 @@ import {
   edgeMarker,
   frameCamera,
   frameTargets,
-  keepTargetInSafeZone,
+  keepTargetOutOfThumbZones,
   screenToWorld,
   smoothCamera,
   stabilizedHeight,
@@ -100,35 +100,44 @@ describe('высота окна — параметр', () => {
   });
 });
 
-describe('keepTargetInSafeZone', () => {
-  const safe = { side: 0.25, top: 0.15, bottom: 0.4 };
+describe('keepTargetOutOfThumbZones', () => {
+  const zones = { side: 0.24, cornerTop: 0.55, top: 0.12 };
+  const full = frameTargets(
+    [
+      { x: 140, y: 450 },
+      { x: 1460, y: 450 },
+    ],
+    2200,
+    1000,
+    540,
+    { side: 0.12, top: 0.14, bottom: 0.32 },
+  );
 
-  it('цель внутри безопасного прямоугольника — окно не трогается', () => {
-    const camera = frameCamera({ x: 800, y: 450 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
-    expect(keepTargetInSafeZone(camera, { x: 800, y: 450 }, safe)).toEqual(camera);
+  it('старт раунда: танк у бока на середине высоты — вне зоны пальца, окно не трогается', () => {
+    expect(keepTargetOutOfThumbZones(full, { x: 1460, y: 450 }, zones)).toEqual(full);
   });
 
-  it('цель у правого края поля — окно сдвигается за край ровно до границы полосы', () => {
-    const camera = frameCamera({ x: 1460, y: 450 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
-    const kept = keepTargetInSafeZone(camera, { x: 1460, y: 450 }, safe);
-    const fraction = (1460 - kept.x) / kept.width;
-    expect(fraction).toBeCloseTo(0.75, 6);
-    expect(kept.x + kept.width).toBeGreaterThan(ARENA.width);
-    expect(kept.y).toBe(camera.y);
+  it('танк в нижнем левом углу — сдвиг по горизонтали до границы зоны', () => {
+    const target = { x: 60, y: 720 };
+    const kept = keepTargetOutOfThumbZones(full, target, zones);
+    expect((target.x - kept.x) / kept.width).toBeCloseTo(zones.side, 6);
+    expect(kept.y).toBe(full.y);
   });
 
-  it('цель у нижнего левого угла — не ниже границы снизу и не левее границы сбоку', () => {
-    const camera = frameCamera({ x: 90, y: 850 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
-    const kept = keepTargetInSafeZone(camera, { x: 90, y: 850 }, safe);
-    expect((90 - kept.x) / kept.width).toBeCloseTo(0.25, 6);
-    expect((850 - kept.y) / kept.height).toBeCloseTo(0.6, 6);
+  it('танк чуть ниже границы зоны у самого бока — дешевле поднять окно, чем сдвигать вбок', () => {
+    const target = { x: -150, y: 540 };
+    const kept = keepTargetOutOfThumbZones(full, target, zones);
+    expect((target.y - kept.y) / kept.height).toBeCloseTo(zones.cornerTop, 6);
+    expect(kept.x).toBe(full.x);
   });
 
-  it('окно шире поля (обзор 80 % на телефоне) — цель у края всё равно уходит из-под стика', () => {
-    const camera = frameCamera({ x: 90, y: 450 }, 2200, 1000, 720);
-    expect(camera.width).toBeGreaterThan(ARENA.width - 100);
-    const kept = keepTargetInSafeZone(camera, { x: 90, y: 450 }, safe);
-    expect((90 - kept.x) / kept.width).toBeCloseTo(0.25, 6);
+  it('танк внизу по центру — не зона пальца, окно не трогается', () => {
+    expect(keepTargetOutOfThumbZones(full, { x: 800, y: 880 }, zones)).toEqual(full);
+  });
+
+  it('танк под панелями сверху — окно поднимается', () => {
+    const kept = keepTargetOutOfThumbZones(full, { x: 800, y: 20 }, zones);
+    expect((20 - kept.y) / kept.height).toBeCloseTo(zones.top, 6);
   });
 });
 

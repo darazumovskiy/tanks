@@ -77,13 +77,38 @@ export function frameTargets(
   };
 }
 
-// Сдвигает окно ровно настолько, чтобы цель вернулась в безопасную область, — даже за край поля.
-export function keepTargetInSafeZone(camera: Camera, target: Point, insets: FramingInsets): Camera {
-  const minX = target.x - camera.width * (1 - insets.side);
-  const maxX = target.x - camera.width * insets.side;
-  const minY = target.y - camera.height * (1 - insets.bottom);
-  const maxY = target.y - camera.height * insets.top;
-  return { ...camera, x: clamp(camera.x, minX, maxX), y: clamp(camera.y, minY, maxY) };
+// Зоны больших пальцев — нижние углы экрана: ближе `side` к боку и ниже `cornerTop` от верха. Сверху — панели.
+export interface ThumbZones {
+  side: number;
+  cornerTop: number;
+  top: number;
+}
+
+// Вертикальный сдвиг прячет поле внизу, где идёт бой, поэтому горизонтальный предпочтительнее, пока он не сильно больше.
+const VERTICAL_SHIFT_PREFERENCE = 1.5;
+
+// Цель попала в зону пальца — окно сдвигается за край поля ровно до её границы тем способом, что даёт меньше пустоты.
+export function keepTargetOutOfThumbZones(camera: Camera, target: Point, zones: ThumbZones): Camera {
+  let { x, y } = camera;
+  const fy = (target.y - y) / camera.height;
+  if (fy < zones.top) {
+    y = target.y - camera.height * zones.top;
+  }
+  const fx = (target.x - x) / camera.width;
+  const isLow = fy > zones.cornerTop;
+  const isLeft = fx < zones.side;
+  const isRight = fx > 1 - zones.side;
+  if (!isLow || (!isLeft && !isRight)) {
+    return { ...camera, x, y };
+  }
+  const shiftX = (isLeft ? zones.side - fx : fx - (1 - zones.side)) * camera.width;
+  const shiftY = (fy - zones.cornerTop) * camera.height;
+  if (shiftX <= shiftY * VERTICAL_SHIFT_PREFERENCE) {
+    x = isLeft ? target.x - camera.width * zones.side : target.x - camera.width * (1 - zones.side);
+  } else {
+    y = target.y - camera.height * zones.cornerTop;
+  }
+  return { ...camera, x, y };
 }
 
 // Высота окна меняется ступенями: пока нужная высота отличается от зафиксированной меньше чем на долю
