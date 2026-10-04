@@ -9,7 +9,8 @@ export const AUTO_AIM_RESUME_MS = 500;
 // Предохранитель задерживает опасный выстрел не дольше этого: башня не ушла — тап отменяется.
 export const RICOCHET_GUARD_HOLD_MS = 300;
 
-export type InputSettings = StickSettings & Pick<Settings, 'hasAutoAim' | 'hasRicochetGuard' | 'hasZoneFire'>;
+export type InputSettings = StickSettings &
+  Pick<Settings, 'pivotThrottle' | 'hasAutoAim' | 'hasRicochetGuard' | 'hasZoneFire'>;
 
 export type GuardEvent = 'hold' | 'cancel';
 
@@ -194,7 +195,7 @@ export class InputReader {
       }
       const isEnteringReverse = isFlicked && isBehind(stick, me.heading);
       const previous = isEnteringReverse ? { ...this.hull, isReversing: true } : this.hull;
-      this.hull = steerHull(stick, me.heading, me.stats.turnRate, previous);
+      this.hull = steerHull(stick, me.heading, me.stats.turnRate, previous, this.settings.pivotThrottle);
       return this.hull;
     }
     this.hull = IDLE_HULL;

@@ -13,6 +13,13 @@ describe('defaultSettings', () => {
     expect({ ...PHONE_DEFAULTS, hasAutoAim: false }).toEqual(DESKTOP_DEFAULTS);
   });
 
+  it('порог газа на повороте — 0,5 на обоих устройствах, зажимается в 0–1', () => {
+    expect(PHONE_DEFAULTS.pivotThrottle).toBe(0.5);
+    expect(DESKTOP_DEFAULTS.pivotThrottle).toBe(0.5);
+    expect(parseSettings(JSON.stringify({ pivotThrottle: 3 }), PHONE_DEFAULTS, PLAYER).pivotThrottle).toBe(1);
+    expect(parseSettings(JSON.stringify({ pivotThrottle: 0.2 }), PHONE_DEFAULTS, PLAYER).pivotThrottle).toBe(0.2);
+  });
+
   it('предохранитель, линия выстрела, подсказка упреждения и огонь по цели выключены на обоих устройствах', () => {
     for (const defaults of [PHONE_DEFAULTS, DESKTOP_DEFAULTS]) {
       expect(defaults.hasRicochetGuard).toBe(false);

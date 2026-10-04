@@ -54,6 +54,7 @@ describe('InputReader', () => {
     settings = {
       stickRadiusPx: 64,
       deadZone: 0.15,
+      pivotThrottle: 0,
       hasFireRing: true,
       fireRing: 0.85,
       hasAutoAim: false,
@@ -550,6 +551,15 @@ describe('InputReader', () => {
       expect(read(null, isSafe, isInZone).isFiring).toBe(true);
       expect(input.isShotGuarded).toBe(false);
     });
+  });
+
+  it('порог газа на повороте читается из настроек каждый тик', () => {
+    target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
+    target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 64, Y));
+    expect(read().throttle).toBeCloseTo(0, 6);
+    settings.pivotThrottle = 0.5;
+    expect(read().throttle).toBeCloseTo(0.5, 6);
+    expect(input.isReversing).toBe(false);
   });
 
   it('клавиша S — задний ход с клавиатуры не меняется', () => {

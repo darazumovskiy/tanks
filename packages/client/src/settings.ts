@@ -5,6 +5,7 @@ import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrateg
 export interface Settings {
   stickRadiusPx: number;
   deadZone: number;
+  pivotThrottle: number;
   hasFireRing: boolean;
   fireRing: number;
   hasAutoAim: boolean;
@@ -58,6 +59,7 @@ export function defaultSettings(isTouchDevice: boolean): Settings {
   return {
     stickRadiusPx: 40,
     deadZone: 0.07,
+    pivotThrottle: 0.5,
     hasFireRing: false,
     fireRing: 0.89,
     hasAutoAim: isTouchDevice,
@@ -116,6 +118,14 @@ export const BOOLEAN_FIELDS: readonly BooleanSettingField[] = [
 export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
   { key: 'stickRadiusPx', label: 'Размер стика', hint: 'радиус круга, px', min: 40, max: 110, step: 2 },
   { key: 'deadZone', label: 'Мёртвая зона', hint: 'доля радиуса без реакции', min: 0, max: 0.5, step: 0.01 },
+  {
+    key: 'pivotThrottle',
+    label: 'Разворот',
+    hint: 'сколько хода танк держит в повороте: 0 — крутится на месте, 1 — не сбавляет и идёт широкой дугой',
+    min: 0,
+    max: 1,
+    step: 0.05,
+  },
   {
     key: 'fireRing',
     label: 'Радиус кольца огня',

@@ -28,19 +28,21 @@ export function stickMagnitude(stick: StickVector): number {
 
 // Активный стик задаёт желаемый курс; танк крутится к нему коротким путём и едет вперёд, куда бы палец ни стоял.
 // Сам стик задний ход не включает: он приходит снаружи через `previous.isReversing` (жест броска) и держится,
-// пока палец не ушёл далеко от кормы.
+// пока палец не ушёл далеко от кормы. `pivotThrottle` — ниже этой доли газ на повороте не падает: 0 — разворот
+// на месте, 1 — без торможения, дугой.
 export function steerHull(
   stick: StickVector,
   heading: number,
   turnRate: number,
   previous: Readonly<HullSteering>,
+  pivotThrottle: number,
 ): HullSteering {
   const wanted = Math.atan2(stick.dy, stick.dx);
   const tailError = normalizeAngle(wanted - heading - Math.PI);
   const isReversing = previous.isReversing && Math.abs(tailError) <= REVERSE_EXIT_ANGLE;
   const error = isReversing ? tailError : normalizeAngle(wanted - heading);
   const turn = turnTowards(error, turnRate, previous.turn);
-  const drive = stickMagnitude(stick) * pivotFactor(Math.abs(error));
+  const drive = stickMagnitude(stick) * Math.max(pivotThrottle, pivotFactor(Math.abs(error)));
   return { throttle: isReversing ? -drive : drive, turn, isReversing };
 }
 

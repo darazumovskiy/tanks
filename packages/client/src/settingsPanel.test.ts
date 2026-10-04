@@ -86,6 +86,15 @@ describe('SettingsPanel', () => {
     expect(new SettingsStore(localStorage, DEFAULT_SETTINGS, PLAYER).value.stickRadiusPx).toBe(90);
   });
 
+  it('ползунок «Разворот» стоит на 0,5 и пишет порог газа в хранилище', () => {
+    const pivot = rangeFor('pivotThrottle');
+    expect(pivot.value).toBe('0.5');
+    pivot.value = '0.8';
+    pivot.dispatchEvent(new Event('input'));
+    expect(store.value.pivotThrottle).toBe(0.8);
+    expect(localStorage.getItem('tanks.settings')).toContain('"pivotThrottle":0.8');
+  });
+
   it('флажок графика кадров', () => {
     const checkbox = checkFor('График кадров');
     checkbox.checked = true;
@@ -272,6 +281,6 @@ describe('SettingsPanel', () => {
     const labels = Array.from(desktopRoot.querySelectorAll('.settings-head span:first-child')).map(
       (span) => span.textContent,
     );
-    expect(labels).toEqual(['Размер стика', 'Мёртвая зона', 'Радиус кольца огня']);
+    expect(labels).toEqual(['Размер стика', 'Мёртвая зона', 'Разворот', 'Радиус кольца огня']);
   });
 });
