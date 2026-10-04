@@ -13,6 +13,8 @@
 | Правила боя: вход, матч, счёт, возрождение, зона и финал, бездействие, что видит игрок, карты, боты | [concept/ffa.md](../../concept/ffa.md) |
 | Движок на N танков, матч, выбор точки возрождения, карты; план тестирования | [tech/impl/backend/ffa-engine.md](../../tech/impl/backend/ffa-engine.md) |
 | Сервер общей игры: подбор, фазы, бездействие, обрыв и возврат; сообщения протокола; снаряды у клиента; план тестирования | [tech/impl/backend/ffa-server.md](../../tech/impl/backend/ffa-server.md) |
+| Боты толпы: уровни, что видит бот, окно обзора, выбор цели, уклонение, застревание; стенд толпы; план тестирования | [tech/impl/backend/crowd-bots.md](../../tech/impl/backend/crowd-bots.md) |
+| Сетевой рой ботов: запуск, отчёт (трафик, тик, шум выстрелов), связь и обрывы; план тестирования | [tech/impl/backend/swarm.md](../../tech/impl/backend/swarm.md) |
 | Протокол дуэли и общие поля (`Join`, ошибки) | [tech/impl/backend/protocol.md](../../tech/impl/backend/protocol.md) |
 | Где код рассчитан ровно на двоих | [knowledge/duel-assumptions.md](knowledge/duel-assumptions.md) |
 | Как устроен снимок, сколько весит, прикидка трафика на 50 игроков | [knowledge/snapshot-traffic.md](knowledge/snapshot-traffic.md) |
