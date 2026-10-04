@@ -3,11 +3,13 @@ import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared
 import { BOT_LEVEL_INFO, BOT_LEVELS, botRoomCode, type BotLevel } from '@tanks/shared/protocol';
 import QRCode from 'qrcode';
 import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
+import { readClientInfo } from './clientInfo.js';
 import { Game } from './game.js';
 import { showCameraLab } from './lab.js';
 import { SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
 import { mountStatsPicker, statsLeft } from './statsPicker.js';
+import { Telemetry } from './telemetry.js';
 
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
@@ -22,6 +24,8 @@ const LEVEL_INFO_OPEN_CLASS = 'is-open';
 const LEVEL_LIST_OPEN_CLASS = 'is-open';
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 // Один на страницу: ошибки главной и боя уходят с одинаковым описанием клиента.
+const telemetry = new Telemetry(readClientInfo());
+telemetry.installErrorHandlers();
 
 function randomCode(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
@@ -245,6 +249,7 @@ function startDuel(roomCode: string): void {
     roundEnd: byId('round-end', HTMLElement),
     settings: store.value,
     isTouchDevice: hasTouch,
+    telemetry,
   });
   const settingsToggle = byId('settings-toggle', HTMLButtonElement);
   settingsToggle.hidden = false;

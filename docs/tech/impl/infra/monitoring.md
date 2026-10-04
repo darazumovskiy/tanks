@@ -2,7 +2,7 @@
 
 Метрики сервера, системный журнал, редкие события игры и ошибки клиента собираются в Grafana Cloud (бесплатный тариф: 10 000 рядов метрик, 50 ГБ логов в месяц, 14 дней хранения). Игровой процесс в облако ничего не отправляет: он только увеличивает счётчики в памяти и дописывает строки в файлы на диске; отправкой занимается отдельный процесс Vector на той же машине. Падение, зависание или отсутствие Vector и облака не меняет ни тик, ни задержку до клиента — между игрой и сбором нет ни одного вызова, который мог бы ждать.
 
-Код: `packages/server/src/metrics.ts` (счётчики и текст `/metrics`), `packages/server/src/app.ts` (ручка, подсчёт сообщений), `packages/server/src/main.ts` (адрес прослушивания), `packages/client/src/telemetry.ts` (очередь событий клиента), `deploy/vector/vector.yaml`, `deploy/vector.service`, `deploy/Caddyfile`, `deploy/grafana/tanks-dashboard.json`.
+Код: `packages/server/src/metrics.ts` (счётчики и текст `/metrics`), `packages/server/src/app.ts` (ручка, подсчёт сообщений), `packages/server/src/main.ts` (адрес прослушивания), `packages/client/src/clientInfo.ts` (описание клиента), `packages/client/src/telemetry.ts` (очередь событий клиента), `packages/client/src/game.ts` и `main.ts` (откуда события), `packages/client/vite.config.ts` (`APP_VERSION` — хеш коммита), `deploy/vector/`, `deploy/Caddyfile`, `deploy/grafana/build-dashboard.py`.
 
 ## Схема
 
@@ -63,7 +63,7 @@ Vector читает `journalctl` юнитов `tanks`, `caddy` и `vector` це�
 | `shell` | `app` (Capacitor), `browser`, `pwa` | `Capacitor.isNativePlatform()`, `display-mode: standalone` |
 | `os`, `osVersion` | `Android 14`, `iOS 17.5`, `macOS 14`, `Windows 11` | `userAgent` |
 | `browser`, `browserVersion` | `Chrome 130`, `Safari 17` | `userAgent` |
-| `appVersion` | версия клиента из сборки (`__APP_VERSION__` Vite) | сборка |
+| `appVersion` | версия клиента — короткий хеш коммита (`APP_VERSION` через `define` Vite; в тестах `test`, вне git `dev`) | сборка |
 | `screen`, `dpr`, `touch` | `1080x2400`, `2.75`, `1` | `window`, `navigator` |
 
 Где какой признак живёт: метками Loki (по ним индекс, их мало) — `platform`, `shell`, `kind`, `game`, `side`; остальные — полями события в теле строки (JSON), фильтруются и группируются в LogQL (`| json | os="Android 14"`). Правило: метка — только признак с десятком значений и меньше; версии, модели, размеры — поля. Это держит число потоков Loki в рамках бесплатного тарифа при любом росте признаков.
@@ -109,16 +109,19 @@ Vector читает `journalctl` юнитов `tanks`, `caddy` и `vector` це�
 | Vector остановлен (`systemctl stop vector`) во время дуэли | `tick_duration` и `rtt` в журнале игры не меняются; соединения живы | вручную на боевом сервере — выполнено 2026-10-04: дуэль с манекеном из браузера, 15 с без Vector — rtt 50–53 мс, 30 тиков/с, поправок 0 |
 | Доступы Grafana Cloud неверные | Vector пишет ошибку в свой журнал, очередь на диске не растёт выше лимита, игра не замечает | вручную на боевом сервере |
 
-Клиент (`packages/client/src/telemetry.test.ts`, happy-dom):
+Клиент (`packages/client/src/clientInfo.test.ts`, `telemetry.test.ts`, happy-dom):
 
 | Сценарий | Ожидание | Статус |
 |---|---|---|
-| Ошибка `window.onerror` и отклонённый промис | в очереди события `kind=error` с текстом, `game`/`side`, если известны, и описанием клиента | авто |
-| Описание клиента на разных `userAgent` (Android Chrome, iOS Safari, macOS Chrome, Windows Firefox) и в оболочке Capacitor | `platform`, `shell`, `os`, `osVersion`, `browser`, `browserVersion` разобраны верно; неизвестный агент — `unknown`, без исключения | авто |
-| Секундная сводка | раз в секунду событие `kind=sec` с `fps`, `worst`, `rtt`, `pend`, `snaps`, `ins` | авто |
-| Таймер отправки | пустая очередь не отправляется; непустая уходит одной пачкой через `sendBeacon` и очищается | авто |
-| `sendBeacon` вернул `false` или отсутствует | исключения нет, очередь очищена | авто |
+| Ошибка `window.onerror` и отклонённый промис | события `kind=error` с текстом (файл и строка, имя и текст исключения), `game`/`side`, описанием клиента; после `close` обработчики сняты | авто |
+| Описание клиента на десяти агентах: Android Chrome и Samsung, iPhone Safari и Chrome, iPad в режиме компьютера (Mac + касание → iPadOS), macOS Chrome, Windows Firefox и Edge, Linux Chrome, `curl` | `platform`, `os`, `osVersion`, `browser`, `browserVersion` разобраны верно; неизвестный агент — `unknown`, без исключения; Windows NT 6.1 → 7, незнакомый NT — номером | авто |
+| Оболочка | Capacitor → `app`, standalone → `pwa`, иначе `browser` | авто |
+| `readClientInfo` в happy-dom | `appVersion` из `APP_VERSION`, экран `WxH`, оболочка из трёх допустимых | авто |
+| Событие | несёт `t`, `kind`, `msg`, `game`, `side`, `client` и поля; до входа в игру `game=""`, `side=-1`; после `leaveGame` — снова | авто |
+| Таймер отправки | пустая очередь не отправляется; непустая уходит одной пачкой JSON-строк через `sendBeacon` на `/telemetry` и очищается; `pagehide` отправляет сразу | авто |
+| `sendBeacon` вернул `false`, бросил исключение или отсутствует | исключения нет, очередь очищена | авто |
 | 60 событий без отправки | в очереди 50 последних | авто |
+| Бой в браузере на боевом сервере | в Loki события `kind=sec` раз в секунду с `platform=desktop`, `client.os`, `client.browser`, `appVersion` = хеш выкладки; панели игроков на дашборде фильтруются по платформе | вручную агентом после выкладки |
 
 Сквозной прогон (`npm run test:e2e`):
 

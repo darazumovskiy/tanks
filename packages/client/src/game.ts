@@ -18,6 +18,7 @@ import { Effects } from './render/effects.js';
 import { Renderer, type Overlay } from './render/renderer.js';
 import type { Settings } from './settings.js';
 import { Sfx } from './sfx.js';
+import type { Telemetry } from './telemetry.js';
 
 export interface GameOptions {
   roomCode: string;
@@ -28,6 +29,7 @@ export interface GameOptions {
   roundEnd: HTMLElement;
   settings: Readonly<Settings>;
   isTouchDevice: boolean;
+  telemetry: Telemetry;
 }
 
 const TICK_MS = DT * 1000;
@@ -92,6 +94,7 @@ export class Game {
         onWelcome: (message): void => {
           this.side = message.side;
           this.diag.setSide(message.side);
+          this.options.telemetry.setSide(message.side);
           this.diag.write(`net welcome side=${String(message.side)} room=${message.roomCode}`);
         },
         onRoomState: (message): void => {
@@ -109,6 +112,7 @@ export class Game {
           }
           if (this.roundStart?.gameId !== message.gameId) {
             this.diag.setGame(message.gameId);
+            this.options.telemetry.setGame(message.gameId);
           }
           this.diag.write(
             `net roundstart game=${message.gameId} idx=${String(message.roundIndex)} map=${String(message.mapIndex)} score=${String(message.score[0])}:${String(message.score[1])}`,
@@ -140,6 +144,7 @@ export class Game {
         },
         onError: (message): void => {
           this.diag.write(`net error code=${String(message.code)} text=${message.text}`);
+          this.options.telemetry.event('net', `server error: ${message.text}`, { code: message.code });
           this.showOverlay(message.text, true);
         },
         onDisconnect: (retryInMs): void => {
@@ -147,6 +152,7 @@ export class Game {
             return;
           }
           this.diag.write(`net disconnect retry=${String(retryInMs)}`);
+          this.options.telemetry.event('net', 'disconnect', { retryInMs });
           this.prediction = null;
           this.roundStart = null;
           this.lastSnapshotAt = null;
@@ -165,6 +171,7 @@ export class Game {
     this.isClosed = true;
     this.diag.write('close');
     this.diag.close();
+    this.options.telemetry.leaveGame();
     this.net.close();
     hideRoundEnd(this.options.roundEnd);
   }
@@ -358,9 +365,20 @@ export class Game {
     const isSummaryDue = now - this.summaryAt >= DIAG_SUMMARY_INTERVAL_MS;
     if (isSummaryDue) {
       this.summaryAt = now;
+      const fps = Math.round(this.fps);
+      const worst = Math.round(this.worstFrameMs);
+      const rtt = Math.round(this.net.rttMs);
       this.diag.write(
-        `sec fps=${this.fps.toFixed(0)} worst=${this.worstFrameMs.toFixed(0)} rtt=${this.net.rttMs.toFixed(0)} pend=${String(prediction.pendingCount)} snaps=${String(this.snapshotsThisSecond)} ins=${String(this.inputsThisSecond)}`,
+        `sec fps=${String(fps)} worst=${String(worst)} rtt=${String(rtt)} pend=${String(prediction.pendingCount)} snaps=${String(this.snapshotsThisSecond)} ins=${String(this.inputsThisSecond)}`,
       );
+      this.options.telemetry.event('sec', 'sec', {
+        fps,
+        worst,
+        rtt,
+        pend: prediction.pendingCount,
+        snaps: this.snapshotsThisSecond,
+        ins: this.inputsThisSecond,
+      });
       this.snapshotsThisSecond = 0;
       this.inputsThisSecond = 0;
     }

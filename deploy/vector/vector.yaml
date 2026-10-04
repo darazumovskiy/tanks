@@ -47,15 +47,15 @@ transforms:
     source: |
       .labels = { "app": "tanks", "stream": "server", "unit": string!(._SYSTEMD_UNIT) }
 
-  # Подробные потиковые строки (tick, snap, in, cam, input) остаются на диске; в облако — редкие события
-  # и секундные сводки клиента с задержкой и кадрами.
+  # Подробные потиковые строки (tick, snap, in, cam, input, sec) остаются на диске; в облако — редкие события.
+  # Секундная сводка клиента приходит событием /telemetry с описанием клиента.
   game_events:
     type: remap
     inputs: [game_files]
     drop_on_abort: true
     source: |
       line = string!(.message)
-      is_kept = match(line, r'^\S+ (S|C\d) gt=\d+ tc=\S+ (now=\S+ )?(game start|round start|leave|loop late|device |net |vis |sec )')
+      is_kept = match(line, r'^\S+ (S|C\d) gt=\d+ tc=\S+ (now=\S+ )?(game start|round start|leave|loop late|device |net |vis )')
       if !is_kept { abort }
       .labels = {
         "app": "tanks",
@@ -64,18 +64,26 @@ transforms:
         "source": parse_regex!(line, r'^\S+ (?P<source>S|C\d) ').source,
       }
 
+  # Метками — только признаки с малым числом значений; остальное (система, браузер, версии, поля сводки)
+  # остаётся в теле строки JSON и фильтруется в запросе: | json | client_os="Android 14".
   client_lines:
     type: remap
     inputs: [client_events]
     source: |
-      .message = to_string(.msg) ?? "событие без текста"
+      event = .
+      del(event.source_type)
+      del(event.path)
+      del(event.timestamp)
       .labels = {
         "app": "tanks",
         "stream": "client",
         "kind": to_string(.kind) ?? "unknown",
         "game": to_string(.game) ?? "-",
         "side": to_string(.side) ?? "-",
+        "platform": to_string(.client.platform) ?? "unknown",
+        "shell": to_string(.client.shell) ?? "unknown",
       }
+      .message = encode_json(event)
 
 sinks:
   grafana_metrics:

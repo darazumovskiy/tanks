@@ -11,6 +11,58 @@
     "to": "now"
   },
   "schemaVersion": 39,
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "platform",
+        "label": "Платформа",
+        "datasource": {
+          "type": "loki",
+          "uid": "grafanacloud-logs"
+        },
+        "query": {
+          "label": "platform",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{app=\"tanks\",stream=\"client\"}",
+          "type": 1
+        },
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2,
+        "sort": 1
+      },
+      {
+        "type": "query",
+        "name": "shell",
+        "label": "Оболочка",
+        "datasource": {
+          "type": "loki",
+          "uid": "grafanacloud-logs"
+        },
+        "query": {
+          "label": "shell",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{app=\"tanks\",stream=\"client\"}",
+          "type": 1
+        },
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  },
   "panels": [
     {
       "type": "row",
@@ -517,9 +569,9 @@
             "type": "loki",
             "uid": "grafanacloud-logs"
           },
-          "expr": "avg_over_time({app=\"tanks\",stream=\"game\",source=~\"C.\"} |~ \" sec \" | regexp \"rtt=(?P<rtt>\\\\d+)\" | unwrap rtt [1m]) by (game, source)",
-          "legendFormat": "{{game}} {{source}}",
-          "refId": "{{game}} {{source}}",
+          "expr": "avg_over_time({app=\"tanks\",stream=\"client\",kind=\"sec\",platform=~\"$platform\",shell=~\"$shell\"} | json | unwrap rtt [1m]) by (game, side, platform)",
+          "legendFormat": "{{game}} {{side}} {{platform}}",
+          "refId": "{{game}} {{side}} {{platform}}",
           "queryType": "range"
         }
       ],
@@ -564,13 +616,154 @@
             "type": "loki",
             "uid": "grafanacloud-logs"
           },
-          "expr": "avg_over_time({app=\"tanks\",stream=\"game\",source=~\"C.\"} |~ \" sec \" | regexp \"fps=(?P<fps>\\\\d+)\" | unwrap fps [1m]) by (game, source)",
-          "legendFormat": "{{game}} {{source}}",
-          "refId": "{{game}} {{source}}",
+          "expr": "avg_over_time({app=\"tanks\",stream=\"client\",kind=\"sec\",platform=~\"$platform\",shell=~\"$shell\"} | json | unwrap fps [1m]) by (game, side, platform)",
+          "legendFormat": "{{game}} {{side}} {{platform}}",
+          "refId": "{{game}} {{side}} {{platform}}",
           "queryType": "range"
         }
       ],
       "id": 12
+    },
+    {
+      "type": "timeseries",
+      "title": "Худший кадр у игроков, мс",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 0,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "avg_over_time({app=\"tanks\",stream=\"client\",kind=\"sec\",platform=~\"$platform\",shell=~\"$shell\"} | json | unwrap worst [1m]) by (game, side, platform)",
+          "legendFormat": "{{game}} {{side}} {{platform}}",
+          "refId": "{{game}} {{side}} {{platform}}",
+          "queryType": "range"
+        }
+      ],
+      "id": 13
+    },
+    {
+      "type": "timeseries",
+      "title": "Игроков онлайн по платформам",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 8,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "count by (platform) (sum by (game, side, platform) (count_over_time({app=\"tanks\",stream=\"client\",kind=\"sec\",platform=~\"$platform\",shell=~\"$shell\"} | json [1m])))",
+          "legendFormat": "{{platform}}",
+          "refId": "{{platform}}",
+          "queryType": "range"
+        }
+      ],
+      "id": 14
+    },
+    {
+      "type": "timeseries",
+      "title": "Ошибок клиента в минуту",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 16,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum(count_over_time({app=\"tanks\",stream=\"client\",kind=\"error\",platform=~\"$platform\",shell=~\"$shell\"} [1m])) by (platform)",
+          "legendFormat": "{{platform}}",
+          "refId": "{{platform}}",
+          "queryType": "range"
+        }
+      ],
+      "id": 15
     },
     {
       "type": "logs",
@@ -583,7 +776,7 @@
         "w": 12,
         "h": 10,
         "x": 0,
-        "y": 34
+        "y": 42
       },
       "options": {
         "showTime": true,
@@ -597,11 +790,11 @@
             "type": "loki",
             "uid": "grafanacloud-logs"
           },
-          "expr": "{app=\"tanks\",stream=\"client\"}",
+          "expr": "{app=\"tanks\",stream=\"client\",platform=~\"$platform\",shell=~\"$shell\"} | json | line_format \"{{.client_os}} {{.client_osVersion}} {{.client_browser}} {{.client_browserVersion}} {{.client_appVersion}} · {{.kind}}: {{.msg}}\"",
           "refId": "A"
         }
       ],
-      "id": 13
+      "id": 16
     },
     {
       "type": "logs",
@@ -614,7 +807,7 @@
         "w": 12,
         "h": 10,
         "x": 12,
-        "y": 34
+        "y": 42
       },
       "options": {
         "showTime": true,
@@ -632,7 +825,7 @@
           "refId": "A"
         }
       ],
-      "id": 14
+      "id": 17
     },
     {
       "type": "row",
@@ -642,9 +835,9 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 44
+        "y": 52
       },
-      "id": 15
+      "id": 18
     },
     {
       "type": "timeseries",
@@ -657,7 +850,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 45
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {
@@ -699,7 +892,7 @@
           "refId": "ожидание диска"
         }
       ],
-      "id": 16
+      "id": 19
     },
     {
       "type": "timeseries",
@@ -712,7 +905,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 45
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {
@@ -763,7 +956,7 @@
           "refId": "своп"
         }
       ],
-      "id": 17
+      "id": 20
     },
     {
       "type": "timeseries",
@@ -776,7 +969,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 45
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {
@@ -818,7 +1011,7 @@
           "refId": "5 мин"
         }
       ],
-      "id": 18
+      "id": 21
     },
     {
       "type": "timeseries",
@@ -831,7 +1024,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 53
+        "y": 61
       },
       "fieldConfig": {
         "defaults": {
@@ -873,7 +1066,7 @@
           "refId": "отдача"
         }
       ],
-      "id": 19
+      "id": 22
     },
     {
       "type": "timeseries",
@@ -886,7 +1079,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 53
+        "y": 61
       },
       "fieldConfig": {
         "defaults": {
@@ -919,7 +1112,7 @@
           "refId": "/"
         }
       ],
-      "id": 20
+      "id": 23
     },
     {
       "type": "logs",
@@ -932,7 +1125,7 @@
         "w": 8,
         "h": 10,
         "x": 16,
-        "y": 53
+        "y": 61
       },
       "options": {
         "showTime": true,
@@ -950,7 +1143,7 @@
           "refId": "A"
         }
       ],
-      "id": 21
+      "id": 24
     }
   ]
 }

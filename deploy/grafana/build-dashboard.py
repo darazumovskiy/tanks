@@ -16,7 +16,13 @@ THIRD = 8
 HEIGHT = 8
 LOGS_HEIGHT = 10
 
-CLIENT_SECONDS = '{app="tanks",stream="game",source=~"C."} |~ " sec "'
+# Секундные сводки клиентов с фильтрами дашборда по платформе и оболочке.
+CLIENT_SECONDS = '{app="tanks",stream="client",kind="sec",platform=~"$platform",shell=~"$shell"} | json'
+CLIENT_EVENTS = '{app="tanks",stream="client",platform=~"$platform",shell=~"$shell"}'
+CLIENT_ERRORS = '{app="tanks",stream="client",kind="error",platform=~"$platform",shell=~"$shell"}'
+CLIENT_EVENT_LINE = (
+    "{{.client_os}} {{.client_osVersion}} {{.client_browser}} {{.client_browserVersion}} {{.client_appVersion}} · {{.kind}}: {{.msg}}"
+)
 
 
 def timeseries(title, datasource, targets, unit="short", width=HALF, height=HEIGHT, overrides=None):
@@ -43,7 +49,7 @@ def loki_metric(expr, legend):
 
 
 def unwrap(field):
-    return f'avg_over_time({CLIENT_SECONDS} | regexp "{field}=(?P<{field}>\\\\d+)" | unwrap {field} [1m]) by (game, source)'
+    return f"avg_over_time({CLIENT_SECONDS} | unwrap {field} [1m]) by (game, side, platform)"
 
 
 def logs(title, expr, width=HALF):
@@ -133,9 +139,28 @@ PANELS = [
         ],
     ),
     row("Игроки"),
-    timeseries("Задержка до игроков, мс", LOKI, [loki_metric(unwrap("rtt"), "{{game}} {{source}}")], unit="ms"),
-    timeseries("Кадров в секунду у игроков", LOKI, [loki_metric(unwrap("fps"), "{{game}} {{source}}")]),
-    logs("Ошибки и события клиента", '{app="tanks",stream="client"}'),
+    timeseries("Задержка до игроков, мс", LOKI, [loki_metric(unwrap("rtt"), "{{game}} {{side}} {{platform}}")], unit="ms"),
+    timeseries("Кадров в секунду у игроков", LOKI, [loki_metric(unwrap("fps"), "{{game}} {{side}} {{platform}}")]),
+    timeseries(
+        "Худший кадр у игроков, мс",
+        LOKI,
+        [loki_metric(unwrap("worst"), "{{game}} {{side}} {{platform}}")],
+        unit="ms",
+        width=THIRD,
+    ),
+    timeseries(
+        "Игроков онлайн по платформам",
+        LOKI,
+        [loki_metric(f"count by (platform) (sum by (game, side, platform) (count_over_time({CLIENT_SECONDS} [1m])))", "{{platform}}")],
+        width=THIRD,
+    ),
+    timeseries(
+        "Ошибок клиента в минуту",
+        LOKI,
+        [loki_metric(f"sum(count_over_time({CLIENT_ERRORS} [1m])) by (platform)", "{{platform}}")],
+        width=THIRD,
+    ),
+    logs("Ошибки и события клиента", f'{CLIENT_EVENTS} | json | line_format "{CLIENT_EVENT_LINE}"'),
     logs("События игр", '{app="tanks",stream="game"} |~ "game start|round start|leave|loop late|net |vis "'),
     row("Машина"),
     timeseries(
@@ -203,6 +228,22 @@ def place(panels):
     return panels
 
 
+def label_variable(name, label):
+    return {
+        "type": "query",
+        "name": name,
+        "label": label,
+        "datasource": LOKI,
+        "query": {"label": name, "refId": "LokiVariableQueryEditor-VariableQuery", "stream": '{app="tanks",stream="client"}', "type": 1},
+        "includeAll": True,
+        "multi": True,
+        "allValue": ".*",
+        "current": {"text": "All", "value": "$__all"},
+        "refresh": 2,
+        "sort": 1,
+    }
+
+
 DASHBOARD = {
     "uid": "tanks-main",
     "title": "Танки",
@@ -211,6 +252,7 @@ DASHBOARD = {
     "refresh": "30s",
     "time": {"from": "now-1h", "to": "now"},
     "schemaVersion": 39,
+    "templating": {"list": [label_variable("platform", "Платформа"), label_variable("shell", "Оболочка")]},
     "panels": place(PANELS),
 }
 

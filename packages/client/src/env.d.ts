@@ -1,0 +1,2 @@
+// Версия клиента: короткий хеш коммита, подставляется сборкой (vite.config.ts) и тестами (vitest.config.ts).
+declare const APP_VERSION: string;
