@@ -69,7 +69,7 @@ export interface AimLineStyle {
   fadeMs: number;
 }
 
-export const AIM_LINE_STYLE: AimLineStyle = {
+export const PLAIN_AIM_LINE_STYLE: AimLineStyle = {
   neutral: '#f4f1e8',
   onTarget: '#e8825a',
   lead: '#5dffa0',

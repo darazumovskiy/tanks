@@ -1,3 +1,4 @@
+import { DEFAULT_AIM_LINE_STYLE_ID, isAimLineStyleId, type AimLineStyleId } from './render/aimLineStyles.js';
 import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrategy.js';
 
 // Настройки ощущения игры на устройстве: читаются вводом и рендером каждый тик, меняются из панели в бою,
@@ -11,6 +12,7 @@ export interface Settings {
   hasAutoAim: boolean;
   hasRicochetGuard: boolean;
   hasAimLine: boolean;
+  aimLineStyle: AimLineStyleId;
   hasLeadHint: boolean;
   hasZoneFire: boolean;
   cameraMode: PhoneCameraMode;
@@ -25,7 +27,7 @@ export interface Settings {
 
 export type BooleanSettingKey =
   'hasFireRing' | 'hasAutoAim' | 'hasRicochetGuard' | 'hasAimLine' | 'hasLeadHint' | 'hasZoneFire' | 'showFrameGraph';
-export type NumericSettingKey = Exclude<keyof Settings, BooleanSettingKey | 'cameraMode'>;
+export type NumericSettingKey = Exclude<keyof Settings, BooleanSettingKey | 'cameraMode' | 'aimLineStyle'>;
 
 // Флажок с `isTouchOnly` показывается только на устройстве с касанием: настройка касается стиков.
 // Флажок с `isAdminOnly` — только в админ-режиме; без права его значение читается как выключенное.
@@ -65,6 +67,7 @@ export function defaultSettings(isTouchDevice: boolean): Settings {
     hasAutoAim: isTouchDevice,
     hasRicochetGuard: false,
     hasAimLine: true,
+    aimLineStyle: DEFAULT_AIM_LINE_STYLE_ID,
     hasLeadHint: false,
     hasZoneFire: false,
     cameraMode: 'follow',
@@ -238,6 +241,7 @@ function parseStored(raw: string | null, defaults: Readonly<Settings>): Settings
     settings[field.key] = clampField(field, record[field.key], defaults[field.key]);
   }
   settings.cameraMode = parseCameraMode(record.cameraMode, defaults.cameraMode);
+  settings.aimLineStyle = isAimLineStyleId(record.aimLineStyle) ? record.aimLineStyle : defaults.aimLineStyle;
   for (const field of BOOLEAN_FIELDS) {
     const value = record[field.key];
     if (typeof value === 'boolean') {
@@ -271,6 +275,11 @@ export class SettingsStore {
 
   setCameraMode(mode: PhoneCameraMode): void {
     this.value.cameraMode = mode;
+    this.save();
+  }
+
+  setAimLineStyle(id: AimLineStyleId): void {
+    this.value.aimLineStyle = id;
     this.save();
   }
 

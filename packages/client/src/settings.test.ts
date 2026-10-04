@@ -94,6 +94,16 @@ describe('parseSettings', () => {
     expect(parseSettings(raw, PHONE_DEFAULTS, PLAYER).hasZoneFire).toBe(false);
     expect(parseSettings(raw, PHONE_DEFAULTS, ADMIN).hasZoneFire).toBe(true);
   });
+
+  it('вид прицела: умолчание «тихий трассер» на обоих устройствах, известный читается, неизвестный — умолчание', () => {
+    expect(PHONE_DEFAULTS.aimLineStyle).toBe('soft-tracer');
+    expect(DESKTOP_DEFAULTS.aimLineStyle).toBe('soft-tracer');
+    expect(parseSettings(JSON.stringify({ aimLineStyle: 'dots' }), PHONE_DEFAULTS, PLAYER).aimLineStyle).toBe('dots');
+    expect(parseSettings(JSON.stringify({ aimLineStyle: 'laser' }), PHONE_DEFAULTS, PLAYER).aimLineStyle).toBe(
+      'soft-tracer',
+    );
+    expect(parseSettings(JSON.stringify({ aimLineStyle: 7 }), PHONE_DEFAULTS, PLAYER).aimLineStyle).toBe('soft-tracer');
+  });
 });
 
 describe('SettingsStore', () => {
@@ -119,6 +129,12 @@ describe('SettingsStore', () => {
     const store = new SettingsStore(localStorage, PHONE_DEFAULTS, PLAYER);
     store.setNumber('followLagMs', 9999);
     expect(store.value.followLagMs).toBe(500);
+  });
+
+  it('вид прицела сохраняется и читается обратно', () => {
+    const store = new SettingsStore(localStorage, PHONE_DEFAULTS, PLAYER);
+    store.setAimLineStyle('neon');
+    expect(new SettingsStore(localStorage, PHONE_DEFAULTS, PLAYER).value.aimLineStyle).toBe('neon');
   });
 
   it('режим камеры сохраняется; неизвестный режим и прежний ключ догона — умолчания', () => {

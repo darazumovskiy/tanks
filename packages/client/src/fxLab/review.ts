@@ -1,10 +1,12 @@
 import { makeTarget, renderCrop, type Target } from './frame.js';
+import { hasPick, picksText, readPicks, togglePick, writePicks, type VariantPick } from './picks.js';
 import { FX_SCENES, FX_SCREENS, type FxScene, type FxScreen } from './scenes.js';
 import { summarizeStyle } from './styleParams.js';
 import { AIM_LINE_ROUNDS, type StyleRound, type StyleVariant } from './variants.js';
 
 // Страница просмотра раунда (`/?lab=fx&view=review`): сцены строками, варианты столбцами, кадры вокруг линии.
 // Клик по кадру — увеличение ×1 / ×2 / ×4 с прокруткой и переходом к соседним вариантам той же сцены.
+// Галочка «нравится» — одна на вариант во всех сценах; «Собрать список» — текст отметок для чата.
 
 const REVIEW_TIME_S = 1;
 const ZOOMS = [1, 2, 4] as const;
@@ -13,6 +15,8 @@ const BASE_CSS_SCALE = 0.5;
 const SELECTED_CLASS = 'is-selected';
 const PICK_CLASS = 'is-pick';
 const ANCHOR_CLASS = 'is-anchor';
+const LIKED_CLASS = 'is-liked';
+const COPIED_MS = 1500;
 
 interface Cell {
   scene: FxScene;
@@ -27,7 +31,12 @@ function badge(text: string, className: string): HTMLElement {
   return element;
 }
 
-function cellFigure(cell: Cell, round: StyleRound, onOpen: () => void): HTMLElement {
+interface Likes {
+  has: (variant: StyleVariant) => boolean;
+  toggle: (variant: StyleVariant) => void;
+}
+
+function cellFigure(cell: Cell, round: StyleRound, likes: Likes, onOpen: () => void): HTMLElement {
   const figure = document.createElement('figure');
   figure.className = 'fx-cell';
   figure.dataset.scene = cell.scene.id;
@@ -35,16 +44,32 @@ function cellFigure(cell: Cell, round: StyleRound, onOpen: () => void): HTMLElem
   if (cell.variant.anchor !== null) {
     figure.classList.add(ANCHOR_CLASS);
   }
-  if (round.pick === cell.variant.id) {
+  if (round.picks.includes(cell.variant.id)) {
     figure.classList.add(PICK_CLASS);
   }
+  figure.classList.toggle(LIKED_CLASS, likes.has(cell.variant));
   cell.image.style.width = `${String(cell.image.width * BASE_CSS_SCALE)}px`;
   cell.image.style.height = `${String(cell.image.height * BASE_CSS_SCALE)}px`;
   const caption = document.createElement('figcaption');
+  const like = document.createElement('label');
+  like.className = 'fx-like';
+  const likeBox = document.createElement('input');
+  likeBox.type = 'checkbox';
+  likeBox.checked = likes.has(cell.variant);
+  likeBox.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+  likeBox.addEventListener('change', () => {
+    likes.toggle(cell.variant);
+  });
+  like.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+  like.append(likeBox, ' нравится');
   const title = document.createElement('strong');
   title.textContent = cell.variant.title;
-  caption.append(title);
-  if (round.pick === cell.variant.id) {
+  caption.append(like, title);
+  if (round.picks.includes(cell.variant.id)) {
     caption.append(badge('выбор', PICK_CLASS));
   }
   if (cell.variant.anchor !== null) {
@@ -166,6 +191,69 @@ function mountLightbox(root: HTMLElement): Lightbox {
   };
 }
 
+interface PicksPopup {
+  open: () => void;
+}
+
+function mountPicksPopup(root: HTMLElement, text: () => string, onClear: () => void): PicksPopup {
+  const overlay = document.createElement('div');
+  overlay.className = 'fx-popup';
+  overlay.hidden = true;
+  const box = document.createElement('div');
+  box.className = 'fx-popup-box';
+  const heading = document.createElement('h3');
+  heading.textContent = 'Список для чата';
+  const area = document.createElement('textarea');
+  area.className = 'fx-popup-text';
+  area.readOnly = true;
+  area.rows = 10;
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'fx-popup-copy';
+  copy.textContent = 'Скопировать';
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.textContent = 'Очистить отметки';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.textContent = 'Закрыть';
+  const actions = document.createElement('div');
+  actions.className = 'fx-popup-actions';
+  actions.append(copy, clear, close);
+  box.append(heading, area, actions);
+  overlay.append(box);
+  root.append(overlay);
+  const hide = (): void => {
+    overlay.hidden = true;
+  };
+  copy.addEventListener('click', () => {
+    void navigator.clipboard.writeText(area.value).then(() => {
+      copy.textContent = 'Скопировано';
+      window.setTimeout(() => {
+        copy.textContent = 'Скопировать';
+      }, COPIED_MS);
+    });
+  });
+  clear.addEventListener('click', () => {
+    onClear();
+    area.value = text();
+  });
+  close.addEventListener('click', hide);
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      hide();
+    }
+  });
+  return {
+    open: () => {
+      area.value = text();
+      overlay.hidden = false;
+      area.focus();
+      area.select();
+    },
+  };
+}
+
 export function showReview(root: HTMLElement, round: StyleRound): void {
   const firstScreen = FX_SCREENS[0];
   if (firstScreen === undefined) {
@@ -174,6 +262,45 @@ export function showReview(root: HTMLElement, round: StyleRound): void {
   root.hidden = false;
   root.innerHTML = '';
   root.classList.add('fx-lab', 'fx-review');
+
+  let picks: VariantPick[] = readPicks(localStorage);
+  const pickOf = (variant: StyleVariant): VariantPick => ({ round: round.id, variant: variant.id });
+  const counter = document.createElement('span');
+  counter.className = 'fx-picks-count';
+  const refreshPicks = (): void => {
+    counter.textContent = `выбрано ${String(picks.length)}`;
+    for (const figure of root.querySelectorAll<HTMLElement>('.fx-cell')) {
+      const variantId = figure.dataset.variant ?? '';
+      const isLiked = hasPick(picks, { round: round.id, variant: variantId });
+      figure.classList.toggle(LIKED_CLASS, isLiked);
+      const box = figure.querySelector<HTMLInputElement>('.fx-like input');
+      if (box !== null) {
+        box.checked = isLiked;
+      }
+    }
+  };
+  const likes: Likes = {
+    has: (variant) => hasPick(picks, pickOf(variant)),
+    toggle: (variant) => {
+      picks = togglePick(picks, pickOf(variant));
+      writePicks(localStorage, picks);
+      refreshPicks();
+    },
+  };
+  const popup = mountPicksPopup(
+    root,
+    () => picksText(picks, AIM_LINE_ROUNDS),
+    () => {
+      picks = [];
+      writePicks(localStorage, picks);
+      refreshPicks();
+    },
+  );
+  const collect = document.createElement('button');
+  collect.type = 'button';
+  collect.className = 'fx-collect';
+  collect.textContent = 'Собрать список';
+  collect.addEventListener('click', popup.open);
 
   const header = document.createElement('div');
   header.className = 'lab-controls';
@@ -198,7 +325,7 @@ export function showReview(root: HTMLElement, round: StyleRound): void {
   const labLink = document.createElement('a');
   labLink.href = `/?lab=fx&round=${round.id}`;
   labLink.textContent = 'ползунки';
-  header.append(title, roundLinks, ...screenButtons, labLink);
+  header.append(title, roundLinks, ...screenButtons, labLink, counter, collect);
   const grid = document.createElement('div');
   grid.className = 'fx-review-grid';
   root.append(header, grid);
@@ -242,7 +369,7 @@ export function showReview(root: HTMLElement, round: StyleRound): void {
       }));
       cells.forEach((cell, index) => {
         row.append(
-          cellFigure(cell, round, () => {
+          cellFigure(cell, round, likes, () => {
             lightbox.open(cells, index);
           }),
         );
@@ -251,6 +378,7 @@ export function showReview(root: HTMLElement, round: StyleRound): void {
       requestAnimationFrame(renderRow);
     };
     requestAnimationFrame(renderRow);
+    refreshPicks();
   };
   for (const button of screenButtons) {
     button.addEventListener('click', () => {

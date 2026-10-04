@@ -167,6 +167,33 @@ describe('SettingsPanel', () => {
     expect(store.value.hasAimLine).toBe(false);
   });
 
+  it('вид прицела: список из семи стилей с полосками под флажком линии; выбор пишет хранилище; без линии скрыт', () => {
+    const row = root.querySelector<HTMLElement>('.settings-style');
+    expect(row).not.toBeNull();
+    const aimLineRow = checkFor(AIM_LINE_LABEL).closest('label.settings-check');
+    expect(aimLineRow?.nextElementSibling).toBe(row);
+    const options = Array.from(root.querySelectorAll<HTMLButtonElement>('.style-option'));
+    expect(options).toHaveLength(7);
+    expect(options.map((option) => option.querySelector('.style-name')?.textContent)).toContain('Точки');
+    expect(options.every((option) => option.querySelector('canvas.style-preview') !== null)).toBe(true);
+    const toggleButton = root.querySelector<HTMLButtonElement>('.style-toggle');
+    expect(toggleButton?.querySelector('.style-name')?.textContent).toBe('Тихий трассер');
+    expect(toggleButton?.querySelector('canvas.style-preview')).not.toBeNull();
+    const list = root.querySelector<HTMLElement>('.style-list');
+    expect(list?.hidden).toBe(true);
+    toggleButton?.click();
+    expect(list?.hidden).toBe(false);
+    options.find((option) => option.dataset.style === 'neon')?.click();
+    expect(store.value.aimLineStyle).toBe('neon');
+    expect(list?.hidden).toBe(true);
+    expect(toggleButton?.querySelector('.style-name')?.textContent).toBe('Неон с кольцом');
+    expect(root.querySelector('.style-option.is-selected')?.getAttribute('data-style')).toBe('neon');
+    const aimLine = checkFor(AIM_LINE_LABEL);
+    aimLine.checked = false;
+    aimLine.dispatchEvent(new Event('change'));
+    expect(row?.hidden).toBe(true);
+  });
+
   it('в админ-режиме: группа «Для настройки» внизу с флажком упреждения, отметка уходит в хранилище', () => {
     const adminRoot = document.createElement('aside');
     document.body.append(adminRoot);

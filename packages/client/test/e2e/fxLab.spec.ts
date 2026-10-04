@@ -5,7 +5,8 @@ import { GameServer } from './server.js';
 
 const SPRITE_SETTLE_MS = 700;
 const EXPECTED_SCENES = ['wall-tail', 'on-target', 'lead', 'returning', 'with-bullet'];
-const ROUND_1_VARIANTS = ['current', 'flat', 'cold', 'hot', 'tracer', 'neon'];
+const ROUND_1_VARIANTS = ['current', 'flat', 'tracer', 'neon'];
+const ROUND_1_PICKS = ['tracer', 'neon'];
 const EXPECTED_VARIANTS = ['tracer', 'neon', 'hairline', 'dots', 'tapered', 'grain', 'soft-tracer'];
 const SHEET_ROWS = 3;
 const LIGHTBOX_ZOOM = 4;
@@ -125,12 +126,12 @@ test('опасный хвост на компьютере красноватый
 });
 
 test('параметры запроса задают раунд, сцену, вариант, экран и время', async ({ page }) => {
-  await openLab(page, '&round=1&scene=lead&variant=hot&screen=desktop&t=2');
+  await openLab(page, '&round=1&scene=lead&variant=neon&screen=desktop&t=2');
   const state = await page.evaluate(() => window.tanksFxLab.state());
   expect(state).toMatchObject({
     round: '1',
     scene: 'lead',
-    variant: 'hot',
+    variant: 'neon',
     screen: 'desktop',
     timeS: 2,
     aimLineState: 'lead',
@@ -145,7 +146,7 @@ test('страница просмотра: сетка сцены × вариан
   await page.waitForTimeout(REVIEW_BUILD_MS);
   await expect(page.locator('.fx-cell')).toHaveCount(EXPECTED_SCENES.length * ROUND_1_VARIANTS.length);
   await expect(page.locator('.fx-cell.is-anchor')).toHaveCount(EXPECTED_SCENES.length * 2);
-  await expect(page.locator('.fx-cell.is-pick[data-variant="tracer"]')).toHaveCount(EXPECTED_SCENES.length);
+  await expect(page.locator('.fx-cell.is-pick')).toHaveCount(EXPECTED_SCENES.length * ROUND_1_PICKS.length);
   const cell = page.locator('.fx-cell[data-scene="on-target"][data-variant="neon"]');
   const baseWidth = await cell
     .locator('canvas')
@@ -163,4 +164,30 @@ test('страница просмотра: сетка сцены × вариан
   await expect(page.locator('.fx-lightbox-caption')).toContainText('Трассер');
   await page.keyboard.press('Escape');
   await expect(lightbox).toBeHidden();
+});
+
+test('отметки «нравится»: одна на вариант во всех сценах, переживают перезагрузку, собираются в текст и буфер', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+  const page = await context.newPage();
+  await page.goto(`${server.baseUrl}/?lab=fx&view=review&round=2`);
+  await page.waitForTimeout(REVIEW_BUILD_MS);
+  await page.locator('.fx-cell[data-scene="on-target"][data-variant="dots"] .fx-like input').check();
+  await expect(page.locator('.fx-cell.is-liked[data-variant="dots"]')).toHaveCount(EXPECTED_SCENES.length);
+  await expect(page.locator('.fx-lightbox')).toBeHidden();
+  await expect(page.locator('.fx-picks-count')).toHaveText('выбрано 1');
+  await page.reload();
+  await page.waitForTimeout(REVIEW_BUILD_MS);
+  await expect(page.locator('.fx-picks-count')).toHaveText('выбрано 1');
+  await expect(page.locator('.fx-cell.is-liked[data-variant="dots"]')).toHaveCount(EXPECTED_SCENES.length);
+  await page.locator('.fx-collect').click();
+  const text = page.locator('.fx-popup-text');
+  await expect(text).toBeVisible();
+  await expect(text).toHaveValue(/раунд 2 · dots · Точки/);
+  await page.locator('.fx-popup-copy').click();
+  await expect(page.locator('.fx-popup-copy')).toHaveText('Скопировано');
+  const clipboard = await page.evaluate(() => navigator.clipboard.readText());
+  expect(clipboard).toContain('- раунд 2 · dots · Точки');
+  await context.close();
 });

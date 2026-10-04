@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AimLine } from '../aimLine.js';
-import { AIM_LINE_STYLE, drawAimLine, type AimLineStyle } from './aimLineStyle.js';
+import { PLAIN_AIM_LINE_STYLE, drawAimLine, type AimLineStyle } from './aimLineStyle.js';
 
 // Подменный контекст пишет журнал вызовов и состояние на момент каждого `stroke`/`drawImage`.
 interface StrokeRecord {
@@ -238,7 +238,7 @@ describe('drawAimLine', () => {
   });
 
   it('стиль без штрихов и точек: ни setLineDash, ни drawImage; ядро цветом состояния', () => {
-    drawAimLine(fake.ctx, TWO_SEGMENTS, AIM_LINE_STYLE, { timeS: 0, scale: 1, glow: 1 });
+    drawAimLine(fake.ctx, TWO_SEGMENTS, PLAIN_AIM_LINE_STYLE, { timeS: 0, scale: 1, glow: 1 });
     expect(fake.calls).not.toContain('setLineDash');
     expect(fake.calls).not.toContain('drawImage');
     expect(fake.strokes).toHaveLength(2);

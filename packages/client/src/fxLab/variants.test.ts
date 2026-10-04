@@ -11,14 +11,14 @@ describe('раунды вариантов линии выстрела', () => {
     }
   });
 
-  it('выбор закрытого раунда ссылается на его вариант; текущий раунд — последний и открыт', () => {
-    const closed = AIM_LINE_ROUNDS.slice(0, -1);
-    for (const round of closed) {
-      expect(round.variants.map((variant) => variant.id)).toContain(round.pick);
+  it('выбор каждого раунда ссылается на его варианты; текущий раунд — последний', () => {
+    for (const round of AIM_LINE_ROUNDS) {
+      const ids = round.variants.map((variant) => variant.id);
+      for (const pick of round.picks) {
+        expect(ids).toContain(pick);
+      }
     }
-    const current = currentRound();
-    expect(current.id).toBe(AIM_LINE_ROUNDS[AIM_LINE_ROUNDS.length - 1]?.id);
-    expect(current.pick).toBeNull();
+    expect(currentRound().id).toBe(AIM_LINE_ROUNDS[AIM_LINE_ROUNDS.length - 1]?.id);
   });
 
   it('roundById находит раунд, иначе отдаёт текущий', () => {

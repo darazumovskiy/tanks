@@ -17,6 +17,7 @@ import {
   type SnapshotMessage,
 } from '@tanks/shared/protocol';
 import { computeAimLine, type AimLine, type AimLineState } from './aimLine.js';
+import type { AimLineStyleId } from './render/aimLineStyles.js';
 import { DiagLog } from './diag.js';
 import { InputReader, type ShotContext } from './input.js';
 import { browserInviteActions, renderInvite } from './invite.js';
@@ -72,7 +73,7 @@ function formatFlags(settings: Readonly<Settings>): string {
   const aimLine = formatFlag(settings.hasAimLine);
   const leadHint = formatFlag(settings.hasLeadHint);
   const zoneFire = formatFlag(settings.hasZoneFire);
-  return `flags autoaim=${autoaim} guard=${guard} aimline=${aimLine} leadhint=${leadHint} zonefire=${zoneFire}`;
+  return `flags autoaim=${autoaim} guard=${guard} aimline=${aimLine} leadhint=${leadHint} zonefire=${zoneFire} aimstyle=${settings.aimLineStyle}`;
 }
 
 // Связывает сеть, предсказание, ввод, эффекты, звук и рендер; держит цикл кадров и фиксированный шаг ввода.
@@ -339,6 +340,7 @@ export class Game {
     isZoneFiring: boolean;
     isReversing: boolean;
     aimLine: { state: AimLineState; isReturning: boolean } | null;
+    aimLineStyle: AimLineStyleId;
     rttMs: number;
     serverTick: number;
     me: unknown;
@@ -370,6 +372,7 @@ export class Game {
       isZoneFiring: this.input.isZoneFiring,
       isReversing: this.input.isReversing,
       aimLine: this.aimLine === null ? null : { state: this.aimLine.state, isReturning: this.aimLine.isReturning },
+      aimLineStyle: this.options.settings.aimLineStyle,
       rttMs: this.net.rttMs,
       serverTick: this.net.serverTick,
       me: { ...this.prediction.me, tally: undefined, stats: undefined },

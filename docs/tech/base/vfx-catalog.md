@@ -4,4 +4,4 @@
 
 | Элемент | Полоса | Токен | Сцены лаборатории | Состояние |
 |---|---|---|---|---|
-| Линия выстрела ([aim-line.md](../impl/frontend/aim-line.md)) | телеграф | `AIM_LINE_STYLE` в `packages/client/src/render/aimLineStyle.ts`: цвета состояний, ядро, слои ореола, штрихи, пульс, точки, хвост, засечка, появление | `wall-tail`, `on-target`, `lead`, `returning`, `with-bullet` | раунд 2 (вспомогательный прицел: тонкий или блёклый) — варианты в `fxLab/variants.ts`, страница просмотра `/?lab=fx&view=review&round=2`, выбор Димы ожидается |
+| Линия выстрела ([aim-line.md](../impl/frontend/aim-line.md)) | телеграф | семь стилей игрока в `packages/client/src/render/aimLineStyles.ts` (`AIM_LINE_STYLES`: `soft-tracer` — умолчание, `tracer`, `dots`, `hairline`, `tapered`, `grain`, `neon`); форма токена — `aimLineStyle.ts`: цвета состояний, ядро, слои ореола, штрихи, пульс, точки, сужение, зерно, хвост, засечка, появление | `wall-tail`, `on-target`, `lead`, `returning`, `with-bullet`; просмотр `/?lab=fx&view=review&round=2` | зафиксировано 2026-10-04; эталоны — `packages/client/test/e2e/visual/aimLine.spec.ts` |

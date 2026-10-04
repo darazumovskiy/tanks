@@ -1,3 +1,4 @@
+import { AIM_LINE_STYLES, aimLineStyleById, drawAimLinePreview, type AimLineStyleId } from './render/aimLineStyles.js';
 import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrategy.js';
 import {
   BOOLEAN_FIELDS,
@@ -10,6 +11,36 @@ import {
 
 const MODE_ACTIVE_CLASS = 'is-active';
 const ADMIN_GROUP_TITLE = 'Для настройки';
+const STYLE_FLAG: BooleanSettingKey = 'hasAimLine';
+const STYLE_LABEL = 'Вид прицела';
+const STYLE_OPEN_CLASS = 'is-open';
+const STYLE_SELECTED_CLASS = 'is-selected';
+const PREVIEW_WIDTH = 160;
+const PREVIEW_HEIGHT = 16;
+
+// Полоска-превью стиля: нейтральный вид слева направо в CSS-пикселях, с плотностью экрана.
+function stylePreview(id: AimLineStyleId): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.className = 'style-preview';
+  const ratio = window.devicePixelRatio;
+  canvas.width = Math.round(PREVIEW_WIDTH * ratio);
+  canvas.height = Math.round(PREVIEW_HEIGHT * ratio);
+  canvas.style.width = `${String(PREVIEW_WIDTH)}px`;
+  canvas.style.height = `${String(PREVIEW_HEIGHT)}px`;
+  const ctx = canvas.getContext('2d');
+  if (ctx !== null) {
+    ctx.scale(ratio, ratio);
+    drawAimLinePreview(ctx, aimLineStyleById(id).style, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+  }
+  return canvas;
+}
+
+interface StyleRow {
+  row: HTMLElement;
+  toggle: HTMLButtonElement;
+  list: HTMLElement;
+  options: Map<AimLineStyleId, HTMLButtonElement>;
+}
 
 // Панель настроек в бою: ползунки меняют хранилище сразу, игра читает его каждый тик — результат виден не выходя
 // из боя. Поля камеры и флажки `isTouchOnly` показываются только на устройстве с касанием, поля камеры — только
@@ -22,6 +53,7 @@ export class SettingsPanel {
   >();
   private readonly checks = new Map<BooleanSettingKey, HTMLInputElement>();
   private readonly modeButtons = new Map<PhoneCameraMode, HTMLButtonElement>();
+  private styleRow: StyleRow | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -53,6 +85,9 @@ export class SettingsPanel {
       const isAdminField = field.isAdminOnly === true;
       if (!isHidden && !isAdminField && !this.checks.has(field.key)) {
         root.append(this.buildCheck(field));
+      }
+      if (field.key === STYLE_FLAG) {
+        root.append(this.buildStyleRow());
       }
     }
     if (store.isAdmin) {
@@ -131,6 +166,81 @@ export class SettingsPanel {
     return row;
   }
 
+  // Выпадающий список стилей линии: кнопка показывает выбранный с полоской-превью, список — все стили.
+  private buildStyleRow(): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'settings-row settings-style';
+    const head = document.createElement('div');
+    head.className = 'settings-head';
+    head.textContent = STYLE_LABEL;
+    const picker = document.createElement('div');
+    picker.className = 'style-picker';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'style-toggle';
+    toggle.setAttribute('aria-haspopup', 'listbox');
+    toggle.setAttribute('aria-expanded', 'false');
+    const list = document.createElement('div');
+    list.className = 'style-list';
+    list.setAttribute('role', 'listbox');
+    list.hidden = true;
+    const options = new Map<AimLineStyleId, HTMLButtonElement>();
+    const setOpen = (isOpen: boolean): void => {
+      list.hidden = !isOpen;
+      toggle.classList.toggle(STYLE_OPEN_CLASS, isOpen);
+      toggle.setAttribute('aria-expanded', String(isOpen));
+    };
+    for (const entry of AIM_LINE_STYLES) {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'style-option';
+      option.dataset.style = entry.id;
+      option.setAttribute('role', 'option');
+      const name = document.createElement('span');
+      name.className = 'style-name';
+      name.textContent = entry.title;
+      const hint = document.createElement('span');
+      hint.className = 'style-hint';
+      hint.textContent = entry.hint;
+      option.append(name, stylePreview(entry.id), hint);
+      option.addEventListener('click', () => {
+        this.store.setAimLineStyle(entry.id);
+        setOpen(false);
+        this.refresh();
+      });
+      options.set(entry.id, option);
+      list.append(option);
+    }
+    toggle.addEventListener('click', () => {
+      setOpen(list.hidden);
+    });
+    picker.append(toggle, list);
+    row.append(head, picker);
+    this.styleRow = { row, toggle, list, options };
+    return row;
+  }
+
+  private refreshStyleRow(): void {
+    const styleRow = this.styleRow;
+    if (styleRow === null) {
+      return;
+    }
+    const current = this.store.value.aimLineStyle;
+    styleRow.row.hidden = !this.store.value[STYLE_FLAG];
+    const name = document.createElement('span');
+    name.className = 'style-name';
+    name.textContent = aimLineStyleById(current).title;
+    const chevron = document.createElement('span');
+    chevron.className = 'dropdown-chevron';
+    chevron.textContent = '▾';
+    styleRow.toggle.replaceChildren(name, chevron, stylePreview(current));
+    for (const [id, option] of styleRow.options) {
+      const isSelected = id === current;
+      option.classList.toggle(STYLE_SELECTED_CLASS, isSelected);
+      option.setAttribute('aria-selected', String(isSelected));
+    }
+  }
+
   private buildModeRow(): HTMLElement {
     const row = document.createElement('div');
     row.className = 'settings-row';
@@ -202,6 +312,7 @@ export class SettingsPanel {
     for (const [key, input] of this.checks) {
       input.checked = this.store.value[key];
     }
+    this.refreshStyleRow();
   }
 }
 

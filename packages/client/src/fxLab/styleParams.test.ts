@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { AIM_LINE_STYLE, type AimLineStyle } from '../render/aimLineStyle.js';
+import { PLAIN_AIM_LINE_STYLE, type AimLineStyle } from '../render/aimLineStyle.js';
 import { flattenParams, summarizeStyle, withParam } from './styleParams.js';
 
 const RICH: AimLineStyle = {
-  ...AIM_LINE_STYLE,
+  ...PLAIN_AIM_LINE_STYLE,
   core: { widthPx: 2, alpha: 0.9, highlightAlpha: 1, color: '#ffffff' },
   layers: [
     { widthPx: 14, alpha: 0.07 },
@@ -29,7 +29,7 @@ describe('плоские параметры стиля', () => {
   });
 
   it('у стиля без ядра своего цвета путь core.color отсутствует', () => {
-    expect(flattenParams(AIM_LINE_STYLE).map((param) => param.path)).not.toContain('core.color');
+    expect(flattenParams(PLAIN_AIM_LINE_STYLE).map((param) => param.path)).not.toContain('core.color');
   });
 
   it('withParam меняет копию по пути и не трогает исходник', () => {
@@ -60,6 +60,6 @@ describe('плоские параметры стиля', () => {
     expect(summary).toContain('штрихи 120px/с');
     expect(summary).toContain('точка 14px');
     expect(summary).toContain('пульс 2.5Гц');
-    expect(summarizeStyle(AIM_LINE_STYLE)).toContain('без ореола');
+    expect(summarizeStyle(PLAIN_AIM_LINE_STYLE)).toContain('без ореола');
   });
 });

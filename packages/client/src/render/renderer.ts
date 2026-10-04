@@ -4,7 +4,8 @@ import type { AimLine } from '../aimLine.js';
 import type { WorldView } from '../prediction.js';
 import type { Settings } from '../settings.js';
 import type { StickState } from '../touch.js';
-import { AIM_LINE_STYLE, drawAimLine, type AimLineStyle } from './aimLineStyle.js';
+import { drawAimLine, type AimLineStyle } from './aimLineStyle.js';
+import { aimLineStyleById } from './aimLineStyles.js';
 import { drawTankSprite, TankArt } from './art.js';
 import { edgeMarker, frameCamera, screenToWorld, type Camera } from './camera.js';
 import { createCameraStrategy, type CameraMode, type CameraStrategy } from './cameraStrategy.js';
@@ -119,7 +120,8 @@ export class Renderer {
   private aimLineGlow = 0;
   // Последняя линия остаётся на время угасания после выключения или гибели.
   private lastAimLine: AimLine | null = null;
-  private aimLineStyle: AimLineStyle = AIM_LINE_STYLE;
+  // Стиль из настроек игрока; лаборатория подменяет его напрямую.
+  private aimLineStyleOverride: AimLineStyle | null = null;
 
   // На компьютере поле показывается целиком; на устройстве с касанием камеру ведёт стратегия из настроек.
   // `viewport` — размер холста в CSS-пикселях и плотность; по умолчанию окно браузера (лаборатория задаёт своё).
@@ -158,7 +160,11 @@ export class Renderer {
   }
 
   setAimLineStyle(style: AimLineStyle): void {
-    this.aimLineStyle = style;
+    this.aimLineStyleOverride = style;
+  }
+
+  private aimLineStyle(): AimLineStyle {
+    return this.aimLineStyleOverride ?? aimLineStyleById(this.settings.aimLineStyle).style;
   }
 
   private cameraMode(): CameraMode {
@@ -300,7 +306,8 @@ export class Renderer {
   }
 
   private drawAimLine(hud: HudInfo): void {
-    const step = hud.frameMs / this.aimLineStyle.fadeMs;
+    const style = this.aimLineStyle();
+    const step = hud.frameMs / style.fadeMs;
     this.aimLineGlow = clamp(this.aimLineGlow + (hud.aimLine === null ? -step : step), 0, 1);
     if (hud.aimLine !== null) {
       this.lastAimLine = hud.aimLine;
@@ -309,7 +316,7 @@ export class Renderer {
     if (this.aimLineGlow <= 0 || line === null) {
       return;
     }
-    drawAimLine(this.ctx, line, this.aimLineStyle, {
+    drawAimLine(this.ctx, line, style, {
       timeS: this.effects.time,
       scale: this.camera.scale / this.pixelRatio,
       glow: easeOut(this.aimLineGlow),

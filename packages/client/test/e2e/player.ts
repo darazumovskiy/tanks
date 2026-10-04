@@ -28,6 +28,7 @@ export interface DebugState {
   isZoneFiring: boolean;
   isReversing: boolean;
   aimLine: { state: 'none' | 'onTarget' | 'lead'; isReturning: boolean } | null;
+  aimLineStyle: string;
   me: TankState;
   enemy: Point & { heading: number; isAlive: boolean };
   bullets: number;
@@ -46,6 +47,8 @@ const ROUND_END_TITLE = '#round-end .round-end-title';
 const ROUND_END_MENU = '#round-end .round-end-menu';
 const SETTINGS_PANEL = '#settings';
 const SETTINGS_CHECK_LABEL = '#settings label.settings-check .settings-head span';
+const STYLE_TOGGLE = '#settings .style-toggle';
+const styleOptionSelector = (id: string): string => `#settings .style-option[data-style="${id}"]`;
 const SETTINGS_KEY_CODE = 'KeyO';
 const levelCardSelector = (level: number): string => `#bot-levels .level[data-level="${String(level)}"]`;
 const COPY_BUTTON = '#overlay .overlay-copy';
@@ -203,9 +206,23 @@ export class Player {
 
   // Открывает панель настроек клавишей и возвращает подписи флажков.
   async settingsCheckLabels(): Promise<string[]> {
+    await this.openSettings();
+    return this.page.locator(SETTINGS_CHECK_LABEL).allTextContents();
+  }
+
+  async openSettings(): Promise<void> {
     await this.page.keyboard.press(SETTINGS_KEY_CODE);
     await expect(this.page.locator(SETTINGS_PANEL)).toBeVisible();
-    return this.page.locator(SETTINGS_CHECK_LABEL).allTextContents();
+  }
+
+  // Выбирает вид прицела в выпадающем списке панели настроек (панель должна быть открыта).
+  async pickAimLineStyle(id: string): Promise<void> {
+    await this.page.locator(STYLE_TOGGLE).click();
+    await this.page.locator(styleOptionSelector(id)).click();
+  }
+
+  aimLineStyleToggleText(): Promise<string> {
+    return this.page.locator(`${STYLE_TOGGLE} .style-name`).innerText();
   }
 
   clipboardText(): Promise<string> {

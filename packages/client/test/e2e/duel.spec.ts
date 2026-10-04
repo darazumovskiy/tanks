@@ -470,6 +470,27 @@ test('админ-режим: страница с ?admin=1 показывает �
   await player.close();
 });
 
+test('вид прицела: читается из хранилища, меняется в панели и попадает в журнал', async ({ browser }) => {
+  const player = await Player.open(browser, server.baseUrl, botCode(1), 'Дима', DEFAULT_STATS, {
+    settings: { aimLineStyle: 'dots' },
+  });
+  const start = await player.waitForFight();
+  expect(start.aimLineStyle).toBe('dots');
+  await player.openSettings();
+  expect(await player.aimLineStyleToggleText()).toBe('Точки');
+  await player.pickAimLineStyle('neon');
+  expect(await player.aimLineStyleToggleText()).toBe('Неон с кольцом');
+  const changed = await player.waitForBattle();
+  expect(changed.aimLineStyle).toBe('neon');
+  await until(
+    () => Promise.resolve(server.gameLog(start.gameId).includes('aimstyle=neon') ? true : null),
+    LOG_TIMEOUT_MS,
+    'в журнале нет строки flags с новым видом прицела',
+  );
+  expect(server.gameLog(start.gameId)).toContain('aimstyle=dots');
+  await player.close();
+});
+
 async function expectEnemyMoves(human: Player, start: DebugState, what: string): Promise<void> {
   await until(
     async () => {

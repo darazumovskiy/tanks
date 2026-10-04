@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AIM_LINE_STYLE, type AimLineStyle } from '../render/aimLineStyle.js';
+import { PLAIN_AIM_LINE_STYLE, type AimLineStyle } from '../render/aimLineStyle.js';
 import { mountParamPanel } from './paramPanel.js';
 
 const STYLE: AimLineStyle = {
-  ...AIM_LINE_STYLE,
+  ...PLAIN_AIM_LINE_STYLE,
   core: { widthPx: 2, alpha: 0.9, highlightAlpha: 1, color: '#ffffff' },
   layers: [{ widthPx: 14, alpha: 0.07 }],
 };
@@ -51,7 +51,7 @@ describe('панель параметров', () => {
     expect(onReset).toHaveBeenCalledTimes(1);
     panel.update({ ...STYLE, layers: [{ widthPx: 9, alpha: 0.07 }] });
     expect(inputAt(root, 'layers.0.widthPx').value).toBe('9');
-    panel.update(AIM_LINE_STYLE);
+    panel.update(PLAIN_AIM_LINE_STYLE);
     expect(root.querySelector('input[data-path="layers.0.widthPx"]')).toBeNull();
     expect(root.querySelector('input[data-path="core.widthPx"]')).not.toBeNull();
   });
