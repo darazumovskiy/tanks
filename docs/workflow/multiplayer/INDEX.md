@@ -16,6 +16,7 @@
 | Протокол дуэли и общие поля (`Join`, ошибки) | [tech/impl/backend/protocol.md](../../tech/impl/backend/protocol.md) |
 | Где код рассчитан ровно на двоих | [knowledge/duel-assumptions.md](knowledge/duel-assumptions.md) |
 | Как устроен снимок, сколько весит, прикидка трафика на 50 игроков | [knowledge/snapshot-traffic.md](knowledge/snapshot-traffic.md) |
+| Проверка обмена данными свежим агентом: что найдено и исправлено, что надёжно (снаряды на Safari, нагрузка), что отложено | [knowledge/exchange-review.md](knowledge/exchange-review.md) |
 | Комната по ссылке для офиса | [concept/office-match.md](../../concept/office-match.md) |
 | Что в движке `tank-arena` дуэльное | [research/tank-arena-audit.md](../../research/tank-arena-audit.md) |
 | Как устроены боты сейчас | [tech/impl/backend/bot-ladder.md](../../tech/impl/backend/bot-ladder.md) |

@@ -133,7 +133,14 @@ function shapeWalls(kind: ShapeKind, inner: Inner, random: Random): Wall[] {
   }
 }
 
+function squaredDistance(a: Point, b: Point): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
 // Каждая следующая клетка — самая дальняя от уже выбранных; при равенстве — первая по порядку обхода.
+// Сравниваются квадраты расстояний: Math.hypot в последнем бите на разных движках разный, а карту строит и клиент.
 function spreadCells(cells: readonly Cell[], taken: readonly Cell[], count: number): Cell[] {
   const chosen: Cell[] = [];
   const all = [...taken];
@@ -145,9 +152,7 @@ function spreadCells(cells: readonly Cell[], taken: readonly Cell[], count: numb
         continue;
       }
       const distance =
-        all.length === 0
-          ? 0
-          : Math.min(...all.map((other) => Math.hypot(cell.center.x - other.center.x, cell.center.y - other.center.y)));
+        all.length === 0 ? 0 : Math.min(...all.map((other) => squaredDistance(cell.center, other.center)));
       if (distance > bestDistance) {
         best = cell;
         bestDistance = distance;

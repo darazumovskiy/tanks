@@ -171,6 +171,7 @@ export const ErrorCode = {
   RoomFull: 2,
   BadMessage: 3,
   Idle: 4,
+  Replaced: 5,
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 

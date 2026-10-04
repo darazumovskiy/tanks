@@ -253,6 +253,18 @@ describe('подбитый и возрождение', () => {
     expect(playerOf(match, 1)).toMatchObject({ state: 'alive', deaths: 1 });
   });
 
+  it('места для возрождения нет — ждёт; место освободилось — появляется на следующем тике', () => {
+    const match = openMatch(2, testMap([{ x: 1000, y: 600, radius: 10 }]));
+    expect(match.world.tanks.map((tank) => tank.id)).toEqual([0]);
+    expect(playerOf(match, 1)).toMatchObject({ state: 'waiting', ticksLeft: 0 });
+    run(match, 5);
+    expect(playerOf(match, 1).state).toBe('waiting');
+    put(match, 0, 300, 300);
+    const events = run(match, 1);
+    expect(events.filter((event) => event.type === 'spawn')).toMatchObject([{ type: 'spawn', tank: 1 }]);
+    expect(playerOf(match, 1).state).toBe('alive');
+  });
+
   it('неуязвимость: снаряд гибнет без урона, держится 3 с, свой выстрел снимает сразу', () => {
     const match = openMatch(2);
     const target = put(match, 1, 900, 600);
@@ -310,13 +322,13 @@ describe('финал и конец', () => {
     const toSuddenDeath = run(match, 3 * TICK_RATE - 1);
     expect(toSuddenDeath.filter((event) => event.type === 'suddenDeath')).toHaveLength(1);
     expect(match.isSuddenDeath).toBe(true);
-    expect(playerOf(match, 1).state).toBe('spectator');
+    expect(playerOf(match, 1)).toMatchObject({ state: 'spectator', ticksLeft: 0 });
 
     shoot(match, 3, 300, 860, 0, BULLET_SPEED);
     run(match, 1);
     expect(playerOf(match, 2).state).toBe('wreck');
     const later = run(match, WRECK_TICKS + RESPAWN_TICKS);
-    expect(playerOf(match, 2).state).toBe('spectator');
+    expect(playerOf(match, 2)).toMatchObject({ state: 'spectator', ticksLeft: 0 });
     expect(later.some((event) => event.type === 'spawn' || event.type === 'suddenDeath')).toBe(false);
     expect(match.isOver).toBe(false);
   });

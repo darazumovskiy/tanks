@@ -19,7 +19,7 @@ import {
   type FfaWelcomeMessage,
   type ServerMessage,
 } from '@tanks/shared/protocol';
-import { createApp, type App } from '../src/app.js';
+import { createApp, type App, type AppOptions } from '../src/app.js';
 import { DEFAULT_FFA_OPTIONS, type FfaOptions } from '../src/ffaGame.js';
 import { TestClient } from './client.js';
 import { sleep } from './support.js';
@@ -44,6 +44,7 @@ const TEST_MAP: FfaMap = {
 };
 
 // Лимит ввода не проверяется: при тике в 1 мс он мешал бы скриптам, которые шлют ввод на каждый снимок.
+// Матч 600 с: при тике 1 мс финал наступает через ~10 с настоящего времени и не вмешивается в сценарии.
 const FAST: FfaOptions = {
   ...DEFAULT_FFA_OPTIONS,
   countdownTicks: 3,
@@ -52,7 +53,7 @@ const FAST: FfaOptions = {
   reconnectTicks: 2000,
   idleWarnTicks: 1_000_000,
   idleKickTicks: 2_000_000,
-  matchSeconds: 60,
+  matchSeconds: 600,
   maxInputsPerSecond: 100_000,
   minimum: { 10: 2, 30: 2, 50: 2 },
   mapFor: () => TEST_MAP,
@@ -67,8 +68,8 @@ let app: App | null = null;
 let port = 0;
 const clients: TestClient[] = [];
 
-async function startApp(overrides: Partial<FfaOptions> = {}): Promise<App> {
-  const started = createApp({ ffa: { ...FAST, ...overrides }, tickMs: 1 });
+async function startApp(overrides: Partial<FfaOptions> = {}, appOptions: AppOptions = {}): Promise<App> {
+  const started = createApp({ ffa: { ...FAST, ...overrides }, tickMs: 1, ...appOptions });
   app = started;
   port = await started.listen(0, '127.0.0.1');
   return started;
@@ -146,10 +147,28 @@ function tankOf(snapshot: FfaSnapshotMessage, id: number): FfaTankSnapshot | und
   return snapshot.tanks.find((tank) => tank.id === id);
 }
 
+// Газ чередуется ±0,02: команда меняется каждый раз, и стрелок не попадает под бездействие.
+let jitter = 1;
+
+function fidget(): Action {
+  jitter = -jitter;
+  return { ...STILL, throttle: jitter * 0.02 };
+}
+
 function aimAt(me: FfaTankSnapshot, target: { x: number; y: number }): Action {
   const diff = normalizeAngle(Math.atan2(target.y - me.y, target.x - me.x) - me.turret);
   const turretTurn = Math.max(-1, Math.min(1, diff / (TURRET_RATE * DT)));
-  return { ...STILL, turretTurn, isFiring: Math.abs(diff) < AIM_TOLERANCE };
+  return { ...fidget(), turretTurn, isFiring: Math.abs(diff) < AIM_TOLERANCE };
+}
+
+// Стрелок наводится на живую цель; цели нет — ёрзает, чтобы его не выкинуло за бездействие.
+function hunt(shooter: TestClient, snapshot: FfaSnapshotMessage, shooterId: number, targetId: number): void {
+  const me = tankOf(snapshot, shooterId);
+  const enemy = tankOf(snapshot, targetId);
+  if (me === undefined) {
+    return;
+  }
+  shooter.input(enemy?.isAlive === true ? aimAt(me, enemy) : fidget());
 }
 
 async function fightPair(statsA: Stats = DEFAULT_STATS, statsB: Stats = DEFAULT_STATS): Promise<[Entered, Entered]> {
@@ -190,6 +209,15 @@ describe('вход в общую игру', () => {
     expect(await client.closed()).toBe(true);
   });
 
+  it('код ffaxyz — комната дуэли', async () => {
+    await startApp();
+    const client = await TestClient.connect(port);
+    clients.push(client);
+    client.join('ffaxyz');
+    const welcome = await client.nextOfType(MessageType.Welcome);
+    expect(welcome.roomCode).toBe('ffaxyz');
+  });
+
   it('бот виден в составе у всех', async () => {
     await startApp();
     const human = await enter('ffa10', { nickname: 'Человек' });
@@ -222,10 +250,12 @@ describe('лобби и подбор', () => {
     if (first === undefined || last === undefined) {
       throw new Error('нет игроков');
     }
+    const full = await waitFor(first.client, MessageType.FfaState, (state) => state.players === 10);
+    expect(full).toMatchObject({ phase: FfaPhase.Lobby, ticksLeft: 0 });
     await waitFor(first.client, MessageType.FfaState, (state) => state.phase === FfaPhase.Countdown);
     const start = await first.client.nextOfType(MessageType.FfaMatchStart);
     expect(start.matchIndex).toBe(1);
-    expect(start.durationSeconds).toBe(60);
+    expect(start.durationSeconds).toBe(600);
     const snapshot = await first.client.nextOfType(MessageType.FfaSnapshot);
     expect(snapshot.tanks).toHaveLength(10);
     expect(snapshot.self.state).toBe('alive');
@@ -350,10 +380,8 @@ describe('бой', () => {
       const fresh = await freshSnapshots(shooter.client);
       events.push(...fresh.flatMap((snapshot) => snapshot.events));
       const latest = fresh[fresh.length - 1];
-      const me = latest === undefined ? undefined : tankOf(latest, shooterId);
-      const enemy = latest === undefined ? undefined : tankOf(latest, targetId);
-      if (me !== undefined && enemy?.isAlive === true) {
-        shooter.client.input(aimAt(me, enemy));
+      if (latest !== undefined) {
+        hunt(shooter.client, latest, shooterId, targetId);
       }
     }
     expect(events.find((event) => event.kind === 'death')).toMatchObject({ tank: targetId, by: shooterId });
@@ -384,8 +412,16 @@ describe('бой', () => {
     expect(over.events.some((event) => event.kind === 'matchOver')).toBe(true);
     const results = await waitFor(a.client, MessageType.FfaState, (state) => state.phase === FfaPhase.Results);
     expect(results.matchIndex).toBe(1);
-    const countdown = await waitFor(a.client, MessageType.FfaState, (state) => state.phase === FfaPhase.Countdown);
-    expect(countdown.matchIndex).toBe(2);
+    const duringResults: ServerMessage[] = [];
+    for (;;) {
+      const message = await a.client.next();
+      if (message.type === MessageType.FfaState && message.phase === FfaPhase.Countdown) {
+        expect(message.matchIndex).toBe(2);
+        break;
+      }
+      duringResults.push(message);
+    }
+    expect(duringResults.filter(isSnapshot)).toHaveLength(0);
     const start = await a.client.nextOfType(MessageType.FfaMatchStart);
     expect(start.matchIndex).toBe(2);
     const score = await a.client.nextOfType(MessageType.FfaScore);
@@ -403,9 +439,20 @@ describe('бой', () => {
 });
 
 describe('вход посреди матча', () => {
-  it('во время боя: получает расписание, снаряды, счёт; появляется на поле; состав обновлён у всех', async () => {
-    await startApp();
-    const [a] = await fightPair();
+  it('во время боя: расписание, летящий снаряд в полном списке, счёт со своей строкой; появляется на поле', async () => {
+    // Тик 10 мс: снаряд живёт 4 с игры — 1,2 с настоящего времени, вход успевает застать его в полёте.
+    await startApp({}, { tickMs: 10 });
+    const [a, b] = await fightPair();
+    const born = await waitFor(b.client, MessageType.FfaSnapshot, (snapshot) => {
+      const me = tankOf(snapshot, a.welcome.playerId);
+      const enemy = tankOf(snapshot, b.welcome.playerId);
+      if (me !== undefined && enemy !== undefined) {
+        a.client.input(aimAt(me, { x: 2 * me.x - enemy.x, y: 2 * me.y - enemy.y }));
+        a.client.takeQueued();
+      }
+      return snapshot.births.length > 0;
+    });
+    a.client.input(STILL);
     const late = await enter();
     const roster = await late.client.nextOfType(MessageType.FfaRoster);
     expect(roster.players).toHaveLength(3);
@@ -413,13 +460,16 @@ describe('вход посреди матча', () => {
     expect(state.phase).toBe(FfaPhase.Fight);
     expect(state.ticksLeft).toBeGreaterThan(0);
     await late.client.nextOfType(MessageType.FfaMatchStart);
-    await late.client.nextOfType(MessageType.FfaBullets);
-    await late.client.nextOfType(MessageType.FfaScore);
+    const bullets = await late.client.nextOfType(MessageType.FfaBullets);
+    expect(bullets.bullets.map((bullet) => bullet.id)).toContain(born.births[0]?.id);
+    // На тике входа в матч снимок с появлением уходит раньше счёта.
     await waitFor(late.client, MessageType.FfaSnapshot, (snapshot) =>
       snapshot.events.some((event) => event.kind === 'spawn' && event.tank === late.welcome.playerId),
     );
+    const score = await late.client.nextOfType(MessageType.FfaScore);
+    expect(score.rows.some((row) => row.id === late.welcome.playerId)).toBe(true);
     await waitFor(a.client, MessageType.FfaRoster, (message) => message.players.length === 3);
-  });
+  }, 30_000);
 
   it('во время отсчёта: в снимке «ждёт», с началом боя — на поле', async () => {
     await startApp({ countdownTicks: 400 });
@@ -451,39 +501,77 @@ describe('вход посреди матча', () => {
 });
 
 describe('обрыв и возврат', () => {
-  it('возврат с пропуском в окне: тот же номер и счёт, танк стоял, снимки идут снова', async () => {
+  it('возврат в окне: ехал и оборвался — танк встал; вернулся — тот же танк и счёт, команды с единицы', async () => {
     await startApp();
     const [a, b] = await fightPair();
-    const before = await b.client.nextOfType(MessageType.FfaSnapshot);
-    const parked = tankOf(before, a.welcome.playerId);
+    const id = a.welcome.playerId;
+    for (let i = 0; i < 20; i++) {
+      a.client.input({ throttle: 1 });
+    }
+    await waitFor(b.client, MessageType.FfaSnapshot, (snapshot) => (tankOf(snapshot, id)?.speed ?? 0) > 50);
     a.client.close();
-    await sleep(100);
-    const offline = await b.client.nextOfType(MessageType.FfaSnapshot);
-    expect(tankOf(offline, a.welcome.playerId)).toBeDefined();
+    const stopped = await waitFor(b.client, MessageType.FfaSnapshot, (snapshot) => tankOf(snapshot, id)?.speed === 0);
+    const parked = tankOf(stopped, id);
+    await drain(b.client);
+    const later = await b.client.nextOfType(MessageType.FfaSnapshot);
+    expect(tankOf(later, id)).toMatchObject({ x: parked?.x, y: parked?.y });
+
     const back = await enter('ffa10', { token: a.welcome.token });
-    expect(back.welcome.playerId).toBe(a.welcome.playerId);
-    expect(back.welcome.gameId).toBe(a.welcome.gameId);
+    expect(back.welcome).toMatchObject({ playerId: id, gameId: a.welcome.gameId });
     await back.client.nextOfType(MessageType.FfaRoster);
     const state = await back.client.nextOfType(MessageType.FfaState);
     expect(state.phase).toBe(FfaPhase.Fight);
     await back.client.nextOfType(MessageType.FfaMatchStart);
     await back.client.nextOfType(MessageType.FfaBullets);
-    await back.client.nextOfType(MessageType.FfaScore);
+    const score = await back.client.nextOfType(MessageType.FfaScore);
+    expect(score.rows.some((row) => row.id === id)).toBe(true);
     const resumed = await back.client.nextOfType(MessageType.FfaSnapshot);
     expect(resumed.self.state).toBe('alive');
-    const tank = tankOf(resumed, a.welcome.playerId);
-    expect(tank?.x).toBeCloseTo(parked?.x ?? NaN, 6);
-    expect(tank?.y).toBeCloseTo(parked?.y ?? NaN, 6);
+    expect(tankOf(resumed, id)).toMatchObject({ x: parked?.x, y: parked?.y });
+
+    const seq = back.client.input({ throttle: 1 });
+    expect(seq).toBe(1);
+    const moving = await waitFor(
+      back.client,
+      MessageType.FfaSnapshot,
+      (snapshot) => snapshot.ackSeq === seq && (tankOf(snapshot, id)?.speed ?? 0) > 0,
+    );
+    expect(moving.events.some((event) => event.kind === 'spawn' && event.tank === id)).toBe(false);
   });
 
-  it('возврат с пропуском, пока старое соединение живо: старое закрыто, новое играет', async () => {
+  it('возврат, пока старое соединение живо: старое получает Replaced и закрыто; новое с команды 1 играет', async () => {
     await startApp();
     const [a] = await fightPair();
+    let seq = 0;
+    for (let i = 0; i < 5; i++) {
+      seq = a.client.input({ turretTurn: 1 });
+    }
+    await waitFor(a.client, MessageType.FfaSnapshot, (snapshot) => snapshot.ackSeq === seq);
     const twin = await enter('ffa10', { token: a.welcome.token });
     expect(twin.welcome.playerId).toBe(a.welcome.playerId);
+    const error = await a.client.nextOfType(MessageType.Error);
+    expect(error.code).toBe(ErrorCode.Replaced);
     expect(await a.client.closed()).toBe(true);
-    const seq = twin.client.input({ turretTurn: 1 });
-    await waitFor(twin.client, MessageType.FfaSnapshot, (snapshot) => snapshot.ackSeq === seq);
+    const first = twin.client.input({ throttle: 1 });
+    expect(first).toBe(1);
+    await waitFor(twin.client, MessageType.FfaSnapshot, (snapshot) => snapshot.ackSeq === first);
+  });
+
+  it('молчание дольше порога — сервер закрывает соединение, игрок в окне возврата; Ping держит связь', async () => {
+    await startApp({}, { silenceTimeoutMs: 200 });
+    const [a, b] = await fightPair();
+    const keepAlive = setInterval(() => {
+      a.client.send({ type: MessageType.Ping, clientTime: 0 });
+    }, 50);
+    try {
+      expect(await b.client.closed(3000)).toBe(true);
+      expect(await a.client.closed(400)).toBe(false);
+      await drain(a.client);
+      const snapshot = await a.client.nextOfType(MessageType.FfaSnapshot);
+      expect(tankOf(snapshot, b.welcome.playerId)).toBeDefined();
+    } finally {
+      clearInterval(keepAlive);
+    }
   });
 
   it('чужой пропуск — новый игрок', async () => {
@@ -590,13 +678,34 @@ describe('бездействие', () => {
         target.client.input({ turretTurn: turret });
       }
       const fresh = shooter.client.takeQueued().filter(isSnapshot);
-      const latest = fresh[fresh.length - 1] ?? message;
-      const me = tankOf(latest, shooterId);
-      const enemy = tankOf(latest, targetId);
-      if (me !== undefined && enemy?.isAlive === true) {
-        shooter.client.input(aimAt(me, enemy));
-      }
+      hunt(shooter.client, fresh[fresh.length - 1] ?? message, shooterId, targetId);
     }
     expect(isDead).toBe(true);
+  }, 30_000);
+
+  it('убитый с начатым отсчётом не видит его, пока не возродится', async () => {
+    await startApp({ idleWarnTicks: 30, idleKickTicks: 1_000_000 });
+    const [shooter, target] = await fightPair(SHOOTER, TARGET);
+    const shooterId = shooter.welcome.playerId;
+    const targetId = target.welcome.playerId;
+    let isWarnedAlive = false;
+    let deadSnapshots = 0;
+    const deadline = Date.now() + SCRIPT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const message = await target.client.nextOfType(MessageType.FfaSnapshot, deadline - Date.now());
+      if (message.events.some((event) => event.kind === 'spawn' && event.tank === targetId)) {
+        break;
+      }
+      if (message.self.state === 'alive') {
+        isWarnedAlive = isWarnedAlive || message.self.idleTicksLeft !== null;
+      } else {
+        deadSnapshots++;
+        expect(message.self.idleTicksLeft).toBeNull();
+      }
+      const fresh = shooter.client.takeQueued().filter(isSnapshot);
+      hunt(shooter.client, fresh[fresh.length - 1] ?? message, shooterId, targetId);
+    }
+    expect(isWarnedAlive).toBe(true);
+    expect(deadSnapshots).toBeGreaterThan(0);
   }, 30_000);
 });

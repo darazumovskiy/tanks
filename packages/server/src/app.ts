@@ -32,6 +32,7 @@ export interface AppOptions {
   ffa?: FfaOptions;
   tickMs?: number;
   random?: () => number;
+  silenceTimeoutMs?: number;
 }
 
 export interface App {
@@ -52,6 +53,9 @@ const HEALTH_PATH = '/healthz';
 const METRICS_PATH = '/metrics';
 // Отставание расписания больше этого числа тиков не навёрстывается пачкой — расписание начинается заново.
 const CATCH_UP_LIMIT_TICKS = 5;
+// Клиент шлёт Ping раз в секунду; молчание дольше — связь оборвана без закрытия (полуоткрытый TCP).
+const DEFAULT_SILENCE_TIMEOUT_MS = 10_000;
+const SILENCE_CHECKS_PER_TIMEOUT = 4;
 
 class SocketConnection implements FfaConnection {
   constructor(
@@ -117,10 +121,13 @@ export function createApp(options: AppOptions = {}): App {
     response.end();
   });
   const wss = new WebSocketServer({ noServer: true });
-  const connections = new Set<WebSocket>();
+  // Соединение → когда от него последний раз что-то пришло.
+  const connections = new Map<WebSocket, number>();
+  const silenceTimeoutMs = options.silenceTimeoutMs ?? DEFAULT_SILENCE_TIMEOUT_MS;
   let tick = 0;
   let tickDurationMaxMs = 0;
   let timer: NodeJS.Timeout | undefined;
+  let silenceTimer: NodeJS.Timeout | undefined;
 
   function stats(): AppStats {
     return { rooms: rooms.roomCount, connections: connections.size, tick, tickDurationMaxMs };
@@ -174,9 +181,10 @@ export function createApp(options: AppOptions = {}): App {
   }
 
   wss.on('connection', (socket: WebSocket) => {
-    connections.add(socket);
+    connections.set(socket, performance.now());
     const connection = new SocketConnection(socket, metrics);
     socket.on('message', (data: RawData) => {
+      connections.set(socket, performance.now());
       const bytes = toBytes(data);
       metrics.countMessage('in', bytes.byteLength);
       let message;
@@ -209,6 +217,16 @@ export function createApp(options: AppOptions = {}): App {
       wss.emit('connection', ws, request);
     });
   });
+
+  // Закрытие приходит обычным путём (close → detach): игрок общей игры уходит в окно возврата.
+  function closeSilent(): void {
+    const now = performance.now();
+    for (const [socket, heardAt] of connections) {
+      if (now - heardAt > silenceTimeoutMs) {
+        socket.terminate();
+      }
+    }
+  }
 
   // Тик с компенсацией дрейфа таймера: следующий срок считается от расписания, а не от фактического времени.
   function startLoop(): void {
@@ -245,15 +263,17 @@ export function createApp(options: AppOptions = {}): App {
           // TCP-сокет: address() — всегда AddressInfo.
           const address = server.address() as AddressInfo;
           startLoop();
+          silenceTimer = setInterval(closeSilent, silenceTimeoutMs / SILENCE_CHECKS_PER_TIMEOUT);
           resolve(address.port);
         });
       });
     },
     close(): Promise<void> {
       clearTimeout(timer);
+      clearInterval(silenceTimer);
       metrics.close();
       fileLog?.close();
-      for (const socket of connections) {
+      for (const socket of connections.keys()) {
         socket.terminate();
       }
       wss.close();

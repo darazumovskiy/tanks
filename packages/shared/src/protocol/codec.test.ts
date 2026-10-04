@@ -162,6 +162,7 @@ const samples: Message[] = [
   { type: MessageType.FfaBullets, bullets: ffaSnapshot.births },
   { type: MessageType.FfaBullets, bullets: [] },
   { type: MessageType.Error, code: ErrorCode.Idle, text: 'выкинуло за бездействие' },
+  { type: MessageType.Error, code: ErrorCode.Replaced, text: 'место занято с другого устройства' },
   { type: MessageType.Input, seq: 4294967295, action: { throttle: 1, turn: -1, turretTurn: 0, isFiring: true } },
   { type: MessageType.Ping, clientTime: 1790899403123.456 },
   { type: MessageType.Welcome, side: 1, roomCode: 'xyz' },
@@ -325,6 +326,8 @@ describe('кодек протокола', () => {
     expect(ffaSizeOf('ffa')).toBeNull();
     expect(ffaSizeOf('abc30')).toBeNull();
     expect(isFfaRoomCode('ffa11')).toBe(true);
+    expect(isFfaRoomCode('ffa')).toBe(true);
+    expect(isFfaRoomCode('ffaxyz')).toBe(false);
     expect(isFfaRoomCode('abc')).toBe(false);
   });
 

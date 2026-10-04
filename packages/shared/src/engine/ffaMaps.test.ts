@@ -11,6 +11,18 @@ const EXPECTED: Readonly<Record<FfaSize, { width: number; height: number; areas:
 };
 const GRID_STEP = 10;
 const MIN_AREA_SPACING = 400;
+// Отпечатки карт, одинаковые на V8 и JavaScriptCore (проверено jsc из macOS): клиент строит карту сам,
+// поэтому смена раскладки должна быть заметна.
+const MAP_DIGESTS: Readonly<Record<FfaSize, string>> = { 10: '9cbe8c29', 30: '60cd8e09', 50: '4781d08e' };
+
+function fnv1a(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
 
 // Заливка сетки центров танка: клетка свободна, если круг танка не задевает стен и краёв поля.
 function reachableGrid(map: FfaMap, start: Point): { isReachable: (point: Point) => boolean } {
@@ -101,5 +113,9 @@ describe.each(FFA_SIZES.map((size) => [size] as const))('карта на %i ме
 
   it('повторная сборка даёт ту же карту', () => {
     expect(buildFfaMap(size)).toEqual(map);
+  });
+
+  it('отпечаток совпадает с эталоном', () => {
+    expect(fnv1a(JSON.stringify(map))).toBe(MAP_DIGESTS[size]);
   });
 });

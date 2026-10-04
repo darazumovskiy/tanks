@@ -2,6 +2,7 @@ import {
   createFfaMatch,
   FFA,
   ffaMap,
+  IDLE_ACTION,
   joinFfaMatch,
   leaveFfaMatch,
   stepFfaMatch,
@@ -23,6 +24,7 @@ import {
   FfaPhase,
   gameTimecode,
   MessageType,
+  NO_ID,
   rulesToByte,
   toFfaSnapshotEvent,
   type BulletChanges,
@@ -154,8 +156,9 @@ export class FfaGame {
     return this.players.length;
   }
 
+  // Номера не переиспользуются: когда они кончились, игра новых не берёт — подбор откроет следующую.
   get hasFreeSeat(): boolean {
-    return this.players.length < this.size;
+    return this.players.length < this.size && this.nextPlayerId < NO_ID;
   }
 
   get isEmpty(): boolean {
@@ -175,7 +178,7 @@ export class FfaGame {
       stats: sanitizeStats(stats),
       isBot,
       input: createInputChannel(),
-      appliedAction: { throttle: 0, turn: 0, turretTurn: 0, isFiring: false },
+      appliedAction: { ...IDLE_ACTION },
       idleTicks: 0,
       offlineTicks: 0,
     };
@@ -199,8 +202,17 @@ export class FfaGame {
       return null;
     }
     const previous = player.connection;
+    if (previous !== null) {
+      previous.send(
+        encode({ type: MessageType.Error, code: ErrorCode.Replaced, text: 'место занято с другого устройства' }),
+      );
+    }
     player.connection = connection;
     player.offlineTicks = 0;
+    // Новый клиент считает номера команд с единицы; бездействие до обрыва не переносится.
+    player.input = createInputChannel();
+    player.appliedAction = { ...IDLE_ACTION };
+    player.idleTicks = 0;
     this.writeLog(`rejoin id=${String(player.id)}`);
     this.sendWelcome(player, connection);
     connection.send(encode(this.rosterMessage()));
@@ -350,9 +362,11 @@ export class FfaGame {
   }
 
   private stepFight(match: FfaMatch): void {
+    let hasNewcomer = false;
     for (const player of this.players) {
       if (!match.players.some((candidate) => candidate.id === player.id)) {
         joinFfaMatch(match, { id: player.id, name: player.nickname, stats: player.stats });
+        hasNewcomer = true;
       }
     }
     const actions = new Map<number, Action>();
@@ -372,7 +386,7 @@ export class FfaGame {
       }
     }
     this.sendSnapshots(match, events.map(toFfaSnapshotEvent), changes);
-    this.updateScore(match, events);
+    this.updateScore(match, events, hasNewcomer);
     this.kickIdle();
     if (match.isOver) {
       this.stage = { phase: FfaPhase.Results, match, ticksLeft: this.options.resultsTicks };
@@ -421,12 +435,12 @@ export class FfaGame {
     }
   }
 
-  private updateScore(match: FfaMatch, events: FfaEvent[]): void {
+  private updateScore(match: FfaMatch, events: FfaEvent[], hasNewcomer: boolean): void {
     this.ticksSinceScore++;
     const hasDeath = events.some((event) => event.type === 'death');
     this.hasDamageSinceScore = this.hasDamageSinceScore || events.some((event) => event.type === 'hit');
     const isScoreDue = this.hasDamageSinceScore && this.ticksSinceScore >= SCORE_INTERVAL_TICKS;
-    if (!hasDeath && !isScoreDue) {
+    if (!hasDeath && !isScoreDue && !hasNewcomer) {
       return;
     }
     this.broadcast(this.scoreMessage(match));
@@ -434,14 +448,19 @@ export class FfaGame {
     this.ticksSinceScore = 0;
   }
 
+  // Отсчёт бездействия показывается, только пока танк жив: у мёртвого и зрителя он стоит.
   private selfOf(player: GamePlayer, match: FfaMatch): FfaSelf {
-    const idleTicksLeft =
-      player.idleTicks >= this.options.idleWarnTicks ? this.options.idleKickTicks - player.idleTicks : null;
     const inMatch: FfaPlayer | undefined = match.players.find((candidate) => candidate.id === player.id);
     if (inMatch === undefined) {
-      return { state: 'waiting', ticksLeft: 0, killerId: null, idleTicksLeft };
+      return { state: 'waiting', ticksLeft: 0, killerId: null, idleTicksLeft: null };
     }
-    return { state: inMatch.state, ticksLeft: inMatch.ticksLeft, killerId: inMatch.killerId, idleTicksLeft };
+    const isWarned = inMatch.state === 'alive' && player.idleTicks >= this.options.idleWarnTicks;
+    return {
+      state: inMatch.state,
+      ticksLeft: inMatch.ticksLeft,
+      killerId: inMatch.killerId,
+      idleTicksLeft: isWarned ? this.options.idleKickTicks - player.idleTicks : null,
+    };
   }
 
   private sendSnapshots(match: FfaMatch, events: FfaSnapshotEvent[], changes: BulletChanges): void {
@@ -483,13 +502,24 @@ export class FfaGame {
     const stage = this.stage;
     switch (stage.phase) {
       case FfaPhase.Lobby:
-        return this.players.length >= this.minimum ? this.options.lobbyQuietTicks - stage.quietTicks : null;
+        return this.lobbyTicksLeft(stage.quietTicks);
       case FfaPhase.Fight:
         return Math.round(stage.match.durationSeconds * TICK_RATE) - stage.match.world.tick;
       case FfaPhase.Countdown:
       case FfaPhase.Results:
         return stage.ticksLeft;
     }
+  }
+
+  // Полная игра стартует на ближайшем тике; без минимума старт не назначен.
+  private lobbyTicksLeft(quietTicks: number): number | null {
+    if (this.players.length >= this.size) {
+      return 0;
+    }
+    if (this.players.length < this.minimum) {
+      return null;
+    }
+    return this.options.lobbyQuietTicks - quietTicks;
   }
 
   private rosterMessage(): FfaRosterMessage {

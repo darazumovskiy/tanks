@@ -71,6 +71,16 @@ describe('выбор точки возрождения', () => {
     }
   });
 
+  it('область заходит за край поля — место всегда внутри поля', () => {
+    const edge: SpawnArea = { x: 30, y: 30, radius: 90 };
+    for (let seed = 1; seed <= 50; seed++) {
+      const place = chooseSpawn(worldWith([]), [edge], createRandom(seed));
+      expect(place).not.toBeNull();
+      expect(place?.x).toBeGreaterThanOrEqual(TANK_RADIUS);
+      expect(place?.y).toBeGreaterThanOrEqual(TANK_RADIUS);
+    }
+  });
+
   it('места нет — null; место освободилось — появление', () => {
     const tiny: SpawnArea = { x: 1000, y: 600, radius: 10 };
     const sitter = enemyAt(1, 1000, 600);

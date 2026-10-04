@@ -183,7 +183,11 @@ function advancePlayer(match: FfaMatch, player: FfaPlayer, events: FfaEvent[]): 
       return;
     }
     match.world.tanks = match.world.tanks.filter((tank) => tank.id !== player.id);
-    player.state = match.isSuddenDeath ? 'spectator' : 'waiting';
+    if (match.isSuddenDeath) {
+      becomeSpectator(player);
+      return;
+    }
+    player.state = 'waiting';
     player.ticksLeft = RESPAWN_WAIT_TICKS;
     return;
   }
@@ -198,12 +202,17 @@ function advancePlayer(match: FfaMatch, player: FfaPlayer, events: FfaEvent[]): 
   }
 }
 
+function becomeSpectator(player: FfaPlayer): void {
+  player.state = 'spectator';
+  player.ticksLeft = 0;
+}
+
 function startSuddenDeath(match: FfaMatch, events: FfaEvent[]): void {
   match.isSuddenDeath = true;
   events.push({ type: 'suddenDeath' });
   for (const player of match.players) {
     if (player.state === 'waiting') {
-      player.state = 'spectator';
+      becomeSpectator(player);
     }
   }
 }
