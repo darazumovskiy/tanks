@@ -86,13 +86,13 @@ describe('SettingsPanel', () => {
     expect(new SettingsStore(localStorage, DEFAULT_SETTINGS, PLAYER).value.stickRadiusPx).toBe(90);
   });
 
-  it('ползунок «Разворот» стоит на 0,5 и пишет порог газа в хранилище', () => {
+  it('ползунок «Разворот» стоит на 0,8 и пишет порог газа в хранилище', () => {
     const pivot = rangeFor('pivotThrottle');
-    expect(pivot.value).toBe('0.5');
-    pivot.value = '0.8';
+    expect(pivot.value).toBe('0.8');
+    pivot.value = '0.3';
     pivot.dispatchEvent(new Event('input'));
-    expect(store.value.pivotThrottle).toBe(0.8);
-    expect(localStorage.getItem('tanks.settings')).toContain('"pivotThrottle":0.8');
+    expect(store.value.pivotThrottle).toBe(0.3);
+    expect(localStorage.getItem('tanks.settings')).toContain('"pivotThrottle":0.3');
   });
 
   it('флажок графика кадров', () => {

@@ -59,7 +59,7 @@ export function defaultSettings(isTouchDevice: boolean): Settings {
   return {
     stickRadiusPx: 40,
     deadZone: 0.07,
-    pivotThrottle: 0.5,
+    pivotThrottle: 0.8,
     hasFireRing: false,
     fireRing: 0.89,
     hasAutoAim: isTouchDevice,
