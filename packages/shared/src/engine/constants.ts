@@ -16,6 +16,28 @@ export const WALL_SLIDE_MAX_PERCENT = 100;
 export const WALL_BUMP_MIN_DROP = 25;
 export const KIT = { radius: 16, heal: 50, firstSpawn: 15, respawn: 20 } as const;
 export const ZONE = { startShrink: 60, endShrink: 100, finalRadius: 170, damagePerSecond: 20 } as const;
+// Зона начинает сжиматься с круга, описанного вокруг поля, с запасом.
+export const ZONE_START_MARGIN = 60;
+// Сжатие зоны — доли длительности матча: при 120 с это 45–105 с.
+export const FFA = {
+  matchSeconds: 120,
+  respawnSeconds: 4,
+  wreckSeconds: 2,
+  shieldSeconds: 3,
+  zoneStartShare: 0.375,
+  zoneEndShare: 0.875,
+  finalRadiusPerRootPlayer: 120,
+  suddenDeathShare: 0.5,
+  spawnLookaheadSeconds: 5,
+  efficiencyTankWeight: 150,
+} as const;
+export const SPAWN = {
+  scoreCap: 1500,
+  lineOfFirePenalty: 1000,
+  nearBestShare: 0.8,
+  placementTries: 24,
+  tankGap: 8,
+} as const;
 export const STAT_POINTS = 10;
 export const STAT_MAX = 5;
 export const STAT_KEYS = ['armor', 'engine', 'gun', 'reload'] as const;

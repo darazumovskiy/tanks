@@ -53,7 +53,7 @@ export function isClear(walls: readonly Wall[], x1: number, y1: number, x2: numb
 
 // Нормаль преграды, от которой отскочил снаряд в точке (x, y): край поля или ближайшая стена.
 export function wallNormalAt(walls: readonly Wall[], x: number, y: number): Normal {
-  const contact = boundsHit(x, y, BULLET_RADIUS + BOUNDS_CONTACT_PAD);
+  const contact = boundsHit(x, y, BULLET_RADIUS + BOUNDS_CONTACT_PAD, ARENA);
   if (contact !== null) {
     return { nx: contact.nx, ny: contact.ny };
   }

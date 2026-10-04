@@ -1,5 +1,5 @@
-import { ARENA, BULLET_LIFETIME, BULLET_RADIUS, MUZZLE_OFFSET, TANK_RADIUS } from './constants.js';
-import { boundsHit, circleRect, type Wall } from './geometry.js';
+import { BULLET_LIFETIME, BULLET_RADIUS, MUZZLE_OFFSET, TANK_RADIUS } from './constants.js';
+import { boundsHit, circleRect, type Field, type Wall } from './geometry.js';
 import type { Point } from './maps.js';
 
 export interface ShotSegment {
@@ -24,8 +24,6 @@ interface RayHit {
 const NO_HIT: RayHit = { distance: Infinity, nx: 0, ny: 0 };
 // Попадание ближе этого к началу луча — та же поверхность, от которой снаряд только что отскочил.
 const MIN_HIT_DISTANCE = 1e-6;
-const W = ARENA.width;
-const H = ARENA.height;
 
 function closer(a: RayHit, b: RayHit): RayHit {
   return b.distance < a.distance ? b : a;
@@ -85,43 +83,43 @@ function wallHit(wall: Wall, ox: number, oy: number, dx: number, dy: number): Ra
 }
 
 // Ближайшая преграда по лучу: края поля, затем стены — в том же порядке, что проверяет `stepBullet`.
-function nearestHit(walls: readonly Wall[], ox: number, oy: number, dx: number, dy: number): RayHit {
+function nearestHit(field: Field, ox: number, oy: number, dx: number, dy: number): RayHit {
   let best = NO_HIT;
   if (dx < 0) {
     best = closer(best, { distance: planeDistance(ox, dx, BULLET_RADIUS), nx: 1, ny: 0 });
   }
   if (dx > 0) {
-    best = closer(best, { distance: planeDistance(ox, dx, W - BULLET_RADIUS), nx: -1, ny: 0 });
+    best = closer(best, { distance: planeDistance(ox, dx, field.width - BULLET_RADIUS), nx: -1, ny: 0 });
   }
   if (dy < 0) {
     best = closer(best, { distance: planeDistance(oy, dy, BULLET_RADIUS), nx: 0, ny: 1 });
   }
   if (dy > 0) {
-    best = closer(best, { distance: planeDistance(oy, dy, H - BULLET_RADIUS), nx: 0, ny: -1 });
+    best = closer(best, { distance: planeDistance(oy, dy, field.height - BULLET_RADIUS), nx: 0, ny: -1 });
   }
-  for (const wall of walls) {
+  for (const wall of field.walls) {
     best = closer(best, wallHit(wall, ox, oy, dx, dy));
   }
   return best;
 }
 
-function isMuzzleBlocked(walls: readonly Wall[], x: number, y: number): boolean {
-  if (boundsHit(x, y, BULLET_RADIUS) !== null) {
+function isMuzzleBlocked(field: Field, x: number, y: number): boolean {
+  if (boundsHit(x, y, BULLET_RADIUS, field) !== null) {
     return true;
   }
-  return walls.some((wall) => circleRect(x, y, BULLET_RADIUS, wall) !== null);
+  return field.walls.some((wall) => circleRect(x, y, BULLET_RADIUS, wall) !== null);
 }
 
-export function traceShot(walls: readonly Wall[], shooter: Point, turret: number, bulletSpeed: number): ShotTrace {
+export function traceShot(field: Field, shooter: Point, turret: number, bulletSpeed: number): ShotTrace {
   const dx = Math.cos(turret);
   const dy = Math.sin(turret);
   const muzzleX = shooter.x + dx * MUZZLE_OFFSET;
   const muzzleY = shooter.y + dy * MUZZLE_OFFSET;
-  if (isMuzzleBlocked(walls, muzzleX, muzzleY)) {
+  if (isMuzzleBlocked(field, muzzleX, muzzleY)) {
     return { segments: [] };
   }
   const range = bulletSpeed * BULLET_LIFETIME;
-  const first = nearestHit(walls, muzzleX, muzzleY, dx, dy);
+  const first = nearestHit(field, muzzleX, muzzleY, dx, dy);
   if (first.distance >= range) {
     return { segments: [{ x1: muzzleX, y1: muzzleY, x2: muzzleX + dx * range, y2: muzzleY + dy * range }] };
   }
@@ -131,7 +129,7 @@ export function traceShot(walls: readonly Wall[], shooter: Point, turret: number
   const backX = dx - 2 * dot * first.nx;
   const backY = dy - 2 * dot * first.ny;
   const remaining = range - first.distance;
-  const second = nearestHit(walls, bounceX, bounceY, backX, backY);
+  const second = nearestHit(field, bounceX, bounceY, backX, backY);
   const length = Math.min(remaining, second.distance);
   return {
     segments: [
@@ -170,11 +168,11 @@ export function isTraceReturning(segments: readonly ShotSegment[], shooter: Poin
 }
 
 export function isShotReturning(
-  walls: readonly Wall[],
+  field: Field,
   shooter: Point,
   turret: number,
   bulletSpeed: number,
   target: Point | null,
 ): boolean {
-  return isTraceReturning(traceShot(walls, shooter, turret, bulletSpeed).segments, shooter, target);
+  return isTraceReturning(traceShot(field, shooter, turret, bulletSpeed).segments, shooter, target);
 }

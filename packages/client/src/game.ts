@@ -3,10 +3,10 @@ import {
   DT,
   isShotReturning,
   type Action,
+  type Field,
   type RoundRules,
   type Side,
   type Stats,
-  type Wall,
 } from '@tanks/shared/engine';
 import {
   botLevelOf,
@@ -260,13 +260,13 @@ export class Game {
   }
 
   // Зона считается только при включённом флаге: без него трассировка пути на каждом тике не нужна.
-  private shotContextFor(prediction: Prediction, walls: readonly Wall[], enemy: InterpolatedTank | null): ShotContext {
+  private shotContextFor(prediction: Prediction, field: Field, enemy: InterpolatedTank | null): ShotContext {
     const me = prediction.me;
     const bulletSpeed = me.stats.bulletSpeed;
     const isInZone =
       this.options.settings.hasZoneFire &&
-      isShotInZone({ walls, shooter: { x: me.x, y: me.y, turret: me.turret }, bulletSpeed, enemy });
-    return { isReturning: isShotReturning(walls, me, me.turret, bulletSpeed, enemy), isInZone };
+      isShotInZone({ field, shooter: { x: me.x, y: me.y, turret: me.turret }, bulletSpeed, enemy });
+    return { isReturning: isShotReturning(field, me, me.turret, bulletSpeed, enemy), isInZone };
   }
 
   private aimLineFor(
@@ -281,7 +281,7 @@ export class Game {
       return null;
     }
     return computeAimLine({
-      walls: view.round.map.walls,
+      field: view.round.map,
       shooter: { x: me.x, y: me.y, turret: me.turret },
       bulletSpeed: prediction.me.stats.bulletSpeed,
       enemy,
@@ -469,10 +469,10 @@ export class Game {
     this.accumulator += elapsed;
     const frameView = prediction.view(now);
     const enemy = this.visibleEnemy(prediction, frameView, side);
-    const walls = frameView.round.map.walls;
+    const field = frameView.round.map;
     while (this.accumulator >= TICK_MS) {
       this.accumulator -= TICK_MS;
-      const action = quantizeAction(this.input.read(prediction.me, this.shotContextFor(prediction, walls, enemy)));
+      const action = quantizeAction(this.input.read(prediction.me, this.shotContextFor(prediction, field, enemy)));
       const bulletsBefore = prediction.myBulletCount;
       const seq = prediction.predict(action);
       this.lastInputSeq = seq;

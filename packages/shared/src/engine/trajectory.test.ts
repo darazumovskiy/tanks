@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BULLET_LIFETIME, BULLET_RADIUS, DT, MUZZLE_OFFSET, TANK_RADIUS } from './constants.js';
-import type { Wall } from './geometry.js';
+import { ARENA, BULLET_LIFETIME, BULLET_RADIUS, DT, MUZZLE_OFFSET, TANK_RADIUS } from './constants.js';
+import type { Field, Wall } from './geometry.js';
 import { MAPS, type Point } from './maps.js';
 import { createRound, IDLE_ACTION, stepRound, type RoundEvent } from './round.js';
 import { isSegmentWithin, isShotReturning, isTraceReturning, traceShot, type ShotSegment } from './trajectory.js';
@@ -11,8 +11,12 @@ const DEFAULT_SPEED = 550;
 const SELF_HIT_RADIUS = TANK_RADIUS + BULLET_RADIUS;
 const deg = (value: number): number => (value * Math.PI) / 180;
 
-function polygonWalls(): Wall[] {
-  return MAPS[POLYGON]?.walls ?? [];
+function fieldWith(walls: Wall[]): Field {
+  return { width: ARENA.width, height: ARENA.height, walls };
+}
+
+function polygonWalls(): Field {
+  return fieldWith(MAPS[POLYGON]?.walls ?? []);
 }
 
 function length(segment: ShotSegment): number {
@@ -56,7 +60,7 @@ describe('traceShot', () => {
   });
 
   it('дуло за краем поля — снаряда нет', () => {
-    expect(traceShot([], { x: 20, y: 450 }, Math.PI, DEFAULT_SPEED).segments).toHaveLength(0);
+    expect(traceShot(fieldWith([]), { x: 20, y: 450 }, Math.PI, DEFAULT_SPEED).segments).toHaveLength(0);
   });
 
   it('дальность полёта обрывает второй отрезок до возврата', () => {
@@ -80,9 +84,9 @@ describe('traceShot', () => {
 
   it('угол стены скруглён на радиус снаряда: нормаль радиальная', () => {
     const wall: Wall = { x: 300, y: 300, w: 100, h: 100 };
-    const missing = traceShot([wall], { x: 200, y: 290 }, 0, DEFAULT_SPEED);
+    const missing = traceShot(fieldWith([wall]), { x: 200, y: 290 }, 0, DEFAULT_SPEED);
     expect(missing.segments[0]?.x2).toBeGreaterThan(400);
-    const grazing = traceShot([wall], { x: 200, y: 297 }, 0, DEFAULT_SPEED);
+    const grazing = traceShot(fieldWith([wall]), { x: 200, y: 297 }, 0, DEFAULT_SPEED);
     expect(grazing.segments[0]?.x2).toBeCloseTo(296, 6);
     const back = grazing.segments[1] ?? { x1: 0, y1: 0, x2: 0, y2: 0 };
     const backLength = length(back);
@@ -92,7 +96,7 @@ describe('traceShot', () => {
 
   it('грань стены по направлению луча: отскок от верхней грани', () => {
     const wall: Wall = { x: 300, y: 300, w: 100, h: 100 };
-    const { segments } = traceShot([wall], { x: 350, y: 200 }, Math.PI / 2, DEFAULT_SPEED);
+    const { segments } = traceShot(fieldWith([wall]), { x: 350, y: 200 }, Math.PI / 2, DEFAULT_SPEED);
     expect(segments[0]?.y2).toBeCloseTo(300 - BULLET_RADIUS, 6);
     expect(segments[1]?.y2).toBeLessThan(200);
   });
@@ -211,7 +215,7 @@ function simulateSelfHit(
   ]);
   Object.assign(round.tanks[0], { x: shooter.x, y: shooter.y, turret });
   Object.assign(round.tanks[1], { x: enemy.x, y: enemy.y });
-  const isSelfHit = (event: RoundEvent): boolean => event.type === 'hit' && event.cause === 'self' && event.side === 0;
+  const isSelfHit = (event: RoundEvent): boolean => event.type === 'hit' && event.cause === 'self' && event.tank === 0;
   for (let tick = 0; tick < MAX_FLIGHT_TICKS; tick++) {
     const events = stepRound(round, [{ ...IDLE_ACTION, isFiring: tick === 0 }, IDLE_ACTION]);
     if (events.some(isSelfHit)) {
@@ -230,7 +234,7 @@ describe('согласованность с движком', () => {
     let safe = 0;
     let borderline = 0;
     for (const { mapIndex, spot } of SHOOTER_SPOTS) {
-      const walls = MAPS[mapIndex]?.walls ?? [];
+      const walls = fieldWith(MAPS[mapIndex]?.walls ?? []);
       for (const stats of GUN_STATS) {
         const bulletSpeed = 450 + 50 * stats.gun;
         for (let angle = 0; angle < 360; angle += ANGLE_STEP_DEG) {

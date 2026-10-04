@@ -1,19 +1,33 @@
 import {
+  FFA_SIZES,
   STAT_KEYS,
   WALL_SLIDE_MAX_PERCENT,
   type Action,
   type EndReason,
+  type FfaPlayerState,
+  type FfaSize,
   type RoundRules,
   type Side,
   type Stats,
+  type ZonePlan,
 } from '../engine/index.js';
 import { ByteReader, ByteWriter } from './bytes.js';
 import {
   ErrorCode,
+  FfaPhase,
   MESSAGE_TYPE_NAMES,
   MessageType,
   type BulletSnapshot,
   type ClientMessage,
+  type FfaBounce,
+  type FfaBulletSnapshot,
+  type FfaEventKind,
+  type FfaRosterEntry,
+  type FfaScoreRow,
+  type FfaSelf,
+  type FfaSnapshotEvent,
+  type FfaSnapshotMessage,
+  type FfaTankSnapshot,
   type KitSnapshot,
   type Message,
   type RoomSlot,
@@ -26,6 +40,28 @@ import {
 
 const AXIS_SCALE = 127;
 const NO_SIDE = 255;
+// Номер игрока в общей игре — u16; это значение означает «нет».
+export const NO_ID = 0xffff;
+const FFA_PHASES: readonly FfaPhase[] = [FfaPhase.Lobby, FfaPhase.Countdown, FfaPhase.Fight, FfaPhase.Results];
+const FFA_PLAYER_STATES: readonly FfaPlayerState[] = ['alive', 'wreck', 'waiting', 'spectator'];
+const FFA_EVENT_KINDS: readonly FfaEventKind[] = [
+  'shot',
+  'impact',
+  'ricochet',
+  'fizzle',
+  'clash',
+  'hit',
+  'shield',
+  'death',
+  'bump',
+  'kitSpawn',
+  'pickup',
+  'zoneStart',
+  'spawn',
+  'suddenDeath',
+  'matchOver',
+];
+const ERROR_CODES: readonly ErrorCode[] = Object.values(ErrorCode);
 const END_REASONS: readonly EndReason[] = ['kill', 'time'];
 const EVENT_KINDS: readonly SnapshotEventKind[] = [
   'shot',
@@ -206,10 +242,187 @@ function readTankInfo(reader: ByteReader): RoundTankInfo {
 
 function readErrorCode(reader: ByteReader): ErrorCode {
   const value = reader.u8();
-  if (value !== ErrorCode.BadProtocolVersion && value !== ErrorCode.RoomFull && value !== ErrorCode.BadMessage) {
+  const code = ERROR_CODES.find((candidate) => candidate === value);
+  if (code === undefined) {
     throw new RangeError('неизвестный код ошибки');
   }
-  return value;
+  return code;
+}
+
+function writeOptionalId(writer: ByteWriter, id: number | null): void {
+  writer.u16(id ?? NO_ID);
+}
+
+function readOptionalId(reader: ByteReader): number | null {
+  const value = reader.u16();
+  return value === NO_ID ? null : value;
+}
+
+function listItem<T>(list: readonly T[], index: number, what: string): T {
+  const item = list[index];
+  if (item === undefined) {
+    throw new RangeError(`недопустимое значение: ${what}`);
+  }
+  return item;
+}
+
+function readFfaSize(reader: ByteReader): FfaSize {
+  const value = reader.u8();
+  const size = FFA_SIZES.find((candidate) => candidate === value);
+  if (size === undefined) {
+    throw new RangeError(`недопустимый размер игры ${String(value)}`);
+  }
+  return size;
+}
+
+function writeZone(writer: ByteWriter, zone: ZonePlan): void {
+  writer.f64(zone.startRadius).f64(zone.finalRadius).f64(zone.startShrink).f64(zone.endShrink);
+}
+
+function readZone(reader: ByteReader): ZonePlan {
+  return { startRadius: reader.f64(), finalRadius: reader.f64(), startShrink: reader.f64(), endShrink: reader.f64() };
+}
+
+function writeRosterEntry(writer: ByteWriter, entry: FfaRosterEntry): void {
+  writer.u16(entry.id).string(entry.nickname);
+  writeStats(writer, entry.stats);
+  writer.bool(entry.isBot);
+}
+
+function readRosterEntry(reader: ByteReader): FfaRosterEntry {
+  return { id: reader.u16(), nickname: reader.string(), stats: readStats(reader), isBot: reader.bool() };
+}
+
+function writeSelf(writer: ByteWriter, self: FfaSelf): void {
+  writer.u8(FFA_PLAYER_STATES.indexOf(self.state)).u16(self.ticksLeft);
+  writeOptionalId(writer, self.killerId);
+  writeOptionalId(writer, self.idleTicksLeft);
+}
+
+function readSelf(reader: ByteReader): FfaSelf {
+  return {
+    state: listItem(FFA_PLAYER_STATES, reader.u8(), 'состояние игрока'),
+    ticksLeft: reader.u16(),
+    killerId: readOptionalId(reader),
+    idleTicksLeft: readOptionalId(reader),
+  };
+}
+
+function writeFfaTank(writer: ByteWriter, tank: FfaTankSnapshot): void {
+  writer.u16(tank.id);
+  writeTank(writer, tank);
+  writer.f64(tank.shieldLeft);
+}
+
+function readFfaTank(reader: ByteReader): FfaTankSnapshot {
+  const id = reader.u16();
+  return { id, ...readTank(reader), shieldLeft: reader.f64() };
+}
+
+function writeFfaBullet(writer: ByteWriter, bullet: FfaBulletSnapshot): void {
+  writer.u32(bullet.id).u16(bullet.owner);
+  writer.f64(bullet.x).f64(bullet.y).f64(bullet.vx).f64(bullet.vy);
+  writer.u8(bullet.bouncesLeft).bool(bullet.hasBounced).f64(bullet.age);
+}
+
+function readFfaBullet(reader: ByteReader): FfaBulletSnapshot {
+  return {
+    id: reader.u32(),
+    owner: reader.u16(),
+    x: reader.f64(),
+    y: reader.f64(),
+    vx: reader.f64(),
+    vy: reader.f64(),
+    bouncesLeft: reader.u8(),
+    hasBounced: reader.bool(),
+    age: reader.f64(),
+  };
+}
+
+function writeBounce(writer: ByteWriter, bounce: FfaBounce): void {
+  writer.u32(bounce.id).f64(bounce.x).f64(bounce.y).f64(bounce.vx).f64(bounce.vy);
+}
+
+function readBounce(reader: ByteReader): FfaBounce {
+  return { id: reader.u32(), x: reader.f64(), y: reader.f64(), vx: reader.f64(), vy: reader.f64() };
+}
+
+function writeFfaEvent(writer: ByteWriter, event: FfaSnapshotEvent): void {
+  writer.u8(FFA_EVENT_KINDS.indexOf(event.kind));
+  writeOptionalId(writer, event.tank);
+  writeOptionalId(writer, event.by);
+  writer.f32(event.x).f32(event.y).f32(event.value).f32(event.dx).f32(event.dy).u8(event.flags);
+}
+
+function readFfaEvent(reader: ByteReader): FfaSnapshotEvent {
+  return {
+    kind: listItem(FFA_EVENT_KINDS, reader.u8(), 'вид события'),
+    tank: readOptionalId(reader),
+    by: readOptionalId(reader),
+    x: reader.f32(),
+    y: reader.f32(),
+    value: reader.f32(),
+    dx: reader.f32(),
+    dy: reader.f32(),
+    flags: reader.u8(),
+  };
+}
+
+function writeScoreRow(writer: ByteWriter, row: FfaScoreRow): void {
+  writer.u16(row.id).u16(row.kills).u16(row.deaths).f32(row.damageDealt).f32(row.damageTaken);
+}
+
+function readScoreRow(reader: ByteReader): FfaScoreRow {
+  return {
+    id: reader.u16(),
+    kills: reader.u16(),
+    deaths: reader.u16(),
+    damageDealt: reader.f32(),
+    damageTaken: reader.f32(),
+  };
+}
+
+function writeList<T>(writer: ByteWriter, items: readonly T[], writeItem: (writer: ByteWriter, item: T) => void): void {
+  writer.u16(items.length);
+  for (const item of items) {
+    writeItem(writer, item);
+  }
+}
+
+function readList<T>(reader: ByteReader, readItem: (reader: ByteReader) => T): T[] {
+  const count = reader.u16();
+  const items: T[] = [];
+  for (let i = 0; i < count; i++) {
+    items.push(readItem(reader));
+  }
+  return items;
+}
+
+function writeFfaSnapshot(writer: ByteWriter, message: FfaSnapshotMessage): void {
+  writer.u32(message.tick).u32(message.gameTick).u32(message.ackSeq);
+  writeSelf(writer, message.self);
+  writeList(writer, message.tanks, writeFfaTank);
+  writeList(writer, message.kits, writeKit);
+  writeList(writer, message.events, writeFfaEvent);
+  writeList(writer, message.births, writeFfaBullet);
+  writeList(writer, message.bounces, writeBounce);
+  writeList(writer, message.deaths, (target, id) => target.u32(id));
+}
+
+function readFfaSnapshot(reader: ByteReader): FfaSnapshotMessage {
+  return {
+    type: MessageType.FfaSnapshot,
+    tick: reader.u32(),
+    gameTick: reader.u32(),
+    ackSeq: reader.u32(),
+    self: readSelf(reader),
+    tanks: readList(reader, readFfaTank),
+    kits: readList(reader, readKit),
+    events: readList(reader, readFfaEvent),
+    births: readList(reader, readFfaBullet),
+    bounces: readList(reader, readBounce),
+    deaths: readList(reader, (source) => source.u32()),
+  };
 }
 
 export function encode(message: Message): Uint8Array {
@@ -219,6 +432,7 @@ export function encode(message: Message): Uint8Array {
     case MessageType.Join:
       writer.u8(message.protocolVersion).string(message.roomCode).string(message.nickname);
       writeStats(writer, message.stats);
+      writer.string(message.token).bool(message.isBot);
       break;
     case MessageType.Input:
       writer.u32(message.seq);
@@ -266,6 +480,32 @@ export function encode(message: Message): Uint8Array {
       break;
     case MessageType.Error:
       writer.u8(message.code).string(message.text);
+      break;
+    case MessageType.FfaWelcome:
+      writer.u16(message.playerId).string(message.token).string(message.gameId);
+      writer.u8(message.size).u8(rulesToByte(message.rules));
+      break;
+    case MessageType.FfaState:
+      writer.u8(message.phase);
+      writeOptionalId(writer, message.ticksLeft);
+      writer.u8(message.players).u8(message.capacity).u8(message.minimum).u16(message.matchIndex);
+      break;
+    case MessageType.FfaRoster:
+      writeList(writer, message.players, writeRosterEntry);
+      break;
+    case MessageType.FfaMatchStart:
+      writer.u16(message.matchIndex).u16(message.durationSeconds);
+      writeZone(writer, message.zone);
+      writer.f64(message.suddenDeathAt);
+      break;
+    case MessageType.FfaSnapshot:
+      writeFfaSnapshot(writer, message);
+      break;
+    case MessageType.FfaScore:
+      writeList(writer, message.rows, writeScoreRow);
+      break;
+    case MessageType.FfaBullets:
+      writeList(writer, message.bullets, writeFfaBullet);
       break;
   }
   return writer.bytes();
@@ -342,6 +582,8 @@ export function decode(data: Uint8Array): Message {
         roomCode: reader.string(),
         nickname: reader.string(),
         stats: readStats(reader),
+        token: reader.string(),
+        isBot: reader.bool(),
       };
     case MessageType.Input:
       return { type, seq: reader.u32(), action: readAction(reader) };
@@ -368,6 +610,41 @@ export function decode(data: Uint8Array): Message {
       return { type, clientTime: reader.f64(), serverTick: reader.u32() };
     case MessageType.Error:
       return { type, code: readErrorCode(reader), text: reader.string() };
+    case MessageType.FfaWelcome:
+      return {
+        type,
+        playerId: reader.u16(),
+        token: reader.string(),
+        gameId: reader.string(),
+        size: readFfaSize(reader),
+        rules: rulesFromByte(reader.u8()),
+      };
+    case MessageType.FfaState:
+      return {
+        type,
+        phase: listItem(FFA_PHASES, reader.u8(), 'фаза игры'),
+        ticksLeft: readOptionalId(reader),
+        players: reader.u8(),
+        capacity: reader.u8(),
+        minimum: reader.u8(),
+        matchIndex: reader.u16(),
+      };
+    case MessageType.FfaRoster:
+      return { type, players: readList(reader, readRosterEntry) };
+    case MessageType.FfaMatchStart:
+      return {
+        type,
+        matchIndex: reader.u16(),
+        durationSeconds: reader.u16(),
+        zone: readZone(reader),
+        suddenDeathAt: reader.f64(),
+      };
+    case MessageType.FfaSnapshot:
+      return readFfaSnapshot(reader);
+    case MessageType.FfaScore:
+      return { type, rows: readList(reader, readScoreRow) };
+    case MessageType.FfaBullets:
+      return { type, bullets: readList(reader, readFfaBullet) };
   }
 }
 

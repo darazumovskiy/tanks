@@ -1,4 +1,4 @@
-import { ARENA, DT, ROUND_SECONDS, ZONE } from './constants.js';
+import { DT, ROUND_SECONDS, ZONE } from './constants.js';
 import type { Wall } from './geometry.js';
 import type { Kit, Round, Side, Tank } from './round.js';
 import type { DerivedStats } from './stats.js';
@@ -81,8 +81,8 @@ export function botView(round: Round, side: Side): BotView {
     dt: DT,
     side,
     arena: {
-      width: ARENA.width,
-      height: ARENA.height,
+      width: round.map.width,
+      height: round.map.height,
       mapName: round.map.name,
       walls: round.map.walls.map((wall) => ({ ...wall })),
     },

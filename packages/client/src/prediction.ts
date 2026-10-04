@@ -254,7 +254,7 @@ export class Prediction {
   ): InterpolatedBullet[] {
     const mine: InterpolatedBullet[] = this.round.bullets
       .filter((bullet) => bullet.owner === this.side)
-      .map((bullet) => ({ id: bullet.id, owner: bullet.owner, x: bullet.x, y: bullet.y }));
+      .map((bullet) => ({ id: bullet.id, owner: this.side, x: bullet.x, y: bullet.y }));
     if (older === null || newer === null) {
       return mine;
     }

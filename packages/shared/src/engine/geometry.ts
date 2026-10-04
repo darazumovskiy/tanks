@@ -1,5 +1,3 @@
-import { ARENA } from './constants.js';
-
 export interface Wall {
   x: number;
   y: number;
@@ -13,8 +11,14 @@ export interface Contact {
   depth: number;
 }
 
-const W = ARENA.width;
-const H = ARENA.height;
+export interface FieldSize {
+  width: number;
+  height: number;
+}
+
+export interface Field extends FieldSize {
+  walls: readonly Wall[];
+}
 
 export function clamp(value: number, low: number, high: number): number {
   if (value < low) {
@@ -64,18 +68,59 @@ export function circleRect(cx: number, cy: number, r: number, wall: Wall): Conta
   return { nx: 0, ny: 1, depth: bottom + r };
 }
 
-export function boundsHit(x: number, y: number, r: number): Contact | null {
+export function boundsHit(x: number, y: number, r: number, field: FieldSize): Contact | null {
   if (x < r) {
     return { nx: 1, ny: 0, depth: r - x };
   }
-  if (x > W - r) {
-    return { nx: -1, ny: 0, depth: x - (W - r) };
+  if (x > field.width - r) {
+    return { nx: -1, ny: 0, depth: x - (field.width - r) };
   }
   if (y < r) {
     return { nx: 0, ny: 1, depth: r - y };
   }
-  if (y > H - r) {
-    return { nx: 0, ny: -1, depth: y - (H - r) };
+  if (y > field.height - r) {
+    return { nx: 0, ny: -1, depth: y - (field.height - r) };
   }
   return null;
+}
+
+// Отрезок не задевает ни одной стены, раздутой на pad: отсечение отрезка прямоугольником (Лян — Барски).
+export function isSegmentClear(
+  walls: readonly Wall[],
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  pad: number,
+): boolean {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  return walls.every((wall) => {
+    let enter = 0;
+    let exit = 1;
+    const edges: readonly [number, number][] = [
+      [-dx, x1 - (wall.x - pad)],
+      [dx, wall.x + wall.w + pad - x1],
+      [-dy, y1 - (wall.y - pad)],
+      [dy, wall.y + wall.h + pad - y1],
+    ];
+    for (const [p, q] of edges) {
+      if (p === 0) {
+        if (q < 0) {
+          return true;
+        }
+        continue;
+      }
+      const t = q / p;
+      if (p < 0) {
+        enter = Math.max(enter, t);
+      } else {
+        exit = Math.min(exit, t);
+      }
+      if (enter > exit) {
+        return true;
+      }
+    }
+    return false;
+  });
 }

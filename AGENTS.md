@@ -20,7 +20,7 @@
 
 Карта — [docs/README.md](docs/README.md). Коротко:
 
-- `docs/concept/` — продукт и механики. MVP — [office-match](docs/concept/office-match.md): комната на 10–50 коллег по ссылке, вход через Google.
+- `docs/concept/` — продукт и механики. MVP — [office-match](docs/concept/office-match.md): комната на 10–50 коллег по ссылке, вход через Google. Правила боя толпы — [ffa](docs/concept/ffa.md).
 - `docs/tech/base/` — базовый тех-дизайн по областям: [backend](docs/tech/base/backend.md), [frontend](docs/tech/base/frontend.md), [infra](docs/tech/base/infra.md), [requirements](docs/tech/base/requirements.md), [visual-language](docs/tech/base/visual-language.md) (палитра с ролями, полосы яркости, слои свечения, запреты), [vfx-catalog](docs/tech/base/vfx-catalog.md) (токены эффектов).
 - `docs/tech/impl/` — тех-дизайн конкретных фич, `impl/<backend|frontend|infra>/<фича>.md`.
 - `docs/adr/` — обязательные правила. Читать перед любой работой (правило `.cursor/rules/adr.mdc`).
@@ -41,7 +41,7 @@
 | `packages/mobile` | Оболочка Capacitor (Android, iOS): открывает клиент с игрового сервера; APK собирается в Docker — `deploy/android/build.sh`, см. [android-app.md](docs/tech/impl/infra/android-app.md) |
 | `packages/analysis` | Анализ журналов игр: `npm run analyze-logs -- <папка с *.log>` → `report.md`, `games.json`; см. [log-analysis.md](docs/tech/impl/backend/log-analysis.md) |
 
-Команды из корня: `npm test` (Vitest), `npm run test:coverage` (с порогами), `npm run test:e2e` (Playwright: собранные сервер и клиент, два браузера), `npm run lint` (ESLint + Prettier), `npm run typecheck`, `npm run build`. Тесты лежат рядом с кодом (`*.test.ts`) или в `packages/*/test/`. Перед финализацией любого шага — все команды зелёные.
+Команды из корня: `npm test` (Vitest), `npm run test:coverage` (с порогами), `npm run test:e2e` (Playwright: собранные сервер и клиент, два браузера), `npm run lint` (ESLint + Prettier), `npm run typecheck`, `npm run build`. Тесты лежат рядом с кодом (`*.test.ts`) или в `packages/*/test/`. Перед финализацией любого шага — все команды зелёные. Сервер, клиент и анализатор берут `@tanks/shared` из собранной `packages/shared/dist`: после правки `shared` сначала `npm run typecheck` (он собирает `dist`), иначе их тесты идут по старому коду.
 
 **Определение готовности** (ADR `tests.md`): план тестирования с крайними случаями написан до кода и исполнен; всё видимое игроку агент проверил сам в браузере двумя клиентами (chrome-devtools MCP, `window.tanksGame.debugState()` на странице боя). Видимый элемент сверх того проходит визуальный цикл (ADR `visual.md`, скилл `visual-iteration`): сцена в лаборатории `/?lab=fx`, контактные листы вариантов, выбор Димы, критик со свежим контекстом, фиксация токена. Без этого о готовности не сообщать.
 
@@ -51,7 +51,7 @@
 
 ## Текущая задача
 
-Указатель `.cursor/tasks/current`. Сейчас — [docs/workflow/proto-duel](docs/workflow/proto-duel/INDEX.md); история основания — [bootstrap](docs/workflow/bootstrap/INDEX.md). Подтверждённые решения — сразу в `decisions.md`, состояние — в `state.md`.
+Указатель `.cursor/tasks/current`. Сейчас — [docs/workflow/multiplayer](docs/workflow/multiplayer/INDEX.md); история — [bootstrap](docs/workflow/bootstrap/INDEX.md) (основание), [proto-duel](docs/workflow/proto-duel/INDEX.md) (проба дуэли). Подтверждённые решения — сразу в `decisions.md`, состояние — в `state.md`.
 
 ## Соседние проекты
 

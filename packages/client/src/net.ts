@@ -107,6 +107,8 @@ export class NetClient {
           roomCode: this.join.roomCode,
           nickname: this.join.nickname,
           stats: this.join.stats,
+          token: '',
+          isBot: false,
         }),
       );
       this.pingTimer = window.setInterval(() => {

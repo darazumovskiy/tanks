@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_STATS } from '../engine/index.js';
-import { decode, encode, quantizeAction, rulesFromByte, rulesToByte } from './codec.js';
+import { decode, encode, NO_ID, quantizeAction, rulesFromByte, rulesToByte } from './codec.js';
+import { ffaRoomCode, ffaSizeOf, isFfaRoomCode } from './ffaRoom.js';
 import {
   ErrorCode,
+  FfaPhase,
   MESSAGE_TYPE_NAMES,
   MessageType,
+  type FfaSnapshotMessage,
   type Message,
   type RoundStartMessage,
   type SnapshotMessage,
@@ -53,6 +56,41 @@ const roundStart: RoundStartMessage = {
   ],
 };
 
+// Числа — в точности f32 там, где кодек пишет f32: туда-обратно без потерь.
+const ffaSnapshot: FfaSnapshotMessage = {
+  type: MessageType.FfaSnapshot,
+  tick: 3599,
+  gameTick: 99999,
+  ackSeq: 4242,
+  self: { state: 'wreck', ticksLeft: 45, killerId: 17, idleTicksLeft: null },
+  tanks: [
+    {
+      id: 17,
+      x: 3999.25,
+      y: 12.125,
+      heading: 1.234567891,
+      turret: -2.5,
+      speed: 176,
+      hp: 175,
+      reloadLeft: 0.3,
+      isAlive: true,
+      shieldLeft: 2.966666666,
+    },
+    { id: 65534, x: 1, y: 2, heading: 0, turret: 0, speed: 0, hp: 0, reloadLeft: 0, isAlive: false, shieldLeft: 0 },
+  ],
+  kits: [{ isActive: true, respawnIn: 0 }],
+  events: [
+    { kind: 'death', tank: 2, by: 17, x: 100.5, y: 200.25, value: 0, dx: 0, dy: 0, flags: 2 },
+    { kind: 'suddenDeath', tank: null, by: null, x: 0, y: 0, value: 0, dx: 0, dy: 0, flags: 0 },
+    { kind: 'shield', tank: 4, by: 9, x: 1, y: 2, value: 0, dx: 0.5, dy: -0.5, flags: 0 },
+  ],
+  births: [
+    { id: 70000, owner: 17, x: 1.1, y: 2.2, vx: 550.0001, vy: -3.3, bouncesLeft: 1, hasBounced: false, age: 1 / 30 },
+  ],
+  bounces: [{ id: 69999, x: 5, y: 3999.75, vx: -1.5, vy: 2.25 }],
+  deaths: [1, 4294967295],
+};
+
 const samples: Message[] = [
   {
     type: MessageType.Join,
@@ -60,7 +98,70 @@ const samples: Message[] = [
     roomCode: 'abc123',
     nickname: 'Дима 🚀',
     stats: { armor: 0, engine: 0, gun: 5, reload: 5 },
+    token: '',
+    isBot: false,
   },
+  {
+    type: MessageType.Join,
+    protocolVersion: 6,
+    roomCode: 'ffa30',
+    nickname: 'Бот',
+    stats: DEFAULT_STATS,
+    token: 'Xy7-_q',
+    isBot: true,
+  },
+  {
+    type: MessageType.FfaWelcome,
+    playerId: 65534,
+    token: 'tok',
+    gameId: 'K7MF',
+    size: 30,
+    rules: { wallSlidePercent: 30 },
+  },
+  {
+    type: MessageType.FfaState,
+    phase: FfaPhase.Lobby,
+    ticksLeft: null,
+    players: 3,
+    capacity: 30,
+    minimum: 20,
+    matchIndex: 0,
+  },
+  {
+    type: MessageType.FfaState,
+    phase: FfaPhase.Results,
+    ticksLeft: 450,
+    players: 30,
+    capacity: 30,
+    minimum: 20,
+    matchIndex: 7,
+  },
+  {
+    type: MessageType.FfaRoster,
+    players: [
+      { id: 1, nickname: 'Дима', stats: DEFAULT_STATS, isBot: false },
+      { id: 2, nickname: 'Бот 2', stats: { armor: 5, engine: 5, gun: 0, reload: 0 }, isBot: true },
+    ],
+  },
+  {
+    type: MessageType.FfaMatchStart,
+    matchIndex: 3,
+    durationSeconds: 120,
+    zone: { startRadius: 2355.123, finalRadius: 657.27, startShrink: 45, endShrink: 105 },
+    suddenDeathAt: 85.4321,
+  },
+  ffaSnapshot,
+  { ...ffaSnapshot, self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: 300 } },
+  {
+    type: MessageType.FfaScore,
+    rows: [
+      { id: 1, kills: 3, deaths: 1, damageDealt: 412.5, damageTaken: 0.25 },
+      { id: 2, kills: 0, deaths: 4, damageDealt: 0, damageTaken: 700 },
+    ],
+  },
+  { type: MessageType.FfaBullets, bullets: ffaSnapshot.births },
+  { type: MessageType.FfaBullets, bullets: [] },
+  { type: MessageType.Error, code: ErrorCode.Idle, text: 'выкинуло за бездействие' },
   { type: MessageType.Input, seq: 4294967295, action: { throttle: 1, turn: -1, turretTurn: 0, isFiring: true } },
   { type: MessageType.Ping, clientTime: 1790899403123.456 },
   { type: MessageType.Welcome, side: 1, roomCode: 'xyz' },
@@ -175,10 +276,70 @@ describe('кодек протокола', () => {
     expect(() => decode(badEventSide)).toThrow(RangeError);
   });
 
+  it('общая игра: порченые фаза, размер, состояние игрока и вид события отвергаются', () => {
+    const state = encode({
+      type: MessageType.FfaState,
+      phase: FfaPhase.Fight,
+      ticksLeft: 1,
+      players: 1,
+      capacity: 10,
+      minimum: 7,
+      matchIndex: 0,
+    });
+    state[1] = 9;
+    expect(() => decode(state)).toThrow(RangeError);
+
+    const welcome = encode({
+      type: MessageType.FfaWelcome,
+      playerId: 1,
+      token: '',
+      gameId: '',
+      size: 10,
+      rules: { wallSlidePercent: 0 },
+    });
+    welcome[1 + 2 + 1 + 1] = 11;
+    expect(() => decode(welcome)).toThrow(RangeError);
+
+    const selfOffset = 1 + 4 + 4 + 4;
+    const badState = encode(ffaSnapshot);
+    badState[selfOffset] = 9;
+    expect(() => decode(badState)).toThrow(RangeError);
+
+    const eventOffset = selfOffset + 7 + 2 + 2 + 2;
+    const badKind = encode({ ...ffaSnapshot, tanks: [], kits: [] });
+    badKind[eventOffset] = 200;
+    expect(() => decode(badKind)).toThrow(RangeError);
+  });
+
+  it('номер «нет» — 0xFFFF', () => {
+    expect(NO_ID).toBe(0xffff);
+    const decoded = decode(encode({ ...ffaSnapshot, self: { ...ffaSnapshot.self, killerId: null } }));
+    expect(decoded.type === MessageType.FfaSnapshot && decoded.self.killerId).toBeNull();
+  });
+
+  it('коды общей игры: ffa10, ffa30, ffa50; другие — не размер', () => {
+    expect(ffaRoomCode(30)).toBe('ffa30');
+    expect(ffaSizeOf('ffa10')).toBe(10);
+    expect(ffaSizeOf('ffa50')).toBe(50);
+    expect(ffaSizeOf('ffa11')).toBeNull();
+    expect(ffaSizeOf('ffa')).toBeNull();
+    expect(ffaSizeOf('abc30')).toBeNull();
+    expect(isFfaRoomCode('ffa11')).toBe(true);
+    expect(isFfaRoomCode('abc')).toBe(false);
+  });
+
   it('длинные строки обрезаются до 255 байт, большие сообщения растят буфер', () => {
     const longName = 'я'.repeat(300);
     const decoded = decode(
-      encode({ type: MessageType.Join, protocolVersion: 1, roomCode: 'r', nickname: longName, stats: DEFAULT_STATS }),
+      encode({
+        type: MessageType.Join,
+        protocolVersion: 1,
+        roomCode: 'r',
+        nickname: longName,
+        stats: DEFAULT_STATS,
+        token: '',
+        isBot: false,
+      }),
     );
     expect(decoded.type).toBe(MessageType.Join);
     if (decoded.type === MessageType.Join) {

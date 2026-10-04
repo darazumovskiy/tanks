@@ -1,5 +1,10 @@
-import type { RoundEvent } from '@tanks/shared/engine';
+import type { DuelEvent, Side } from '@tanks/shared/engine';
 import { EventFlag, type SnapshotEvent } from '@tanks/shared/protocol';
+
+// Номер танка дуэли — его сторона: движок создаёт танки дуэли с номерами 0 и 1.
+export function duelSide(id: number): Side {
+  return id === 1 ? 1 : 0;
+}
 
 function plain(
   kind: SnapshotEvent['kind'],
@@ -15,15 +20,23 @@ function plain(
 }
 
 // Событие движка → компактное событие снимка для эффектов и звука на клиенте.
-export function toSnapshotEvent(event: RoundEvent): SnapshotEvent {
+export function toSnapshotEvent(event: DuelEvent): SnapshotEvent {
   switch (event.type) {
     case 'shot':
-      return plain('shot', event.side, event.x, event.y, event.angle, Math.cos(event.angle), Math.sin(event.angle));
+      return plain(
+        'shot',
+        duelSide(event.tank),
+        event.x,
+        event.y,
+        event.angle,
+        Math.cos(event.angle),
+        Math.sin(event.angle),
+      );
     case 'impact':
     case 'fizzle':
-      return plain(event.type, event.owner, event.x, event.y);
+      return plain(event.type, duelSide(event.owner), event.x, event.y);
     case 'ricochet':
-      return plain('ricochet', event.owner, event.x, event.y, 0, event.nx, event.ny);
+      return plain('ricochet', duelSide(event.owner), event.x, event.y, 0, event.nx, event.ny);
     case 'clash':
       return plain('clash', null, event.x, event.y);
     case 'hit': {
@@ -39,15 +52,15 @@ export function toSnapshotEvent(event: RoundEvent): SnapshotEvent {
       }
       const x = event.bulletX ?? event.x;
       const y = event.bulletY ?? event.y;
-      return plain('hit', event.side, x, y, event.damage, event.dirX ?? 0, event.dirY ?? 0, flags);
+      return plain('hit', duelSide(event.tank), x, y, event.damage, event.dirX ?? 0, event.dirY ?? 0, flags);
     }
     case 'death':
     case 'bump':
-      return plain(event.type, event.side, event.x, event.y);
+      return plain(event.type, duelSide(event.tank), event.x, event.y);
     case 'kitSpawn':
       return plain('kitSpawn', null, event.x, event.y);
     case 'pickup':
-      return plain('pickup', event.side, event.x, event.y, event.healed);
+      return plain('pickup', duelSide(event.tank), event.x, event.y, event.healed);
     case 'zoneStart':
       return plain('zoneStart', null, 0, 0);
     case 'roundOver':

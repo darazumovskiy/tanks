@@ -1,11 +1,11 @@
-import { TANK_HIT_RADIUS, traceShot, type Point, type ShotSegment, type Wall } from '@tanks/shared/engine';
+import { TANK_HIT_RADIUS, traceShot, type Field, type Point, type ShotSegment } from '@tanks/shared/engine';
 import { enemyLeadPoint, type AimLineEnemy } from './aimLine.js';
 
 // Дальше попадания по журналам почти не случаются — выстрел вдаль не считается выстрелом по цели.
 export const ZONE_FIRE_MAX_RANGE = 650;
 
 export interface ZoneFireInput {
-  walls: readonly Wall[];
+  field: Field;
   shooter: Point & { turret: number };
   bulletSpeed: number;
   // Живой противник в кадре; `null` — цели нет, зоны нет.
@@ -55,14 +55,14 @@ function segmentDistance(a: ShotSegment, b: ShotSegment): number {
 // Первый отрезок пути кончается на преграде, поэтому за стеной до капсулы он не дотянется — прямая видимость
 // проверяется той же геометрией.
 export function isShotInZone(input: ZoneFireInput): boolean {
-  const { walls, shooter, bulletSpeed, enemy } = input;
+  const { field, shooter, bulletSpeed, enemy } = input;
   if (enemy === null) {
     return false;
   }
   if (Math.hypot(enemy.x - shooter.x, enemy.y - shooter.y) > ZONE_FIRE_MAX_RANGE) {
     return false;
   }
-  const first = traceShot(walls, shooter, shooter.turret, bulletSpeed).segments[0];
+  const first = traceShot(field, shooter, shooter.turret, bulletSpeed).segments[0];
   if (first === undefined) {
     return false;
   }

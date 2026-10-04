@@ -4,9 +4,9 @@ import {
   leadPoint,
   TANK_HIT_RADIUS,
   traceShot,
+  type Field,
   type Point,
   type ShotSegment,
-  type Wall,
 } from '@tanks/shared/engine';
 
 // Хвост после отскока — ровно столько, чтобы показать направление рикошета, не рисуя второй путь через поле.
@@ -22,7 +22,7 @@ export interface AimLineEnemy extends Point {
 }
 
 export interface AimLineInput {
-  walls: readonly Wall[];
+  field: Field;
   shooter: Point & { turret: number };
   bulletSpeed: number;
   // Живой противник в кадре; `null` — цели нет, линия без состояний.
@@ -103,8 +103,8 @@ function leadTarget(input: AimLineInput): Point | null {
 // Упреждение считается по прямой, поэтому проверяется только на первом отрезке: после отскока путь длиннее
 // прямой и формула не годится.
 export function computeAimLine(input: AimLineInput): AimLine {
-  const { walls, shooter, bulletSpeed, enemy } = input;
-  const { segments } = traceShot(walls, shooter, shooter.turret, bulletSpeed);
+  const { field, shooter, bulletSpeed, enemy } = input;
+  const { segments } = traceShot(field, shooter, shooter.turret, bulletSpeed);
   const first = segments[0];
   if (first === undefined) {
     return EMPTY;

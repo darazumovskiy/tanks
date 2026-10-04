@@ -24,7 +24,8 @@ import {
   type SnapshotMessage,
 } from '@tanks/shared/protocol';
 import { randomInt } from 'node:crypto';
-import { toSnapshotEvent } from './events.js';
+import { duelSide, toSnapshotEvent } from './events.js';
+import { clearInput, createInputChannel, isSilent, offerInput, takeAction, type InputChannel } from './inputs.js';
 import { LOG_SOURCE_SERVER, NO_LOG, type GameLog } from './gameLog.js';
 import { NO_DROP_COUNTER, type InputDropCounter } from './metrics.js';
 
@@ -54,13 +55,7 @@ interface Player {
   connection: Connection;
   nickname: string;
   stats: Stats;
-  lastSeq: number;
-  lastInputTick: number;
-  ackSeq: number;
-  pending: { seq: number; action: Action } | null;
-  lastAction: Action;
-  inputsThisSecond: number;
-  inputsThisTick: number;
+  input: InputChannel;
 }
 
 // Бой существует, только пока в комнате двое. id и startTick — идентификатор и начало отсчёта таймкода журнала.
@@ -73,16 +68,13 @@ interface Duel {
   phaseTicksLeft: number;
 }
 
-const IDLE: Action = { throttle: 0, turn: 0, turretTurn: 0, isFiring: false };
-// Клиент замолчал (ушёл в фон, завис) — его танк не должен ехать и стрелять по последней команде вечно.
-export const INPUT_TIMEOUT_TICKS = 15;
 const NICKNAME_MAX = 16;
 // Без похожих знаков (0/O, 1/I/L): идентификатор игрок читает с экрана и называет вслух.
 const GAME_ID_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 const GAME_ID_LENGTH = 4;
 const PHASE_MARKS: Readonly<Record<DuelPhase, string>> = { countdown: 'c', fight: 'f', roundEnd: 'e' };
 
-function randomGameId(): string {
+export function randomGameId(): string {
   return Array.from({ length: GAME_ID_LENGTH }, () => GAME_ID_ALPHABET.charAt(randomInt(GAME_ID_ALPHABET.length))).join(
     '',
   );
@@ -153,13 +145,7 @@ export class Room {
       connection,
       nickname: sanitizeNickname(nickname),
       stats: sanitizeStats(stats),
-      lastSeq: 0,
-      lastInputTick: 0,
-      ackSeq: 0,
-      pending: null,
-      lastAction: { ...IDLE },
-      inputsThisSecond: 0,
-      inputsThisTick: 0,
+      input: createInputChannel(),
     };
     this.players[side] = player;
     this.sendTo(player, { type: MessageType.Welcome, side, roomCode: this.code });
@@ -184,23 +170,15 @@ export class Room {
     };
   }
 
-  // Новое пересиливает старое: за тик применяется последняя пришедшая команда, остальные теряются.
   private acceptInput(player: Player, seq: number, action: Action): void {
-    player.inputsThisSecond++;
-    if (seq <= player.lastSeq) {
+    const drop = offerInput(player.input, seq, action, this.tick, this.options.maxInputsPerSecond);
+    if (drop === 'stale') {
       this.dropCounter.countDroppedInput('stale');
-      this.writeLog(`input stale side=${String(player.side)} seq=${String(seq)} last=${String(player.lastSeq)}`);
-      return;
-    }
-    if (player.inputsThisSecond > this.options.maxInputsPerSecond) {
+      this.writeLog(`input stale side=${String(player.side)} seq=${String(seq)} last=${String(player.input.lastSeq)}`);
+    } else if (drop === 'limit') {
       this.dropCounter.countDroppedInput('limit');
       this.writeLog(`input limit side=${String(player.side)} seq=${String(seq)}`);
-      return;
     }
-    player.lastSeq = seq;
-    player.lastInputTick = this.tick;
-    player.inputsThisTick++;
-    player.pending = { seq, action };
   }
 
   // lateMs — на сколько тик начался позже расписания; попадает в журнал, на игру не влияет.
@@ -208,7 +186,7 @@ export class Room {
     this.tick++;
     if (this.tick % TICK_RATE === 0) {
       for (const player of this.presentPlayers()) {
-        player.inputsThisSecond = 0;
+        player.input.inputsThisSecond = 0;
       }
     }
     const duel = this.duel;
@@ -262,12 +240,12 @@ export class Room {
     for (const side of [0, 1] as const) {
       const player = duel.players[side];
       const s = String(side);
-      const isSilent = this.tick - player.lastInputTick > INPUT_TIMEOUT_TICKS ? '1' : '0';
+      const silent = isSilent(player.input, this.tick) ? '1' : '0';
       parts.push(
-        `a${s}=${formatAction(actions[side])} ack${s}=${String(player.ackSeq)} in${s}=${String(player.inputsThisTick)}`,
-        `sil${s}=${isSilent} p${s}=${formatPose(duel.round.tanks[side])}`,
+        `a${s}=${formatAction(actions[side])} ack${s}=${String(player.input.ackSeq)} in${s}=${String(player.input.inputsThisTick)}`,
+        `sil${s}=${silent} p${s}=${formatPose(duel.round.tanks[side])}`,
       );
-      player.inputsThisTick = 0;
+      player.input.inputsThisTick = 0;
     }
     parts.push(`b=${String(duel.round.bullets.length)}`);
     this.writeLog(parts.join(' '));
@@ -278,18 +256,7 @@ export class Room {
   }
 
   private takeActions(players: [Player, Player]): [Action, Action] {
-    const result: [Action, Action] = [IDLE, IDLE];
-    for (const side of [0, 1] as const) {
-      const player = players[side];
-      if (player.pending !== null) {
-        player.lastAction = player.pending.action;
-        player.ackSeq = player.pending.seq;
-        player.pending = null;
-      }
-      const isSilent = this.tick - player.lastInputTick > INPUT_TIMEOUT_TICKS;
-      result[side] = isSilent ? IDLE : player.lastAction;
-    }
-    return result;
+    return [takeAction(players[0].input, this.tick), takeAction(players[1].input, this.tick)];
   }
 
   private roundFor(mapIndex: number, players: [Player, Player]): Round {
@@ -328,8 +295,7 @@ export class Room {
     duel.phase = 'countdown';
     duel.phaseTicksLeft = this.options.countdownTicks;
     for (const player of duel.players) {
-      player.pending = null;
-      player.lastAction = { ...IDLE };
+      clearInput(player.input);
     }
     this.writeLog(
       `round start idx=${String(this.roundIndex)} map=${String(plan.mapIndex)} score=${String(this.score[0])}:${String(this.score[1])}`,
@@ -384,7 +350,7 @@ export class Room {
       ],
       bullets: round.bullets.map((bullet) => ({
         id: bullet.id,
-        owner: bullet.owner,
+        owner: duelSide(bullet.owner),
         x: bullet.x,
         y: bullet.y,
         vx: bullet.vx,
@@ -397,7 +363,7 @@ export class Room {
       events,
     };
     for (const player of duel.players) {
-      this.sendTo(player, { ...base, ackSeq: player.ackSeq });
+      this.sendTo(player, { ...base, ackSeq: player.input.ackSeq });
     }
   }
 

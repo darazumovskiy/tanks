@@ -1,5 +1,5 @@
 import { ARENA } from './constants.js';
-import type { Wall } from './geometry.js';
+import type { Field, Wall } from './geometry.js';
 
 export interface Point {
   x: number;
@@ -10,11 +10,15 @@ export interface Spawn extends Point {
   heading: number;
 }
 
-export interface MapDef {
+// Карта для поля боя: размеры, стены и места аптечек.
+export interface BattleMap extends Field {
   name: string;
   walls: Wall[];
-  spawns: [Spawn, Spawn];
   kits: Point[];
+}
+
+export interface MapDef extends BattleMap {
+  spawns: [Spawn, Spawn];
 }
 
 const W = ARENA.width;
@@ -32,6 +36,8 @@ function buildMap(name: string, half: Wall[], kits: Point[]): MapDef {
   }
   return {
     name,
+    width: W,
+    height: H,
     walls,
     spawns: [
       { x: 140, y: H / 2, heading: 0 },

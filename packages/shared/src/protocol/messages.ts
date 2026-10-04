@@ -1,6 +1,6 @@
-import type { Action, EndReason, RoundRules, Side, Stats } from '../engine/index.js';
+import type { Action, EndReason, FfaPlayerState, FfaSize, RoundRules, Side, Stats, ZonePlan } from '../engine/index.js';
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export const MessageType = {
   Join: 1,
@@ -12,6 +12,13 @@ export const MessageType = {
   Snapshot: 13,
   Pong: 14,
   Error: 15,
+  FfaWelcome: 16,
+  FfaState: 17,
+  FfaRoster: 18,
+  FfaMatchStart: 19,
+  FfaSnapshot: 20,
+  FfaScore: 21,
+  FfaBullets: 22,
 } as const;
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
@@ -19,12 +26,15 @@ export const MESSAGE_TYPE_NAMES: Readonly<Record<MessageType, string>> = Object.
   Object.entries(MessageType).map(([name, value]) => [value, name]),
 ) as Record<MessageType, string>;
 
+// token — пропуск для возврата в общую игру после обрыва, пусто у нового игрока; isBot — честный бот.
 export interface JoinMessage {
   type: typeof MessageType.Join;
   protocolVersion: number;
   roomCode: string;
   nickname: string;
   stats: Stats;
+  token: string;
+  isBot: boolean;
 }
 
 export interface InputMessage {
@@ -160,6 +170,7 @@ export const ErrorCode = {
   BadProtocolVersion: 1,
   RoomFull: 2,
   BadMessage: 3,
+  Idle: 4,
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
@@ -169,7 +180,165 @@ export interface ErrorMessage {
   text: string;
 }
 
+export const FfaPhase = {
+  Lobby: 0,
+  Countdown: 1,
+  Fight: 2,
+  Results: 3,
+} as const;
+export type FfaPhase = (typeof FfaPhase)[keyof typeof FfaPhase];
+
+export interface FfaWelcomeMessage {
+  type: typeof MessageType.FfaWelcome;
+  playerId: number;
+  token: string;
+  gameId: string;
+  size: FfaSize;
+  rules: RoundRules;
+}
+
+// ticksLeft — тиков до конца фазы; в лобби — до старта, null — старт ещё не назначен.
+export interface FfaStateMessage {
+  type: typeof MessageType.FfaState;
+  phase: FfaPhase;
+  ticksLeft: number | null;
+  players: number;
+  capacity: number;
+  minimum: number;
+  matchIndex: number;
+}
+
+export interface FfaRosterEntry {
+  id: number;
+  nickname: string;
+  stats: Stats;
+  isBot: boolean;
+}
+
+export interface FfaRosterMessage {
+  type: typeof MessageType.FfaRoster;
+  players: FfaRosterEntry[];
+}
+
+export interface FfaMatchStartMessage {
+  type: typeof MessageType.FfaMatchStart;
+  matchIndex: number;
+  durationSeconds: number;
+  zone: ZonePlan;
+  suddenDeathAt: number;
+}
+
+// Своё состояние игрока: ticksLeft — до перехода (подбит → ждёт → на поле), idleTicksLeft — до выхода
+// по бездействию, null — отсчёта нет.
+export interface FfaSelf {
+  state: FfaPlayerState;
+  ticksLeft: number;
+  killerId: number | null;
+  idleTicksLeft: number | null;
+}
+
+export interface FfaTankSnapshot extends TankSnapshot {
+  id: number;
+  shieldLeft: number;
+}
+
+export interface FfaBulletSnapshot {
+  id: number;
+  owner: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  bouncesLeft: number;
+  hasBounced: boolean;
+  age: number;
+}
+
+export interface FfaBounce {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+}
+
+export type FfaEventKind =
+  | 'shot'
+  | 'impact'
+  | 'ricochet'
+  | 'fizzle'
+  | 'clash'
+  | 'hit'
+  | 'shield'
+  | 'death'
+  | 'bump'
+  | 'kitSpawn'
+  | 'pickup'
+  | 'zoneStart'
+  | 'spawn'
+  | 'suddenDeath'
+  | 'matchOver';
+
+// tank — о ком событие, by — стрелок или убийца; null — нет. Остальные поля — как у события дуэли.
+export interface FfaSnapshotEvent {
+  kind: FfaEventKind;
+  tank: number | null;
+  by: number | null;
+  x: number;
+  y: number;
+  value: number;
+  dx: number;
+  dy: number;
+  flags: number;
+}
+
+// tick — тик матча; gameTick — тиков с создания игры, таймкод журнала. births, bounces, deaths — снаряды
+// всего поля: родились, отскочили, погибли на этом тике.
+export interface FfaSnapshotMessage {
+  type: typeof MessageType.FfaSnapshot;
+  tick: number;
+  gameTick: number;
+  ackSeq: number;
+  self: FfaSelf;
+  tanks: FfaTankSnapshot[];
+  kits: KitSnapshot[];
+  events: FfaSnapshotEvent[];
+  births: FfaBulletSnapshot[];
+  bounces: FfaBounce[];
+  deaths: number[];
+}
+
+export interface FfaScoreRow {
+  id: number;
+  kills: number;
+  deaths: number;
+  damageDealt: number;
+  damageTaken: number;
+}
+
+export interface FfaScoreMessage {
+  type: typeof MessageType.FfaScore;
+  rows: FfaScoreRow[];
+}
+
+export interface FfaBulletsMessage {
+  type: typeof MessageType.FfaBullets;
+  bullets: FfaBulletSnapshot[];
+}
+
 export type ClientMessage = JoinMessage | InputMessage | PingMessage;
 export type ServerMessage =
-  WelcomeMessage | RoomStateMessage | RoundStartMessage | SnapshotMessage | PongMessage | ErrorMessage;
+  | WelcomeMessage
+  | RoomStateMessage
+  | RoundStartMessage
+  | SnapshotMessage
+  | PongMessage
+  | ErrorMessage
+  | FfaWelcomeMessage
+  | FfaStateMessage
+  | FfaRosterMessage
+  | FfaMatchStartMessage
+  | FfaSnapshotMessage
+  | FfaScoreMessage
+  | FfaBulletsMessage;
 export type Message = ClientMessage | ServerMessage;

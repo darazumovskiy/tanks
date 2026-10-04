@@ -15,9 +15,10 @@ import {
   WALL_HIT_SPEED_FACTOR,
   WALL_SLIDE_MAX_PERCENT,
   ZONE,
+  ZONE_START_MARGIN,
 } from './constants.js';
 import { boundsHit, circleRect, clamp, normalizeAngle } from './geometry.js';
-import { MAPS, mapByIndex, type MapDef } from './maps.js';
+import { MAPS, mapByIndex, type BattleMap, type MapDef, type Spawn } from './maps.js';
 import { deriveStats, type DerivedStats } from './stats.js';
 
 export type Side = 0 | 1;
@@ -43,8 +44,10 @@ export interface Tally {
   zoneDamage: number;
 }
 
+// id — постоянный номер танка: в дуэли 0 и 1, в матче — номер игрока.
+// shieldLeft — неуязвимость в секундах: пока больше нуля, урон не проходит.
 export interface Tank {
-  side: Side;
+  id: number;
   name: string;
   stats: DerivedStats;
   x: number;
@@ -54,13 +57,14 @@ export interface Tank {
   speed: number;
   hp: number;
   reloadLeft: number;
+  shieldLeft: number;
   isAlive: boolean;
   tally: Tally;
 }
 
 export interface Bullet {
   id: number;
-  owner: Side;
+  owner: number;
   x: number;
   y: number;
   vx: number;
@@ -85,6 +89,13 @@ export interface Zone {
   radius: number;
 }
 
+export interface ZonePlan {
+  startRadius: number;
+  finalRadius: number;
+  startShrink: number;
+  endShrink: number;
+}
+
 export type EndReason = 'kill' | 'time';
 
 // Настраиваемые правила движка; одинаковы на сервере, у бота и в предсказании клиента.
@@ -95,17 +106,24 @@ export interface RoundRules {
 
 export const DEFAULT_RULES: Readonly<RoundRules> = { wallSlidePercent: 0 };
 
-export interface Round {
+// Поле боя с любым числом танков; tanks — танки на поле в порядке обработки.
+export interface World<T extends Tank[] = Tank[]> {
   tick: number;
   time: number;
-  mapIndex: number;
-  map: MapDef;
+  map: BattleMap;
   rules: RoundRules;
   nextBulletId: number;
-  tanks: [Tank, Tank];
+  tanks: T;
   bullets: Bullet[];
   kits: Kit[];
   zone: Zone;
+  zonePlan: ZonePlan;
+}
+
+// Раунд дуэли: поле боя ровно с двумя танками и исход раунда.
+export interface Round extends World<[Tank, Tank]> {
+  mapIndex: number;
+  map: MapDef;
   isOver: boolean;
   winner: Side | null;
   endReason: EndReason | null;
@@ -113,20 +131,21 @@ export interface Round {
 
 export type DamageCause = 'bullet' | 'self' | 'zone';
 
-export type RoundEvent =
-  | { type: 'shot'; side: Side; x: number; y: number; angle: number }
-  | { type: 'impact'; x: number; y: number; owner: Side }
-  | { type: 'ricochet'; x: number; y: number; owner: Side; nx: number; ny: number }
-  | { type: 'fizzle'; x: number; y: number; owner: Side }
+// События тика поля боя; конец раунда добавляет только дуэль.
+export type WorldEvent =
+  | { type: 'shot'; tank: number; x: number; y: number; angle: number }
+  | { type: 'impact'; x: number; y: number; owner: number }
+  | { type: 'ricochet'; x: number; y: number; owner: number; nx: number; ny: number }
+  | { type: 'fizzle'; x: number; y: number; owner: number }
   | { type: 'clash'; x: number; y: number }
   | {
       type: 'hit';
-      side: Side;
+      tank: number;
       x: number;
       y: number;
       damage: number;
       cause: DamageCause;
-      by?: Side;
+      by?: number;
       isRicochet?: boolean;
       bulletX?: number;
       bulletY?: number;
@@ -134,21 +153,26 @@ export type RoundEvent =
       dirY?: number;
       isQuiet?: boolean;
     }
-  | { type: 'death'; side: Side; x: number; y: number; cause: DamageCause }
-  | { type: 'bump'; side: Side; x: number; y: number }
+  | { type: 'shield'; tank: number; x: number; y: number; owner: number }
+  | { type: 'death'; tank: number; x: number; y: number; cause: DamageCause; by: number | null; isRicochet: boolean }
+  | { type: 'bump'; tank: number; x: number; y: number }
   | { type: 'kitSpawn'; x: number; y: number }
-  | { type: 'pickup'; side: Side; x: number; y: number; healed: number }
-  | { type: 'zoneStart' }
-  | { type: 'roundOver'; winner: Side | null; reason: EndReason };
+  | { type: 'pickup'; tank: number; x: number; y: number; healed: number }
+  | { type: 'zoneStart' };
+
+export type RoundEvent = WorldEvent | { type: 'roundOver'; winner: Side | null; reason: EndReason };
 
 export interface TankSetup {
   name: string;
   stats: unknown;
 }
 
-const W = ARENA.width;
-const H = ARENA.height;
-const ZONE_START_RADIUS = Math.hypot(W / 2, H / 2) + 60;
+export const DUEL_ZONE_PLAN: Readonly<ZonePlan> = {
+  startRadius: Math.hypot(ARENA.width / 2, ARENA.height / 2) + ZONE_START_MARGIN,
+  finalRadius: ZONE.finalRadius,
+  startShrink: ZONE.startShrink,
+  endShrink: ZONE.endShrink,
+};
 
 function emptyTally(): Tally {
   return {
@@ -185,58 +209,77 @@ export function sanitizeAction(raw: unknown): Action {
   };
 }
 
+export function makeTank(setup: TankSetup, id: number, pose: Spawn): Tank {
+  const stats = deriveStats(setup.stats);
+  return {
+    id,
+    name: setup.name,
+    stats,
+    x: pose.x,
+    y: pose.y,
+    heading: pose.heading,
+    turret: pose.heading,
+    speed: 0,
+    hp: stats.maxHp,
+    reloadLeft: 0,
+    shieldLeft: 0,
+    isAlive: true,
+    tally: emptyTally(),
+  };
+}
+
+export function createWorld<T extends Tank[]>(
+  map: BattleMap,
+  tanks: T,
+  rules: Readonly<RoundRules>,
+  zonePlan: Readonly<ZonePlan>,
+): World<T> {
+  return {
+    tick: 0,
+    time: 0,
+    map,
+    rules: { wallSlidePercent: rules.wallSlidePercent },
+    nextBulletId: 1,
+    tanks,
+    bullets: [],
+    kits: map.kits.map((kit) => ({ x: kit.x, y: kit.y, isActive: false, respawnIn: KIT.firstSpawn })),
+    zone: { x: map.width / 2, y: map.height / 2, radius: zonePlan.startRadius },
+    zonePlan: { ...zonePlan },
+  };
+}
+
 export function createRound(
   mapIndex: number,
   setups: [TankSetup, TankSetup],
   rules: Readonly<RoundRules> = DEFAULT_RULES,
 ): Round {
   const map = mapByIndex(mapIndex);
-  const makeTank = (setup: TankSetup, side: Side): Tank => {
-    const stats = deriveStats(setup.stats);
-    const spawn = map.spawns[side];
-    return {
-      side,
-      name: setup.name,
-      stats,
-      x: spawn.x,
-      y: spawn.y,
-      heading: spawn.heading,
-      turret: spawn.heading,
-      speed: 0,
-      hp: stats.maxHp,
-      reloadLeft: 0,
-      isAlive: true,
-      tally: emptyTally(),
-    };
-  };
+  const tanks: [Tank, Tank] = [makeTank(setups[0], 0, map.spawns[0]), makeTank(setups[1], 1, map.spawns[1])];
   return {
-    tick: 0,
-    time: 0,
+    ...createWorld(map, tanks, rules, DUEL_ZONE_PLAN),
     mapIndex: mapIndex % MAPS.length,
     map,
-    rules: { wallSlidePercent: rules.wallSlidePercent },
-    nextBulletId: 1,
-    tanks: [makeTank(setups[0], 0), makeTank(setups[1], 1)],
-    bullets: [],
-    kits: map.kits.map((kit) => ({ x: kit.x, y: kit.y, isActive: false, respawnIn: KIT.firstSpawn })),
-    zone: { x: W / 2, y: H / 2, radius: ZONE_START_RADIUS },
     isOver: false,
     winner: null,
     endReason: null,
   };
 }
 
-export function zoneRadiusAt(time: number): number {
-  if (time <= ZONE.startShrink) {
-    return ZONE_START_RADIUS;
+export function zoneRadiusAt(plan: Readonly<ZonePlan>, time: number): number {
+  if (time <= plan.startShrink) {
+    return plan.startRadius;
   }
-  const k = clamp((time - ZONE.startShrink) / (ZONE.endShrink - ZONE.startShrink), 0, 1);
-  return ZONE_START_RADIUS + (ZONE.finalRadius - ZONE_START_RADIUS) * k;
+  const k = clamp((time - plan.startShrink) / (plan.endShrink - plan.startShrink), 0, 1);
+  return plan.startRadius + (plan.finalRadius - plan.startRadius) * k;
+}
+
+function tankById(world: World, id: number): Tank | undefined {
+  return world.tanks.find((tank) => tank.id === id);
 }
 
 interface DamageInfo {
   cause: DamageCause;
-  by?: Side;
+  by?: number;
   isRicochet?: boolean;
   bulletX?: number;
   bulletY?: number;
@@ -245,19 +288,27 @@ interface DamageInfo {
   isQuiet?: boolean;
 }
 
-function damageTank(victim: Tank, amount: number, events: RoundEvent[], info: DamageInfo): void {
+function damageTank(victim: Tank, amount: number, events: WorldEvent[], info: DamageInfo): void {
   if (!victim.isAlive || amount <= 0) {
     return;
   }
   const dealt = Math.min(victim.hp, amount);
   victim.hp -= amount;
   victim.tally.damageTaken += dealt;
-  events.push({ type: 'hit', side: victim.side, x: victim.x, y: victim.y, damage: dealt, ...info });
+  events.push({ type: 'hit', tank: victim.id, x: victim.x, y: victim.y, damage: dealt, ...info });
   if (victim.hp <= 0) {
     victim.hp = 0;
     victim.isAlive = false;
     victim.speed = 0;
-    events.push({ type: 'death', side: victim.side, x: victim.x, y: victim.y, cause: info.cause });
+    events.push({
+      type: 'death',
+      tank: victim.id,
+      x: victim.x,
+      y: victim.y,
+      cause: info.cause,
+      by: info.by ?? null,
+      isRicochet: info.isRicochet === true,
+    });
   }
 }
 
@@ -275,12 +326,12 @@ function moveTank(tank: Tank, action: Action): void {
 
 // Выталкивает танк из стен и краёв поля; facing — наибольший |n·h| по всем контактам тика (1 — лоб, 0 — вдоль),
 // -1 — контактов не было.
-function pushOutOfWalls(round: Round, tank: Tank): number {
+function pushOutOfWalls(world: World, tank: Tank): number {
   const hx = Math.cos(tank.heading);
   const hy = Math.sin(tank.heading);
   let facing = -1;
   for (let pass = 0; pass < 2; pass++) {
-    for (const wall of round.map.walls) {
+    for (const wall of world.map.walls) {
       const contact = circleRect(tank.x, tank.y, TANK_RADIUS, wall);
       if (contact !== null) {
         tank.x += contact.nx * contact.depth;
@@ -288,8 +339,8 @@ function pushOutOfWalls(round: Round, tank: Tank): number {
         facing = Math.max(facing, Math.abs(contact.nx * hx + contact.ny * hy));
       }
     }
-    const nx = clamp(tank.x, TANK_RADIUS, W - TANK_RADIUS);
-    const ny = clamp(tank.y, TANK_RADIUS, H - TANK_RADIUS);
+    const nx = clamp(tank.x, TANK_RADIUS, world.map.width - TANK_RADIUS);
+    const ny = clamp(tank.y, TANK_RADIUS, world.map.height - TANK_RADIUS);
     if (nx !== tank.x) {
       facing = Math.max(facing, Math.abs(hx));
     }
@@ -302,15 +353,15 @@ function pushOutOfWalls(round: Round, tank: Tank): number {
   return facing;
 }
 
-function resolveTankWalls(round: Round, tank: Tank, events: RoundEvent[]): void {
-  const facing = pushOutOfWalls(round, tank);
+function resolveTankWalls(world: World, tank: Tank, events: WorldEvent[]): void {
+  const facing = pushOutOfWalls(world, tank);
   if (facing < 0) {
     return;
   }
-  const slide = round.rules.wallSlidePercent / WALL_SLIDE_MAX_PERCENT;
+  const slide = world.rules.wallSlidePercent / WALL_SLIDE_MAX_PERCENT;
   if (slide === 0) {
     if (Math.abs(tank.speed) > WALL_BUMP_MIN_SPEED) {
-      events.push({ type: 'bump', side: tank.side, x: tank.x, y: tank.y });
+      events.push({ type: 'bump', tank: tank.id, x: tank.x, y: tank.y });
     }
     tank.speed *= WALL_HIT_SPEED_FACTOR;
     return;
@@ -323,7 +374,7 @@ function resolveTankWalls(round: Round, tank: Tank, events: RoundEvent[]): void 
   const speedBefore = Math.abs(tank.speed);
   tank.speed *= 1 - (1 - WALL_HIT_SPEED_FACTOR) * (1 - slide) * headOn;
   if (speedBefore - Math.abs(tank.speed) > WALL_BUMP_MIN_DROP) {
-    events.push({ type: 'bump', side: tank.side, x: tank.x, y: tank.y });
+    events.push({ type: 'bump', tank: tank.id, x: tank.x, y: tank.y });
   }
 }
 
@@ -352,24 +403,39 @@ function resolveTankTank(a: Tank, b: Tank): void {
   b.y += ny * pushB;
 }
 
-function fire(round: Round, tank: Tank, events: RoundEvent[]): void {
+// Пары по порядку массива: у двух танков — единственная пара, как в оригинале.
+function resolveTanks(world: World): void {
+  const tanks = world.tanks;
+  for (let i = 0; i < tanks.length; i++) {
+    for (let j = i + 1; j < tanks.length; j++) {
+      const a = tanks[i];
+      const b = tanks[j];
+      if (a !== undefined && b !== undefined) {
+        resolveTankTank(a, b);
+      }
+    }
+  }
+}
+
+function fire(world: World, tank: Tank, events: WorldEvent[]): void {
   const dx = Math.cos(tank.turret);
   const dy = Math.sin(tank.turret);
   const x = tank.x + dx * MUZZLE_OFFSET;
   const y = tank.y + dy * MUZZLE_OFFSET;
   tank.reloadLeft = tank.stats.reloadTime;
+  tank.shieldLeft = 0;
   tank.tally.shots++;
-  events.push({ type: 'shot', side: tank.side, x, y, angle: tank.turret });
+  events.push({ type: 'shot', tank: tank.id, x, y, angle: tank.turret });
   const isBlocked =
-    boundsHit(x, y, BULLET_RADIUS) !== null ||
-    round.map.walls.some((wall) => circleRect(x, y, BULLET_RADIUS, wall) !== null);
+    boundsHit(x, y, BULLET_RADIUS, world.map) !== null ||
+    world.map.walls.some((wall) => circleRect(x, y, BULLET_RADIUS, wall) !== null);
   if (isBlocked) {
-    events.push({ type: 'impact', x, y, owner: tank.side });
+    events.push({ type: 'impact', x, y, owner: tank.id });
     return;
   }
-  round.bullets.push({
-    id: round.nextBulletId++,
-    owner: tank.side,
+  world.bullets.push({
+    id: world.nextBulletId++,
+    owner: tank.id,
     x,
     y,
     vx: dx * tank.stats.bulletSpeed,
@@ -392,14 +458,18 @@ function bounceBullet(bullet: Bullet, contact: { nx: number; ny: number; depth: 
   bullet.vy -= 2 * dot * contact.ny;
 }
 
-function hitTankWithBullet(round: Round, bullet: Bullet, tank: Tank, speed: number, events: RoundEvent[]): void {
+function hitTankWithBullet(world: World, bullet: Bullet, tank: Tank, speed: number, events: WorldEvent[]): void {
   bullet.isDead = true;
-  const shooter = round.tanks[bullet.owner];
-  const isSelf = tank.side === bullet.owner;
+  if (tank.shieldLeft > 0) {
+    events.push({ type: 'shield', tank: tank.id, x: bullet.x, y: bullet.y, owner: bullet.owner });
+    return;
+  }
+  const shooter = tankById(world, bullet.owner);
+  const isSelf = tank.id === bullet.owner;
   const dealt = Math.min(tank.hp, bullet.damage);
-  if (isSelf) {
+  if (shooter !== undefined && isSelf) {
     shooter.tally.selfDamage += dealt;
-  } else {
+  } else if (shooter !== undefined) {
     shooter.tally.hits++;
     shooter.tally.damageDealt += dealt;
     if (bullet.hasBounced) {
@@ -417,7 +487,7 @@ function hitTankWithBullet(round: Round, bullet: Bullet, tank: Tank, speed: numb
   });
 }
 
-function stepBullet(round: Round, bullet: Bullet, events: RoundEvent[]): void {
+function stepBullet(world: World, bullet: Bullet, events: WorldEvent[]): void {
   bullet.age += DT;
   if (bullet.age > BULLET_LIFETIME) {
     bullet.isDead = true;
@@ -430,9 +500,9 @@ function stepBullet(round: Round, bullet: Bullet, events: RoundEvent[]): void {
   for (let s = 0; s < steps && !bullet.isDead; s++) {
     bullet.x += bullet.vx * sdt;
     bullet.y += bullet.vy * sdt;
-    let contact = boundsHit(bullet.x, bullet.y, BULLET_RADIUS);
+    let contact = boundsHit(bullet.x, bullet.y, BULLET_RADIUS, world.map);
     if (contact === null) {
-      for (const wall of round.map.walls) {
+      for (const wall of world.map.walls) {
         contact = circleRect(bullet.x, bullet.y, BULLET_RADIUS, wall);
         if (contact !== null) {
           break;
@@ -456,15 +526,15 @@ function stepBullet(round: Round, bullet: Bullet, events: RoundEvent[]): void {
       }
       continue;
     }
-    for (const tank of round.tanks) {
+    for (const tank of world.tanks) {
       if (!tank.isAlive) {
         continue;
       }
-      if (tank.side === bullet.owner && !bullet.hasBounced) {
+      if (tank.id === bullet.owner && !bullet.hasBounced) {
         continue;
       }
       if (Math.hypot(tank.x - bullet.x, tank.y - bullet.y) < TANK_RADIUS + BULLET_RADIUS) {
-        hitTankWithBullet(round, bullet, tank, speed, events);
+        hitTankWithBullet(world, bullet, tank, speed, events);
         break;
       }
     }
@@ -472,8 +542,8 @@ function stepBullet(round: Round, bullet: Bullet, events: RoundEvent[]): void {
 }
 
 // Снаряды уничтожают друг друга: встречный выстрел можно сбить.
-function clashBullets(round: Round, events: RoundEvent[]): void {
-  const live = round.bullets.filter((bullet) => !bullet.isDead);
+function clashBullets(world: World, events: WorldEvent[]): void {
+  const live = world.bullets.filter((bullet) => !bullet.isDead);
   for (const [i, a] of live.entries()) {
     for (const b of live.slice(i + 1)) {
       if (a.isDead || b.isDead) {
@@ -485,7 +555,10 @@ function clashBullets(round: Round, events: RoundEvent[]): void {
         if (a.owner !== b.owner) {
           // Перехват засчитывается тому, чей снаряд выпущен позже: это оборонительный выстрел.
           const later = a.id > b.id ? a : b;
-          round.tanks[later.owner].tally.intercepts++;
+          const defender = tankById(world, later.owner);
+          if (defender !== undefined) {
+            defender.tally.intercepts++;
+          }
         }
         events.push({ type: 'clash', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
       }
@@ -493,19 +566,31 @@ function clashBullets(round: Round, events: RoundEvent[]): void {
   }
 }
 
-function stepBullets(round: Round, events: RoundEvent[]): void {
-  for (const bullet of round.bullets) {
+// Полёт снарядов на один тик без попаданий в танки и перехватов: так клиент ведёт снаряды между событиями сервера,
+// а гибель от танка или встречного снаряда решает только сервер.
+export function flyBullets(world: World): void {
+  const events: WorldEvent[] = [];
+  for (const bullet of world.bullets) {
+    stepBullet(world, bullet, events);
+  }
+  world.bullets = world.bullets.filter((bullet) => !bullet.isDead);
+  world.tick++;
+  world.time = world.tick * DT;
+}
+
+function stepBullets(world: World, events: WorldEvent[]): void {
+  for (const bullet of world.bullets) {
     if (bullet.isDead) {
       continue;
     }
-    stepBullet(round, bullet, events);
+    stepBullet(world, bullet, events);
   }
-  clashBullets(round, events);
-  round.bullets = round.bullets.filter((bullet) => !bullet.isDead);
+  clashBullets(world, events);
+  world.bullets = world.bullets.filter((bullet) => !bullet.isDead);
 }
 
-function stepKits(round: Round, events: RoundEvent[]): void {
-  for (const kit of round.kits) {
+function stepKits(world: World, events: WorldEvent[]): void {
+  for (const kit of world.kits) {
     if (!kit.isActive) {
       kit.respawnIn = Math.max(0, kit.respawnIn - DT);
       if (kit.respawnIn === 0) {
@@ -517,7 +602,7 @@ function stepKits(round: Round, events: RoundEvent[]): void {
     let best: Tank | null = null;
     let bestDistance = Infinity;
     let isTie = false;
-    for (const tank of round.tanks) {
+    for (const tank of world.tanks) {
       if (!tank.isAlive) {
         continue;
       }
@@ -539,22 +624,22 @@ function stepKits(round: Round, events: RoundEvent[]): void {
       best.tally.kits++;
       kit.isActive = false;
       kit.respawnIn = KIT.respawn;
-      events.push({ type: 'pickup', side: best.side, x: kit.x, y: kit.y, healed });
+      events.push({ type: 'pickup', tank: best.id, x: kit.x, y: kit.y, healed });
     }
   }
 }
 
-function stepZone(round: Round, events: RoundEvent[]): void {
-  const previousRadius = round.zone.radius;
-  round.zone.radius = zoneRadiusAt(round.time + DT);
-  if (previousRadius === ZONE_START_RADIUS && round.zone.radius < previousRadius) {
+function stepZone(world: World, events: WorldEvent[]): void {
+  const previousRadius = world.zone.radius;
+  world.zone.radius = zoneRadiusAt(world.zonePlan, world.time + DT);
+  if (previousRadius === world.zonePlan.startRadius && world.zone.radius < previousRadius) {
     events.push({ type: 'zoneStart' });
   }
-  for (const tank of round.tanks) {
-    if (!tank.isAlive) {
+  for (const tank of world.tanks) {
+    if (!tank.isAlive || tank.shieldLeft > 0) {
       continue;
     }
-    if (Math.hypot(tank.x - round.zone.x, tank.y - round.zone.y) > round.zone.radius) {
+    if (Math.hypot(tank.x - world.zone.x, tank.y - world.zone.y) > world.zone.radius) {
       const damage = ZONE.damagePerSecond * DT;
       tank.tally.zoneDamage += Math.min(tank.hp, damage);
       damageTank(tank, damage, events, { cause: 'zone', isQuiet: true });
@@ -562,7 +647,48 @@ function stepZone(round: Round, events: RoundEvent[]): void {
   }
 }
 
-function finishIfOver(round: Round, events: RoundEvent[]): void {
+// Один тик физики поля боя. actions[i] — команда танка world.tanks[i].
+export function stepWorld(world: World, actions: readonly unknown[]): WorldEvent[] {
+  const events: WorldEvent[] = [];
+  const acts = world.tanks.map((_, index) => sanitizeAction(actions[index]));
+
+  for (const [index, tank] of world.tanks.entries()) {
+    if (!tank.isAlive) {
+      continue;
+    }
+    tank.reloadLeft = Math.max(0, tank.reloadLeft - DT);
+    tank.shieldLeft = Math.max(0, tank.shieldLeft - DT);
+    moveTank(tank, acts[index] ?? IDLE_ACTION);
+  }
+  for (const tank of world.tanks) {
+    if (tank.isAlive) {
+      resolveTankWalls(world, tank, events);
+    }
+  }
+  resolveTanks(world);
+  for (const tank of world.tanks) {
+    if (tank.isAlive) {
+      resolveTankWalls(world, tank, events);
+    }
+  }
+
+  for (const [index, tank] of world.tanks.entries()) {
+    const isFiring = acts[index]?.isFiring === true;
+    if (tank.isAlive && isFiring && tank.reloadLeft <= 0) {
+      fire(world, tank, events);
+    }
+  }
+
+  stepBullets(world, events);
+  stepKits(world, events);
+  stepZone(world, events);
+
+  world.tick++;
+  world.time = world.tick * DT;
+  return events;
+}
+
+function finishIfOver(round: Round, events: DuelEvent[]): void {
   const [a, b] = round.tanks;
   if (!a.isAlive || !b.isAlive) {
     round.isOver = true;
@@ -588,46 +714,19 @@ function finishIfOver(round: Round, events: RoundEvent[]): void {
   }
 }
 
-// Один тик симуляции. actions[side] — команда соответствующего танка.
-export function stepRound(round: Round, actions: [unknown, unknown]): RoundEvent[] {
+// В дуэли неуязвимости нет: танки появляются только на старте раунда.
+export type DuelEvent = Exclude<RoundEvent, { type: 'shield' }>;
+
+function isDuelEvent(event: WorldEvent): event is Exclude<WorldEvent, { type: 'shield' }> {
+  return event.type !== 'shield';
+}
+
+// Один тик дуэли. actions[side] — команда соответствующего танка.
+export function stepRound(round: Round, actions: [unknown, unknown]): DuelEvent[] {
   if (round.isOver) {
     return [];
   }
-  const events: RoundEvent[] = [];
-  const acts: [Action, Action] = [sanitizeAction(actions[0]), sanitizeAction(actions[1])];
-
-  for (const tank of round.tanks) {
-    if (!tank.isAlive) {
-      continue;
-    }
-    tank.reloadLeft = Math.max(0, tank.reloadLeft - DT);
-    moveTank(tank, acts[tank.side]);
-  }
-  for (const tank of round.tanks) {
-    if (tank.isAlive) {
-      resolveTankWalls(round, tank, events);
-    }
-  }
-  resolveTankTank(round.tanks[0], round.tanks[1]);
-  for (const tank of round.tanks) {
-    if (tank.isAlive) {
-      resolveTankWalls(round, tank, events);
-    }
-  }
-
-  for (const tank of round.tanks) {
-    if (tank.isAlive && acts[tank.side].isFiring && tank.reloadLeft <= 0) {
-      fire(round, tank, events);
-    }
-  }
-
-  stepBullets(round, events);
-  stepKits(round, events);
-  stepZone(round, events);
-
-  round.tick++;
-  round.time = round.tick * DT;
-
+  const events = stepWorld(round, actions).filter(isDuelEvent);
   finishIfOver(round, events);
   return events;
 }

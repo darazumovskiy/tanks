@@ -1,9 +1,18 @@
-import { BULLET_RADIUS, leadPoint, MAPS, MUZZLE_OFFSET, TANK_HIT_RADIUS, type Wall } from '@tanks/shared/engine';
+import {
+  ARENA,
+  BULLET_RADIUS,
+  leadPoint,
+  MAPS,
+  MUZZLE_OFFSET,
+  TANK_HIT_RADIUS,
+  type Field,
+  type Wall,
+} from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
 import { AIM_LINE_TAIL, computeAimLine, type AimLineEnemy, type AimLineInput } from './aimLine.js';
 
 const BULLET_SPEED = 550;
-const POLYGON_WALLS: readonly Wall[] = MAPS[0]?.walls ?? [];
+const POLYGON: Field = { width: ARENA.width, height: ARENA.height, walls: MAPS[0]?.walls ?? [] };
 const deg = (value: number): number => (value * Math.PI) / 180;
 
 function length(segment: { x1: number; y1: number; x2: number; y2: number }): number {
@@ -15,7 +24,7 @@ function standing(x: number, y: number): AimLineEnemy {
 }
 
 function input(overrides: Partial<AimLineInput> & Pick<AimLineInput, 'shooter'>): AimLineInput {
-  return { walls: POLYGON_WALLS, bulletSpeed: BULLET_SPEED, enemy: null, hasLeadHint: false, ...overrides };
+  return { field: POLYGON, bulletSpeed: BULLET_SPEED, enemy: null, hasLeadHint: false, ...overrides };
 }
 
 describe('computeAimLine — геометрия', () => {
@@ -43,7 +52,7 @@ describe('computeAimLine — геометрия', () => {
       { x: 100, y: 0, w: 50, h: 900 },
       { x: 300, y: 0, w: 50, h: 900 },
     ];
-    const line = computeAimLine(input({ walls, shooter: { x: 200, y: 450, turret: 0 } }));
+    const line = computeAimLine(input({ field: { ...POLYGON, walls }, shooter: { x: 200, y: 450, turret: 0 } }));
     expect(line.segments[0]?.x2).toBe(300 - BULLET_RADIUS);
     const tail = line.segments[1] ?? { x1: 0, y1: 0, x2: 0, y2: 0 };
     expect(length(tail)).toBeLessThan(AIM_LINE_TAIL);

@@ -51,8 +51,15 @@ export class TestClient {
     this.socket.send(bytes);
   }
 
-  join(roomCode: string, nickname = 'Тест', stats: Stats = DEFAULT_STATS, protocolVersion = PROTOCOL_VERSION): void {
-    this.send({ type: MessageType.Join, protocolVersion, roomCode, nickname, stats });
+  join(
+    roomCode: string,
+    nickname = 'Тест',
+    stats: Stats = DEFAULT_STATS,
+    protocolVersion = PROTOCOL_VERSION,
+    token = '',
+    isBot = false,
+  ): void {
+    this.send({ type: MessageType.Join, protocolVersion, roomCode, nickname, stats, token, isBot });
   }
 
   input(action: Partial<Action>): number {

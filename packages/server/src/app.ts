@@ -6,15 +6,18 @@ import {
   decode,
   encode,
   ErrorCode,
+  ffaSizeOf,
   isClientMessage,
+  isFfaRoomCode,
   MessageType,
   PROTOCOL_VERSION,
   type ClientMessage,
 } from '@tanks/shared/protocol';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
+import { DEFAULT_FFA_OPTIONS, type FfaConnection, type FfaOptions } from './ffaGame.js';
 import { FileGameLog, LOG_ROUTE, NO_LOG, receiveClientLog, type GameLog } from './gameLog.js';
 import { createMetrics, type Metrics } from './metrics.js';
-import { DEFAULT_ROOM_OPTIONS, type Connection, type RoomOptions } from './room.js';
+import { DEFAULT_ROOM_OPTIONS, type RoomOptions } from './room.js';
 import { isValidRoomCode, RoomManager } from './roomManager.js';
 import { APK_ROUTE, requestPath, serveApk, serveStatic } from './static.js';
 
@@ -26,6 +29,7 @@ export interface AppOptions {
   logDir?: string;
   rules?: RoundRules;
   room?: RoomOptions;
+  ffa?: FfaOptions;
   tickMs?: number;
   random?: () => number;
 }
@@ -49,7 +53,7 @@ const METRICS_PATH = '/metrics';
 // Отставание расписания больше этого числа тиков не навёрстывается пачкой — расписание начинается заново.
 const CATCH_UP_LIMIT_TICKS = 5;
 
-class SocketConnection implements Connection {
+class SocketConnection implements FfaConnection {
   constructor(
     private readonly socket: WebSocket,
     private readonly metrics: Metrics,
@@ -61,6 +65,10 @@ class SocketConnection implements Connection {
     }
     this.metrics.countMessage('out', bytes.byteLength);
     this.socket.send(bytes);
+  }
+
+  close(): void {
+    this.socket.close();
   }
 }
 
@@ -80,6 +88,7 @@ export function createApp(options: AppOptions = {}): App {
     log,
     metrics,
     options.rules ?? DEFAULT_RULES,
+    options.ffa ?? DEFAULT_FFA_OPTIONS,
   );
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
   const server = createServer((request, response) => {
@@ -122,7 +131,7 @@ export function createApp(options: AppOptions = {}): App {
     socket.close();
   }
 
-  function handleMessage(socket: WebSocket, connection: Connection, message: ClientMessage): void {
+  function handleMessage(socket: WebSocket, connection: SocketConnection, message: ClientMessage): void {
     const seat = rooms.seatOf(connection);
     if (message.type === MessageType.Join) {
       if (seat !== undefined) {
@@ -130,6 +139,15 @@ export function createApp(options: AppOptions = {}): App {
       }
       if (message.protocolVersion !== PROTOCOL_VERSION) {
         sendError(socket, ErrorCode.BadProtocolVersion, 'обнови страницу: версия протокола устарела');
+        return;
+      }
+      if (isFfaRoomCode(message.roomCode)) {
+        const size = ffaSizeOf(message.roomCode);
+        if (size === null) {
+          sendError(socket, ErrorCode.BadMessage, 'неверный размер общей игры');
+          return;
+        }
+        rooms.joinFfa(size, connection, message);
         return;
       }
       if (!isValidRoomCode(message.roomCode)) {

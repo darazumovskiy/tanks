@@ -1,10 +1,11 @@
-import { MAPS, TANK_HIT_RADIUS, type Wall } from '@tanks/shared/engine';
+import { ARENA, MAPS, TANK_HIT_RADIUS, type Field } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
 import { enemyLeadPoint, type AimLineEnemy } from './aimLine.js';
 import { isShotInZone, ZONE_FIRE_MAX_RANGE, type ZoneFireInput } from './zoneFire.js';
 
 const BULLET_SPEED = 550;
-const POLYGON_WALLS: readonly Wall[] = MAPS[0]?.walls ?? [];
+const POLYGON: Field = { width: ARENA.width, height: ARENA.height, walls: MAPS[0]?.walls ?? [] };
+const OPEN_FIELD: Field = { ...POLYGON, walls: [] };
 const SHOOTER = { x: 140, y: 450 };
 const STANDING: AimLineEnemy = { x: 700, y: 450, heading: 0, speed: 0 };
 // Едет вниз по экрану поперёк линии выстрела: точка упреждения заметно ниже корпуса.
@@ -13,7 +14,7 @@ const CROSSING: AimLineEnemy = { x: 700, y: 450, heading: Math.PI / 2, speed: 15
 const SWEEP_STEP = 0.0005;
 
 function input(turret: number, enemy: AimLineEnemy | null, overrides: Partial<ZoneFireInput> = {}): ZoneFireInput {
-  return { walls: POLYGON_WALLS, shooter: { ...SHOOTER, turret }, bulletSpeed: BULLET_SPEED, enemy, ...overrides };
+  return { field: POLYGON, shooter: { ...SHOOTER, turret }, bulletSpeed: BULLET_SPEED, enemy, ...overrides };
 }
 
 function angleTo(point: { x: number; y: number }): number {
@@ -59,14 +60,14 @@ describe('isShotInZone', () => {
     const shooter = { x: 260, y: 260, turret: 0 };
     const enemy: AimLineEnemy = { x: 400, y: 260, heading: 0, speed: 0 };
     expect(isShotInZone(input(0, enemy, { shooter }))).toBe(false);
-    expect(isShotInZone(input(0, enemy, { shooter, walls: [] }))).toBe(true);
+    expect(isShotInZone(input(0, enemy, { shooter, field: OPEN_FIELD }))).toBe(true);
   });
 
   it('дальше предела дальности — не в зоне, ближе — в зоне', () => {
     const far: AimLineEnemy = { ...STANDING, x: SHOOTER.x + 700 };
-    expect(isShotInZone(input(0, far, { walls: [] }))).toBe(false);
+    expect(isShotInZone(input(0, far, { field: OPEN_FIELD }))).toBe(false);
     const near: AimLineEnemy = { ...STANDING, x: SHOOTER.x + ZONE_FIRE_MAX_RANGE - 10 };
-    expect(isShotInZone(input(0, near, { walls: [] }))).toBe(true);
+    expect(isShotInZone(input(0, near, { field: OPEN_FIELD }))).toBe(true);
   });
 
   it('без противника — не в зоне', () => {
