@@ -1,5 +1,6 @@
 import { DEFAULT_STATS, DT, type Action, type Side, type Stats } from '@tanks/shared/engine';
 import {
+  botLevelOf,
   EventFlag,
   quantizeAction,
   type RoundStartMessage,
@@ -11,6 +12,7 @@ import { InputReader } from './input.js';
 import { browserInviteActions, renderInvite } from './invite.js';
 import { NetClient, websocketUrl } from './net.js';
 import { Prediction } from './prediction.js';
+import { hideRoundEnd, showRoundEnd, type RoundResult } from './roundEnd.js';
 import type { Camera } from './render/camera.js';
 import { Effects } from './render/effects.js';
 import { Renderer, type Overlay } from './render/renderer.js';
@@ -23,12 +25,12 @@ export interface GameOptions {
   stats?: Stats;
   canvas: HTMLCanvasElement;
   overlay: HTMLElement;
+  roundEnd: HTMLElement;
   settings: Readonly<Settings>;
   isTouchDevice: boolean;
 }
 
 const TICK_MS = DT * 1000;
-const ROUND_OVER_SHOW_MS = 3000;
 const FRAME_HISTORY = 120;
 const WORST_FRAME_WINDOW_MS = 1000;
 // Пороги журнала: кадр длиннее — заметный рывок; камера сменила высоту окна сильнее — ступень приближения.
@@ -56,7 +58,6 @@ export class Game {
   private side: Side | null = null;
   private roundStart: RoundStartMessage | null = null;
   private roundStartedAt = 0;
-  private roundOver: { at: number; winner: Side | null; reason: string } | null = null;
   private countdownBeeped = 0;
   private lastInputSeq = 0;
   private accumulator = 0;
@@ -114,8 +115,8 @@ export class Game {
           );
           this.roundStart = message;
           this.roundStartedAt = performance.now();
-          this.roundOver = null;
           this.countdownBeeped = 0;
+          hideRoundEnd(this.options.roundEnd);
           this.prediction = new Prediction(this.side, message.mapIndex, message.tanks, this.lastInputSeq);
           this.effects.reset();
           this.renderer.resetCamera();
@@ -132,7 +133,7 @@ export class Game {
           for (const event of message.events) {
             this.effects.onEvent(event);
             if (event.kind === 'roundOver') {
-              this.onRoundOver(event, receivedAt);
+              this.onRoundOver(event, message);
             }
           }
           this.sfx.events(message.events);
@@ -165,6 +166,7 @@ export class Game {
     this.diag.write('close');
     this.diag.close();
     this.net.close();
+    hideRoundEnd(this.options.roundEnd);
   }
 
   toggleAutoFire(): boolean {
@@ -278,15 +280,28 @@ export class Game {
     });
   }
 
-  private onRoundOver(event: SnapshotEvent, at: number): void {
-    const isByTime = (event.flags & EventFlag.ByTime) !== 0;
-    let reason: string;
-    if (event.side === null) {
-      reason = isByTime ? 'равная броня по истечении времени' : 'оба танка уничтожены';
-    } else {
-      reason = isByTime ? 'по оставшейся броне' : 'уничтожение';
+  // Счёт в снимке ещё старый: победа этого раунда добавляется здесь, следующий RoundStart принесёт тот же счёт.
+  private onRoundOver(event: SnapshotEvent, message: SnapshotMessage): void {
+    if (this.side === null || this.roundStart === null) {
+      return;
     }
-    this.roundOver = { at, winner: event.side, reason };
+    const score: [number, number] = [this.roundStart.score[0], this.roundStart.score[1]];
+    if (message.winner !== null) {
+      score[message.winner]++;
+    }
+    let result: RoundResult = 'draw';
+    if (message.winner === this.side) {
+      result = 'win';
+    } else if (message.winner !== null) {
+      result = 'loss';
+    }
+    showRoundEnd(this.options.roundEnd, {
+      result,
+      isByTime: (event.flags & EventFlag.ByTime) !== 0,
+      score,
+      mySide: this.side,
+      botLevel: botLevelOf(this.options.roomCode),
+    });
   }
 
   private frame(now: number): void {
@@ -378,14 +393,6 @@ export class Game {
   }
 
   private overlayFor(now: number, prediction: Prediction, roundStart: RoundStartMessage): Overlay {
-    if (this.roundOver !== null && now - this.roundOver.at < ROUND_OVER_SHOW_MS) {
-      return {
-        kind: 'roundEnd',
-        winner: this.roundOver.winner,
-        reason: this.roundOver.reason,
-        elapsedS: (now - this.roundOver.at) / 1000,
-      };
-    }
     const totalS = (roundStart.countdownTicks * TICK_MS) / 1000;
     const elapsedS = (now - this.roundStartedAt) / 1000;
     if (!prediction.isFighting && elapsedS < totalS + 0.6) {

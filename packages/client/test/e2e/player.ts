@@ -32,6 +32,9 @@ const STATS_KEY = 'tanks.stats';
 const AUTOFIRE_BUTTON = '#autofire';
 const CREATE_BOT_BUTTON = '#create-bot';
 const BOT_LEVEL_TOGGLE = '#bot-level-toggle';
+const MENU_BUTTON = '#menu';
+const ROUND_END_TITLE = '#round-end .round-end-title';
+const ROUND_END_MENU = '#round-end .round-end-menu';
 const levelCardSelector = (level: number): string => `#bot-levels .level[data-level="${String(level)}"]`;
 const COPY_BUTTON = '#overlay .overlay-copy';
 const OPEN_APP_BANNER = '#open-app';
@@ -170,6 +173,18 @@ export class Player {
 
   copyButton(): Locator {
     return this.page.locator(COPY_BUTTON);
+  }
+
+  roundEndTitle(): Locator {
+    return this.page.locator(ROUND_END_TITLE);
+  }
+
+  roundEndMenuHref(): Promise<string | null> {
+    return this.page.locator(ROUND_END_MENU).getAttribute('href');
+  }
+
+  async clickMenu(): Promise<void> {
+    await this.page.locator(MENU_BUTTON).click();
   }
 
   clipboardText(): Promise<string> {

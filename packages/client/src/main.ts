@@ -225,11 +225,13 @@ function startDuel(roomCode: string): void {
     stats,
     canvas,
     overlay: byId('overlay', HTMLElement),
+    roundEnd: byId('round-end', HTMLElement),
     settings: store.value,
     isTouchDevice: hasTouch,
   });
   const settingsToggle = byId('settings-toggle', HTMLButtonElement);
   settingsToggle.hidden = false;
+  byId('menu', HTMLAnchorElement).hidden = false;
   const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store, hasTouch);
   window.addEventListener('keydown', (event) => {
     if (event.code === SETTINGS_KEY_CODE && !event.repeat) {

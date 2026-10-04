@@ -14,6 +14,8 @@ const ARRIVE_DISTANCE = 30;
 const DRIVE_MS = 800;
 const MIN_DRIVE_DISTANCE = 20;
 const KILL_TIMEOUT_MS = 60_000;
+// Сервер держит итог раунда 90 тиков — три секунды.
+const ROUND_PAUSE_MS = 3_000;
 // Клиент шлёт строки раз в секунду, сервер пишет на диск раз в полсекунды.
 const LOG_TIMEOUT_MS = 5_000;
 const AUTOFIRE_START_TIMEOUT_MS = 5_000;
@@ -103,21 +105,25 @@ test('два раунда подряд: стрелок убивает мишен
   try {
     while (Date.now() < deadline) {
       const state = await shooter.waitForBattle();
-      if (state.roundIndex === 1) {
+      if (!state.enemy.isAlive || state.roundIndex === 1) {
         break;
       }
-      if (state.enemy.isAlive) {
-        await shooter.aimAt(state.enemy);
-      }
+      await shooter.aimAt(state.enemy);
       await sleep(200);
     }
   } finally {
     await shooter.setFiring(false);
   }
 
+  // Пауза между раундами короче отсчёта: попап надо поймать сразу после гибели мишени.
+  await expect(shooter.roundEndTitle()).toHaveText('ПОБЕДА!', { timeout: ROUND_PAUSE_MS });
+  await expect(target.roundEndTitle()).toHaveText('ПОРАЖЕНИЕ', { timeout: ROUND_PAUSE_MS });
+  expect(await shooter.roundEndMenuHref()).toBe('/');
+
   const next = await shooter.waitForRound(1, 10_000);
   expect(next.score).toEqual([1, 0]);
   await target.waitForRound(1, 10_000);
+  await expect(shooter.roundEndTitle()).toBeHidden();
   expect(await shooter.driveForward(DRIVE_MS)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
   expect(await target.driveForward(DRIVE_MS)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
 
@@ -213,6 +219,15 @@ test('комната с манекеном по ссылке: раунд ста�
   expect(start.side).toBe(1);
   expect(start.nicknames[0]).toBe('Манекен');
   await expectEnemyMoves(human, start, 'манекен не двигается');
+  await human.close();
+});
+
+test('кнопка «⌂» в бою ведёт на главную', async ({ browser }) => {
+  const human = await Player.open(browser, server.baseUrl, botCode(1), 'Дима', DEFAULT_STATS);
+  await human.waitForBattle();
+  await human.clickMenu();
+  await expect(human.page).toHaveURL(/\/$/);
+  await expect(human.page.locator('#home')).toBeVisible();
   await human.close();
 });
 

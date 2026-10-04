@@ -29,10 +29,7 @@ export interface HudInfo {
   frameTimes: readonly number[];
 }
 
-export type Overlay =
-  | { kind: 'countdown'; elapsedS: number; totalS: number }
-  | { kind: 'roundEnd'; winner: Side | null; reason: string; elapsedS: number }
-  | null;
+export type Overlay = { kind: 'countdown'; elapsedS: number; totalS: number } | null;
 
 const ZONE_START_RADIUS = Math.hypot(ARENA.width / 2, ARENA.height / 2) + 60;
 // Полная плотность экрана телефона (на Xiaomi 14T Pro — 3,25): замер на устройстве — 120 к/с, худший кадр 8 мс.
@@ -195,8 +192,6 @@ export class Renderer {
     this.drawAnnouncements(screen);
     if (overlay?.kind === 'countdown') {
       this.drawCountdown(view, hud, screen, overlay.elapsedS, overlay.totalS);
-    } else if (overlay?.kind === 'roundEnd') {
-      this.drawRoundEnd(hud, screen, overlay.winner, overlay.reason, overlay.elapsedS);
     }
     if (this.effects.flashScreen > 0) {
       ctx.fillStyle = `rgba(255,235,210,${String(this.effects.flashScreen * 0.6)})`;
@@ -565,35 +560,6 @@ export class Renderer {
       ctx.font = `${String(80 * u)}px ${HEAD_FONT}`;
       ctx.fillText('БОЙ!', width / 2, height * 0.78);
     }
-    ctx.restore();
-  }
-
-  private drawRoundEnd(hud: HudInfo, screen: Screen, winner: Side | null, reason: string, elapsedS: number): void {
-    const { ctx } = this;
-    const { u, width, height } = screen;
-    const enter = easeOut(elapsedS / 0.35);
-    const color = winner === null ? '#cfcfcf' : SIDE_COLORS[winner];
-    const bandHeight = 100 * u;
-    const y = height / 2 - bandHeight / 2;
-    ctx.save();
-    ctx.fillStyle = `rgba(0,0,0,${String(0.35 * enter)})`;
-    ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = 'rgba(8,9,12,0.9)';
-    ctx.fillRect(0, y, width * enter, bandHeight);
-    ctx.fillStyle = color;
-    ctx.fillRect(0, y, width * enter, 3 * u);
-    ctx.fillRect(width * (1 - enter), y + bandHeight - 3 * u, width * enter, 3 * u);
-    ctx.globalAlpha = enter;
-    ctx.textAlign = 'center';
-    ctx.font = `${String(44 * u)}px ${HEAD_FONT}`;
-    ctx.fillStyle = color;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 20 * u;
-    ctx.fillText(winner === null ? 'НИЧЬЯ' : hud.names[winner].toUpperCase(), width / 2, y + 54 * u);
-    ctx.shadowBlur = 0;
-    ctx.font = `700 ${String(13 * u)}px ${BODY_FONT}`;
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    ctx.fillText(reason, width / 2, y + 80 * u);
     ctx.restore();
   }
 
