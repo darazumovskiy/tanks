@@ -23,6 +23,7 @@ export interface DebugState {
   isAutoFiring: boolean;
   isAutoAiming: boolean;
   isShotGuarded: boolean;
+  isZoneFiring: boolean;
   aimLine: { state: 'none' | 'onTarget' | 'lead'; isReturning: boolean } | null;
   me: TankState;
   enemy: Point & { heading: number; isAlive: boolean };

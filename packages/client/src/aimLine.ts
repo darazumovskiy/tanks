@@ -83,13 +83,21 @@ function tailOf(returning: ShotSegment | undefined): ShotSegment | null {
   };
 }
 
-function leadTarget(input: AimLineInput): Point | null {
-  const { enemy } = input;
-  if (!input.hasLeadHint || enemy === null || Math.abs(enemy.speed) < LEAD_MIN_SPEED) {
+// Точка упреждения по курсу и скорости противника; `null`, пока он слишком медленный, чтобы она отличалась от корпуса.
+export function enemyLeadPoint(shooter: Point, enemy: AimLineEnemy, bulletSpeed: number): Point | null {
+  if (Math.abs(enemy.speed) < LEAD_MIN_SPEED) {
     return null;
   }
   const velocity = { x: Math.cos(enemy.heading) * enemy.speed, y: Math.sin(enemy.heading) * enemy.speed };
-  return leadPoint(input.shooter, enemy, velocity, input.bulletSpeed);
+  return leadPoint(shooter, enemy, velocity, bulletSpeed);
+}
+
+function leadTarget(input: AimLineInput): Point | null {
+  const { enemy } = input;
+  if (!input.hasLeadHint || enemy === null) {
+    return null;
+  }
+  return enemyLeadPoint(input.shooter, enemy, input.bulletSpeed);
 }
 
 // Упреждение считается по прямой, поэтому проверяется только на первом отрезке: после отскока путь длиннее

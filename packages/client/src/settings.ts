@@ -12,6 +12,7 @@ export interface Settings {
   hasQuickReverse: boolean;
   hasAimLine: boolean;
   hasLeadHint: boolean;
+  hasZoneFire: boolean;
   cameraMode: PhoneCameraMode;
   minViewPercent: number;
   followLookAhead: number;
@@ -29,6 +30,7 @@ export type BooleanSettingKey =
   | 'hasQuickReverse'
   | 'hasAimLine'
   | 'hasLeadHint'
+  | 'hasZoneFire'
   | 'showFrameGraph';
 export type NumericSettingKey = Exclude<keyof Settings, BooleanSettingKey | 'cameraMode'>;
 
@@ -71,6 +73,7 @@ export function defaultSettings(isTouchDevice: boolean): Settings {
     hasQuickReverse: false,
     hasAimLine: false,
     hasLeadHint: false,
+    hasZoneFire: false,
     cameraMode: 'follow',
     minViewPercent: 75,
     followLookAhead: 0.35,
@@ -114,6 +117,13 @@ export const BOOLEAN_FIELDS: readonly BooleanSettingField[] = [
     key: 'hasLeadHint',
     label: 'Подсказка упреждения',
     hint: 'линия подсвечивается и там, где противник окажется к прилёту снаряда',
+    isAdminOnly: true,
+  },
+  {
+    key: 'hasZoneFire',
+    label: 'Огонь по цели',
+    hint: 'стреляет, только когда линия проходит через противника или туда, куда он едет; короткий тап — всегда',
+    isTouchOnly: true,
     isAdminOnly: true,
   },
 ];

@@ -120,8 +120,8 @@ describe('TouchSticks', () => {
     time = TAP_MAX_MS + 100;
     up({ id: 2, x: RIGHT_X + 60, y: Y });
     expect(sticks.isFiringByStick).toBe(false);
-    expect(sticks.takePendingFire()).toBe(true);
-    expect(sticks.takePendingFire()).toBe(false);
+    expect(sticks.takePendingFire()).toBe('stick');
+    expect(sticks.takePendingFire()).toBe('none');
   });
 
   it('долгое касание внутри кольца без тапа выстрел не защёлкивает', () => {
@@ -129,7 +129,7 @@ describe('TouchSticks', () => {
     move({ id: 2, x: RIGHT_X + 30, y: Y });
     time = TAP_MAX_MS + 100;
     up({ id: 2, x: RIGHT_X + 30, y: Y });
-    expect(sticks.takePendingFire()).toBe(false);
+    expect(sticks.takePendingFire()).toBe('none');
   });
 
   it('без кольца долгое касание со сдвигом, отпущенное между чтениями, защёлкивает выстрел', () => {
@@ -138,7 +138,7 @@ describe('TouchSticks', () => {
     move({ id: 2, x: RIGHT_X + 40, y: Y });
     time = TAP_MAX_MS + 100;
     up({ id: 2, x: RIGHT_X + 40, y: Y });
-    expect(sticks.takePendingFire()).toBe(true);
+    expect(sticks.takePendingFire()).toBe('stick');
   });
 
   it('два пальца — два независимых стика', () => {
@@ -167,7 +167,7 @@ describe('TouchSticks', () => {
     time = 50;
     cancel({ id: 2, x: RIGHT_X, y: Y });
     expect(sticks.stick('aim')).toBeNull();
-    expect(sticks.takePendingFire()).toBe(false);
+    expect(sticks.takePendingFire()).toBe('none');
   });
 
   it('второе касание той же половины при живом стике игнорируется', () => {
@@ -192,22 +192,31 @@ describe('TouchSticks', () => {
     down({ id: 2, x: RIGHT_X, y: Y });
     time = 100;
     up({ id: 2, x: RIGHT_X + 3, y: Y });
-    expect(sticks.takePendingFire()).toBe(true);
-    expect(sticks.takePendingFire()).toBe(false);
+    expect(sticks.takePendingFire()).toBe('tap');
+    expect(sticks.takePendingFire()).toBe('none');
+  });
+
+  it('без кольца тап главнее выстрела самого касания', () => {
+    settings.hasFireRing = false;
+    down({ id: 2, x: RIGHT_X, y: Y });
+    expect(sticks.isFiringByStick).toBe(true);
+    time = 100;
+    up({ id: 2, x: RIGHT_X, y: Y });
+    expect(sticks.takePendingFire()).toBe('tap');
   });
 
   it('тап слева выстрелом не считается', () => {
     down({ id: 1, x: LEFT_X, y: Y });
     time = 100;
     up({ id: 1, x: LEFT_X, y: Y });
-    expect(sticks.takePendingFire()).toBe(false);
+    expect(sticks.takePendingFire()).toBe('none');
   });
 
   it('долгое касание без сдвига — не тап', () => {
     down({ id: 2, x: RIGHT_X, y: Y });
     time = TAP_MAX_MS + 100;
     up({ id: 2, x: RIGHT_X, y: Y });
-    expect(sticks.takePendingFire()).toBe(false);
+    expect(sticks.takePendingFire()).toBe('none');
   });
 
   it('быстрое касание со сдвигом больше порога тапа и возвратом — не тап', () => {
@@ -216,7 +225,7 @@ describe('TouchSticks', () => {
     move({ id: 2, x: RIGHT_X, y: Y });
     time = 100;
     up({ id: 2, x: RIGHT_X, y: Y });
-    expect(sticks.takePendingFire()).toBe(false);
+    expect(sticks.takePendingFire()).toBe('none');
   });
 
   it('сдвиг меньше порога тапа, но больше мёртвой зоны — всё ещё тап', () => {
@@ -226,7 +235,7 @@ describe('TouchSticks', () => {
     expect(sticks.stick('aim')?.isActive).toBe(true);
     time = 100;
     up({ id: 2, x: RIGHT_X + TAP_SLOP_PX - 1, y: Y });
-    expect(sticks.takePendingFire()).toBe(true);
+    expect(sticks.takePendingFire()).toBe('tap');
   });
 
   it('при нулевой мёртвой зоне тап возможен', () => {
@@ -234,7 +243,7 @@ describe('TouchSticks', () => {
     down({ id: 2, x: RIGHT_X, y: Y });
     time = 100;
     up({ id: 2, x: RIGHT_X, y: Y });
-    expect(sticks.takePendingFire()).toBe(true);
+    expect(sticks.takePendingFire()).toBe('tap');
   });
 
   it('тап у края экрана — выстрел, хотя основание сдвинуто и ручка сразу отклонена', () => {
@@ -243,7 +252,7 @@ describe('TouchSticks', () => {
     expect(sticks.stick('aim')?.isActive).toBe(true);
     time = 100;
     up({ id: 2, x: window.innerWidth - 2, y: Y });
-    expect(sticks.takePendingFire()).toBe(true);
+    expect(sticks.takePendingFire()).toBe('tap');
   });
 
   it('стик башни у края стреляет, пока держится', () => {
@@ -350,7 +359,7 @@ describe('TouchSticks', () => {
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
     document.dispatchEvent(new Event('visibilitychange'));
     expect(sticks.states).toHaveLength(0);
-    expect(sticks.takePendingFire()).toBe(false);
+    expect(sticks.takePendingFire()).toBe('none');
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
   });
 });

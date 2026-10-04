@@ -1,4 +1,12 @@
-import { DEFAULT_STATS, DT, isShotReturning, type Action, type Side, type Stats } from '@tanks/shared/engine';
+import {
+  DEFAULT_STATS,
+  DT,
+  isShotReturning,
+  type Action,
+  type Side,
+  type Stats,
+  type Wall,
+} from '@tanks/shared/engine';
 import {
   botLevelOf,
   EventFlag,
@@ -9,7 +17,7 @@ import {
 } from '@tanks/shared/protocol';
 import { computeAimLine, type AimLine, type AimLineState } from './aimLine.js';
 import { DiagLog } from './diag.js';
-import { InputReader } from './input.js';
+import { InputReader, type ShotContext } from './input.js';
 import { browserInviteActions, renderInvite } from './invite.js';
 import { NetClient, websocketUrl } from './net.js';
 import { Prediction, type InterpolatedTank, type WorldView } from './prediction.js';
@@ -20,6 +28,7 @@ import { Renderer, type Overlay } from './render/renderer.js';
 import type { Settings } from './settings.js';
 import { Sfx } from './sfx.js';
 import type { Telemetry } from './telemetry.js';
+import { isShotInZone } from './zoneFire.js';
 
 export interface GameOptions {
   roomCode: string;
@@ -62,7 +71,8 @@ function formatFlags(settings: Readonly<Settings>): string {
   const quickReverse = formatFlag(settings.hasQuickReverse);
   const aimLine = formatFlag(settings.hasAimLine);
   const leadHint = formatFlag(settings.hasLeadHint);
-  return `flags autoaim=${autoaim} guard=${guard} quickreverse=${quickReverse} aimline=${aimLine} leadhint=${leadHint}`;
+  const zoneFire = formatFlag(settings.hasZoneFire);
+  return `flags autoaim=${autoaim} guard=${guard} quickreverse=${quickReverse} aimline=${aimLine} leadhint=${leadHint} zonefire=${zoneFire}`;
 }
 
 // Связывает сеть, предсказание, ввод, эффекты, звук и рендер; держит цикл кадров и фиксированный шаг ввода.
@@ -229,8 +239,8 @@ export class Game {
     this.diag.write(line);
   }
 
-  // Помощники не добывают информацию: автоведение, предохранитель и линия выстрела знают только о живом
-  // противнике в кадре камеры и только во время боя.
+  // Помощники не добывают информацию: автоведение, предохранитель, линия выстрела и огонь по цели знают только
+  // о живом противнике в кадре камеры и только во время боя.
   private visibleEnemy(prediction: Prediction, view: WorldView, side: Side): InterpolatedTank | null {
     const enemy = view.tanks[side === 0 ? 1 : 0];
     if (!prediction.isFighting || !enemy.isAlive) {
@@ -240,6 +250,20 @@ export class Game {
       return null;
     }
     return enemy;
+  }
+
+  // Зона считается только при включённом флаге: без него трассировка пути на каждом тике не нужна.
+  private shotContextFor(prediction: Prediction, walls: readonly Wall[], enemy: InterpolatedTank | null): ShotContext {
+    const me = prediction.me;
+    const bulletSpeed = me.stats.bulletSpeed;
+    const isInZone =
+      this.options.settings.hasZoneFire &&
+      isShotInZone({ walls, shooter: { x: me.x, y: me.y, turret: me.turret }, bulletSpeed, enemy });
+    return {
+      target: enemy === null ? null : { x: enemy.x, y: enemy.y },
+      isReturning: isShotReturning(walls, me, me.turret, bulletSpeed, enemy),
+      isInZone,
+    };
   }
 
   private aimLineFor(
@@ -305,6 +329,7 @@ export class Game {
     isAutoFiring: boolean;
     isAutoAiming: boolean;
     isShotGuarded: boolean;
+    isZoneFiring: boolean;
     aimLine: { state: AimLineState; isReturning: boolean } | null;
     rttMs: number;
     serverTick: number;
@@ -333,6 +358,7 @@ export class Game {
       isAutoFiring: this.input.isAutoFiring,
       isAutoAiming: this.input.isAutoAiming,
       isShotGuarded: this.input.isShotGuarded,
+      isZoneFiring: this.input.isZoneFiring,
       aimLine: this.aimLine === null ? null : { state: this.aimLine.state, isReturning: this.aimLine.isReturning },
       rttMs: this.net.rttMs,
       serverTick: this.net.serverTick,
@@ -436,13 +462,10 @@ export class Game {
     this.accumulator += elapsed;
     const frameView = prediction.view(now);
     const enemy = this.visibleEnemy(prediction, frameView, side);
-    const aimTarget = enemy === null ? null : { x: enemy.x, y: enemy.y };
     const walls = frameView.round.map.walls;
     while (this.accumulator >= TICK_MS) {
       this.accumulator -= TICK_MS;
-      const me = prediction.me;
-      const isShotRisky = isShotReturning(walls, me, me.turret, me.stats.bulletSpeed, enemy);
-      const action = quantizeAction(this.input.read(me, aimTarget, isShotRisky));
+      const action = quantizeAction(this.input.read(prediction.me, this.shotContextFor(prediction, walls, enemy)));
       const bulletsBefore = prediction.myBulletCount;
       const seq = prediction.predict(action);
       this.lastInputSeq = seq;
@@ -497,6 +520,7 @@ export class Game {
         sticks: this.input.stickStates,
         isAutoAiming: this.input.isAutoAiming,
         isShotGuarded: this.input.isShotGuarded,
+        isZoneFiring: this.input.isZoneFiring,
         aimLine: this.aimLine,
         frameMs: elapsed,
         frameTimes: this.frameTimes,

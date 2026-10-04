@@ -10,6 +10,7 @@ const GUARD_LABEL = 'Предохранитель';
 const QUICK_REVERSE_LABEL = 'Быстрый задний ход';
 const AIM_LINE_LABEL = 'Линия выстрела';
 const LEAD_HINT_LABEL = 'Подсказка упреждения';
+const ZONE_FIRE_LABEL = 'Огонь по цели';
 const ADMIN_GROUP_TITLE = 'Для настройки';
 
 describe('SettingsPanel', () => {
@@ -155,6 +156,7 @@ describe('SettingsPanel', () => {
     const labels = checkLabels(root);
     expect(labels).toContain(AIM_LINE_LABEL);
     expect(labels).not.toContain(LEAD_HINT_LABEL);
+    expect(labels).not.toContain(ZONE_FIRE_LABEL);
     expect(root.querySelector('.settings-group-title')).toBeNull();
     const aimLine = checkFor(AIM_LINE_LABEL);
     expect(aimLine.checked).toBe(false);
@@ -171,7 +173,7 @@ describe('SettingsPanel', () => {
     const title = adminRoot.querySelector('.settings-group-title');
     expect(title?.textContent).toBe(ADMIN_GROUP_TITLE);
     const labels = checkLabels(adminRoot);
-    expect(labels.at(-1)).toBe(LEAD_HINT_LABEL);
+    expect(labels.slice(-2)).toEqual([LEAD_HINT_LABEL, ZONE_FIRE_LABEL]);
     const order = Array.from(adminRoot.querySelectorAll('.settings-check, .settings-group-title'));
     const leadRow = Array.from(adminRoot.querySelectorAll<HTMLLabelElement>('label.settings-check')).find(
       (row) => row.querySelector('.settings-head span')?.textContent === LEAD_HINT_LABEL,
@@ -189,6 +191,31 @@ describe('SettingsPanel', () => {
       expect(adminStore.value.hasLeadHint).toBe(true);
       expect(localStorage.getItem('tanks.settings')).toContain('"hasLeadHint":true');
     }
+  });
+
+  it('огонь по цели: в админ-режиме на телефоне флажок есть и пишет флаг, на компьютере его нет', () => {
+    const phoneRoot = document.createElement('aside');
+    document.body.append(phoneRoot);
+    const phoneStore = new SettingsStore(localStorage, DEFAULT_SETTINGS, ADMIN);
+    new SettingsPanel(phoneRoot, document.createElement('button'), phoneStore, true);
+    const checkbox = Array.from(phoneRoot.querySelectorAll<HTMLLabelElement>('label.settings-check'))
+      .find((row) => row.querySelector('.settings-head span')?.textContent === ZONE_FIRE_LABEL)
+      ?.querySelector<HTMLInputElement>('input[type=checkbox]');
+    expect(checkbox?.checked).toBe(false);
+    if (checkbox !== null && checkbox !== undefined) {
+      checkbox.checked = true;
+      checkbox.dispatchEvent(new Event('change'));
+    }
+    expect(phoneStore.value.hasZoneFire).toBe(true);
+    expect(localStorage.getItem('tanks.settings')).toContain('"hasZoneFire":true');
+
+    const desktopRoot = document.createElement('aside');
+    document.body.append(desktopRoot);
+    const desktopStore = new SettingsStore(localStorage, defaultSettings(false), ADMIN);
+    new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, false);
+    const desktopLabels = checkLabels(desktopRoot);
+    expect(desktopLabels).toContain(LEAD_HINT_LABEL);
+    expect(desktopLabels).not.toContain(ZONE_FIRE_LABEL);
   });
 
   it('флажок кольца огня стоит перед ползунком радиуса и показывает его только включённым', () => {

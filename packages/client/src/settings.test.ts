@@ -13,12 +13,13 @@ describe('defaultSettings', () => {
     expect({ ...PHONE_DEFAULTS, hasAutoAim: false }).toEqual(DESKTOP_DEFAULTS);
   });
 
-  it('предохранитель, быстрый задний ход, линия выстрела и подсказка упреждения выключены на обоих устройствах', () => {
+  it('предохранитель, быстрый задний ход, линия выстрела, подсказка упреждения и огонь по цели выключены на обоих устройствах', () => {
     for (const defaults of [PHONE_DEFAULTS, DESKTOP_DEFAULTS]) {
       expect(defaults.hasRicochetGuard).toBe(false);
       expect(defaults.hasQuickReverse).toBe(false);
       expect(defaults.hasAimLine).toBe(false);
       expect(defaults.hasLeadHint).toBe(false);
+      expect(defaults.hasZoneFire).toBe(false);
     }
   });
 });
@@ -81,6 +82,12 @@ describe('parseSettings', () => {
     expect(admin.hasAimLine).toBe(true);
     expect(admin.hasLeadHint).toBe(true);
     expect(parseSettings(JSON.stringify({ stickRadiusPx: 60 }), DESKTOP_DEFAULTS, ADMIN).hasLeadHint).toBe(false);
+  });
+
+  it('огонь по цели — только с правом админа', () => {
+    const raw = JSON.stringify({ hasZoneFire: true });
+    expect(parseSettings(raw, PHONE_DEFAULTS, PLAYER).hasZoneFire).toBe(false);
+    expect(parseSettings(raw, PHONE_DEFAULTS, ADMIN).hasZoneFire).toBe(true);
   });
 });
 

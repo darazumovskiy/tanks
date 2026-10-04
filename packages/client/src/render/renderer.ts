@@ -28,6 +28,7 @@ export interface HudInfo {
   sticks: readonly StickState[];
   isAutoAiming: boolean;
   isShotGuarded: boolean;
+  isZoneFiring: boolean;
   aimLine: AimLine | null;
   frameMs: number;
   frameTimes: readonly number[];
@@ -241,7 +242,7 @@ export class Renderer {
     if (this.settings.showFrameGraph) {
       this.drawFrameGraph(hud.frameTimes, screen);
     }
-    this.drawSticks(hud.sticks);
+    this.drawSticks(hud.sticks, hud.isZoneFiring);
   }
 
   // Столбик — длительность кадра; линия — бюджет 60 к/с; красные столбики вышли за бюджет вдвое.
@@ -728,14 +729,16 @@ export class Renderer {
   }
 
   // Стики живут в CSS-пикселях окна, поэтому рисуются поверх кадра без масштаба поля.
-  private drawSticks(sticks: readonly StickState[]): void {
+  // С огнём по цели стик подсвечивается, только когда зона пропускает выстрелы.
+  private drawSticks(sticks: readonly StickState[], isZoneFiring: boolean): void {
     const { ctx } = this;
     ctx.save();
     ctx.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
     ctx.lineWidth = 2;
+    const isZoneOpen = !this.settings.hasZoneFire || isZoneFiring;
     for (const stick of sticks) {
       const radius = stick.radiusPx;
-      const { isFiring } = stick;
+      const isFiring = stick.isFiring && isZoneOpen;
       // Без кольца стреляет само касание — огонь показывает контур основания.
       const isEdgeFiring = isFiring && stick.fireRing === null;
       ctx.fillStyle = STICK_BASE_COLOR;

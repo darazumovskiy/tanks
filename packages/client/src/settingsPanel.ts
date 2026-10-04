@@ -56,7 +56,7 @@ export class SettingsPanel {
       }
     }
     if (store.isAdmin) {
-      this.appendAdminGroup();
+      this.appendAdminGroup(isTouchDevice);
     }
     const reset = document.createElement('button');
     reset.type = 'button';
@@ -88,13 +88,14 @@ export class SettingsPanel {
     }
   }
 
-  private appendAdminGroup(): void {
+  private appendAdminGroup(isTouchDevice: boolean): void {
     const title = document.createElement('div');
     title.className = 'settings-group-title';
     title.textContent = ADMIN_GROUP_TITLE;
     this.root.append(title);
     for (const field of BOOLEAN_FIELDS) {
-      if (field.isAdminOnly === true) {
+      const isHidden = field.isTouchOnly === true && !isTouchDevice;
+      if (field.isAdminOnly === true && !isHidden) {
         this.root.append(this.buildCheck(field));
       }
     }

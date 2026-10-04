@@ -40,9 +40,10 @@ describe('InputReader', () => {
   let guardEvents: GuardEvent[] = [];
 
   const read = (
-    aimTarget: { x: number; y: number } | null = null,
-    isShotReturning = false,
-  ): ReturnType<InputReader['read']> => input.read(me, aimTarget, isShotReturning);
+    target: { x: number; y: number } | null = null,
+    isReturning = false,
+    isInZone = false,
+  ): ReturnType<InputReader['read']> => input.read(me, { target, isReturning, isInZone });
 
   beforeEach(() => {
     document.body.innerHTML = '';
@@ -58,6 +59,7 @@ describe('InputReader', () => {
       hasAutoAim: false,
       hasRicochetGuard: false,
       hasQuickReverse: false,
+      hasZoneFire: false,
     };
     input = new InputReader(target, { toWorld: (x, y) => ({ x, y }) }, settings, {
       now: () => time,
@@ -289,12 +291,13 @@ describe('InputReader', () => {
       const clocked = new InputReader(target, { toWorld: (x, y) => ({ x, y }) }, settings);
       target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
       target.dispatchEvent(pointer('pointermove', 2, RIGHT_X, Y - 64));
-      expect(clocked.read(me, FAR_TARGET, false).turretTurn).toBe(-1);
+      const safe = { target: FAR_TARGET, isReturning: false, isInZone: false };
+      expect(clocked.read(me, safe).turretTurn).toBe(-1);
       target.dispatchEvent(pointer('pointerup', 2, RIGHT_X, Y - 64));
-      expect(clocked.read(me, FAR_TARGET, false).turretTurn).toBe(0);
+      expect(clocked.read(me, safe).turretTurn).toBe(0);
       settings.hasRicochetGuard = true;
       window.dispatchEvent(key('keydown', 'Space'));
-      expect(clocked.read(me, FAR_TARGET, true).isFiring).toBe(false);
+      expect(clocked.read(me, { ...safe, isReturning: true }).isFiring).toBe(false);
       expect(clocked.isShotGuarded).toBe(true);
     });
 
@@ -417,6 +420,80 @@ describe('InputReader', () => {
       expect(read(null, isReturning).isFiring).toBe(false);
       expect(input.isShotGuarded).toBe(false);
       expect(guardEvents).toEqual([]);
+    });
+  });
+
+  describe('огонь по цели', () => {
+    const isInZone = true;
+    const isOutOfZone = false;
+    const isSafe = false;
+
+    const touchRightHalf = (): void => {
+      target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
+      target.dispatchEvent(pointer('pointermove', 2, RIGHT_X + 40, Y));
+    };
+
+    beforeEach(() => {
+      settings.hasFireRing = false;
+      settings.hasZoneFire = true;
+    });
+
+    it('выключенный флаг — касание стреляет вне зоны, как раньше', () => {
+      settings.hasZoneFire = false;
+      touchRightHalf();
+      expect(read(null, isSafe, isOutOfZone).isFiring).toBe(true);
+      expect(input.isZoneFiring).toBe(false);
+    });
+
+    it('палец на правой половине: вне зоны молчит, в зоне стреляет', () => {
+      touchRightHalf();
+      expect(read(null, isSafe, isOutOfZone).isFiring).toBe(false);
+      expect(input.isZoneFiring).toBe(false);
+      expect(read(null, isSafe, isInZone).isFiring).toBe(true);
+      expect(input.isZoneFiring).toBe(true);
+      expect(read(null, isSafe, isOutOfZone).isFiring).toBe(false);
+    });
+
+    it('тап стреляет вне зоны один раз', () => {
+      target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
+      target.dispatchEvent(pointer('pointerup', 2, RIGHT_X, Y));
+      expect(read(null, isSafe, isOutOfZone).isFiring).toBe(true);
+      expect(read(null, isSafe, isOutOfZone).isFiring).toBe(false);
+    });
+
+    it('выброс стика, отпущенный между чтениями, вне зоны гасится, в зоне стреляет один раз', () => {
+      touchRightHalf();
+      time = 300;
+      target.dispatchEvent(pointer('pointerup', 2, RIGHT_X + 40, Y));
+      expect(read(null, isSafe, isOutOfZone).isFiring).toBe(false);
+      touchRightHalf();
+      target.dispatchEvent(pointer('pointerup', 2, RIGHT_X + 40, Y));
+      expect(read(null, isSafe, isInZone).isFiring).toBe(true);
+      expect(read(null, isSafe, isInZone).isFiring).toBe(false);
+    });
+
+    it('авто-огонь подчиняется зоне', () => {
+      input.setAutoFire(true);
+      expect(read(null, isSafe, isOutOfZone).isFiring).toBe(false);
+      expect(read(null, isSafe, isInZone).isFiring).toBe(true);
+    });
+
+    it('мышь и пробел зоной не ограничены', () => {
+      target.dispatchEvent(pointer('pointerdown', 5, 0, 0, 'mouse'));
+      expect(read(null, isSafe, isOutOfZone).isFiring).toBe(true);
+      window.dispatchEvent(pointer('pointerup', 5, 0, 0, 'mouse'));
+      window.dispatchEvent(key('keydown', 'Space'));
+      expect(read(null, isSafe, isOutOfZone).isFiring).toBe(true);
+    });
+
+    it('предохранитель действует поверх зоны', () => {
+      settings.hasRicochetGuard = true;
+      touchRightHalf();
+      expect(read(null, true, isInZone).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(true);
+      expect(input.isZoneFiring).toBe(true);
+      expect(read(null, isSafe, isInZone).isFiring).toBe(true);
+      expect(input.isShotGuarded).toBe(false);
     });
   });
 

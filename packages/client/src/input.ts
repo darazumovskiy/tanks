@@ -9,7 +9,8 @@ export const AUTO_AIM_RESUME_MS = 500;
 // Предохранитель задерживает опасный выстрел не дольше этого: башня не ушла — тап отменяется.
 export const RICOCHET_GUARD_HOLD_MS = 300;
 
-export type InputSettings = StickSettings & Pick<Settings, 'hasAutoAim' | 'hasRicochetGuard' | 'hasQuickReverse'>;
+export type InputSettings = StickSettings &
+  Pick<Settings, 'hasAutoAim' | 'hasRicochetGuard' | 'hasQuickReverse' | 'hasZoneFire'>;
 
 export type GuardEvent = 'hold' | 'cancel';
 
@@ -35,6 +36,14 @@ export interface AimTarget {
   y: number;
 }
 
+// Что известно о выстреле с текущего угла башни: цель автоведения, вернётся ли снаряд в свой корпус,
+// проходит ли линия через зону противника.
+export interface ShotContext {
+  target: AimTarget | null;
+  isReturning: boolean;
+  isInZone: boolean;
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
 }
@@ -42,6 +51,8 @@ function isTypingTarget(target: EventTarget | null): boolean {
 // Клавиатура — корпус, мышь — башня и выстрел; активный стик касания замещает свой источник.
 // Авто-огонь — выстрел в каждом тике независимо от остальных источников, пока включён.
 // Башня без ручного источника при включённом автоведении держит переданную цель.
+// Огонь по цели пропускает выстрелы касания (стик, авто-огонь, выброс стика) только в зоне противника;
+// тап, мышь и пробел зоной не ограничены.
 // Предохранитель сдерживает выстрел, пока он опасен (признак приходит снаружи), и не дольше задержки.
 export class InputReader {
   private readonly keys = new Set<string>();
@@ -58,6 +69,7 @@ export class InputReader {
   private hasHeldFire = false;
   private guardStartedAt: number | null = null;
   private isShotGuardedNow = false;
+  private isZoneFiringNow = false;
 
   constructor(
     target: HTMLElement,
@@ -120,27 +132,35 @@ export class InputReader {
     return this.isShotGuardedNow;
   }
 
+  get isZoneFiring(): boolean {
+    return this.isZoneFiringNow;
+  }
+
   setAutoFire(isOn: boolean): void {
     this.isAutoFireOn = isOn;
   }
 
-  // `isShotReturning` — расчётный путь снаряда с текущего угла башни вернётся в свой корпус.
-  read(me: SteeredTank, target: AimTarget | null, isShotReturning: boolean): Action {
+  read(me: SteeredTank, shot: ShotContext): Action {
     const hull = this.readHull(me);
-    const turretTurn = this.readTurretTurn(me, target);
-    const isFiring = this.readFire(isShotReturning);
+    const turretTurn = this.readTurretTurn(me, shot.target);
+    const isFiring = this.readFire(shot);
     return { throttle: hull.throttle, turn: hull.turn, turretTurn, isFiring };
   }
 
-  private readFire(isShotReturning: boolean): boolean {
-    const isHoldingFire = this.isMouseDown || this.keys.has('Space') || this.sticks.isFiringByStick;
-    const hasPendingFire = this.sticks.takePendingFire();
+  private readFire(shot: ShotContext): boolean {
+    const isZoneOpen = !this.settings.hasZoneFire || shot.isInZone;
+    this.isZoneFiringNow = this.settings.hasZoneFire && shot.isInZone;
+    const isHoldingByHand = this.isMouseDown || this.keys.has('Space');
+    const isHoldingByTouch = (this.sticks.isFiringByStick || this.isAutoFireOn) && isZoneOpen;
+    const isHoldingFire = isHoldingByHand || isHoldingByTouch;
+    const pending = this.sticks.takePendingFire();
+    const isPendingFire = pending === 'tap' || (pending === 'stick' && isZoneOpen);
     // Защёлка нужна только выстрелу, который к чтению уже отпущен; при зажатом огне она ничего не добавляет.
-    if (hasPendingFire && !isHoldingFire) {
+    if (isPendingFire && !isHoldingFire) {
       this.hasHeldFire = true;
     }
-    const isWantingFire = this.isAutoFireOn || isHoldingFire || this.hasHeldFire;
-    const isDangerous = this.settings.hasRicochetGuard && isShotReturning;
+    const isWantingFire = isHoldingFire || this.hasHeldFire;
+    const isDangerous = this.settings.hasRicochetGuard && shot.isReturning;
     if (!isDangerous || !isWantingFire) {
       this.guardStartedAt = null;
       this.isShotGuardedNow = false;
@@ -157,7 +177,7 @@ export class InputReader {
       this.hasHeldFire = false;
       this.onGuard('cancel');
     }
-    this.isShotGuardedNow = this.isAutoFireOn || isHoldingFire || this.hasHeldFire;
+    this.isShotGuardedNow = isHoldingFire || this.hasHeldFire;
     return false;
   }
 

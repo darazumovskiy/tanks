@@ -53,6 +53,16 @@ const GUARD_SHOT_TIMEOUT_MS = 5_000;
 const BEHIND_WALL_POST = { x: 1350, y: 700 };
 const AIM_LINE_TIMEOUT_MS = 8_000;
 const LEAD_HINT_LABEL = 'Подсказка упреждения';
+// Огонь по цели: телефон стоит на точке появления (140, 450); компьютер прячется за стеной (330, 160, 44, 200) в
+// (480, 200) — дистанция ≈ 420, в кадре телефона, путь снаряда упирается в стену; через проход (1150, 450) и
+// (900, 200) — мимо стен середины поля. Открытая позиция (480, 450) — на оси появления, стен между нет.
+const ZONE_HIDDEN_WAYPOINTS = [
+  { x: 1150, y: 450 },
+  { x: 900, y: 200 },
+  { x: 480, y: 200 },
+];
+const ZONE_OPEN_POST = { x: 480, y: 450 };
+const ZONE_FIRE_TIMEOUT_MS = 10_000;
 const ANDROID_PACKAGE = 'io.github.darazumovskiy.tanks';
 const ANDROID_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 15; 24129PN74G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
@@ -333,6 +343,56 @@ test('линия выстрела: автоведение держит прот�
 
   await shooter.close();
   await target.close();
+});
+
+test('огонь по цели: касание молчит, пока противник за стеной, и стреляет, когда он вышел на линию', async ({
+  browser,
+}) => {
+  const code = roomCode();
+  const phone = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, {
+    isTouch: true,
+    settings: { hasZoneFire: true, hasAutoAim: true },
+    query: '?admin=1',
+  });
+  const desktop = await Player.open(browser, server.baseUrl, code, 'Компьютер', DEFAULT_STATS);
+  await phone.waitForFight();
+  await desktop.waitForFight();
+  for (const waypoint of ZONE_HIDDEN_WAYPOINTS) {
+    await desktop.driveTo(waypoint, ARRIVE_DISTANCE);
+  }
+  const hiddenPost = (await desktop.waitForBattle()).me;
+  const tracking = await phone.waitForTurretAt(hiddenPost, AUTO_AIM_TIMEOUT_MS, 'башня не навелась на противника');
+  expect(tracking.isAutoAiming).toBe(true);
+
+  const touch = await phone.touchDrag(PHONE_AIM_TOUCH, PHONE_AIM_TOUCH);
+  await sleep(NO_FIRE_CHECK_MS);
+  const silent = await phone.waitForBattle();
+  expect(silent.isZoneFiring).toBe(false);
+  expect(silent.bullets).toBe(0);
+  expect((await desktop.waitForBattle()).bullets).toBe(0);
+
+  await desktop.driveTo(ZONE_OPEN_POST, ARRIVE_DISTANCE);
+  const firing = await until(
+    async () => {
+      const state = await phone.state();
+      return state !== null && state.isZoneFiring && state.bullets > 0 ? state : null;
+    },
+    ZONE_FIRE_TIMEOUT_MS,
+    'огонь по цели не открылся на открытой линии',
+  );
+  expect(firing.isAutoAiming).toBe(true);
+  await until(
+    async () => {
+      const state = await desktop.state();
+      return state !== null && state.bullets > 0 ? true : null;
+    },
+    ZONE_FIRE_TIMEOUT_MS,
+    'компьютер не увидел снаряды телефона',
+  );
+  await touch.release();
+
+  await phone.close();
+  await desktop.close();
 });
 
 test('админ-режим: страница с ?admin=1 показывает флажок упреждения, без него — нет', async ({ browser }) => {
