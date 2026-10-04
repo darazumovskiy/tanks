@@ -14,13 +14,19 @@ export class TestClient {
   private readonly socket: WebSocket;
   private readonly queue: ServerMessage[] = [];
   private readonly waiters: ((message: ServerMessage) => void)[] = [];
+  // Текстовые сообщения идут мимо очереди: они не часть игрового протокола.
+  readonly texts: string[] = [];
   private isClosed = false;
   private seq = 0;
 
   private constructor(url: string) {
     this.socket = new WebSocket(url);
     this.socket.binaryType = 'arraybuffer';
-    this.socket.on('message', (data: ArrayBuffer) => {
+    this.socket.on('message', (data: ArrayBuffer, isBinary: boolean) => {
+      if (!isBinary) {
+        this.texts.push(new TextDecoder().decode(data));
+        return;
+      }
       const message = decode(new Uint8Array(data)) as ServerMessage;
       const waiter = this.waiters.shift();
       if (waiter !== undefined) {

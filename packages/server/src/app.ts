@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { DEFAULT_RULES, TICK_RATE, type RoundRules } from '@tanks/shared/engine';
 import {
+  AGENT_NOTICE,
   decode,
   encode,
   ErrorCode,
@@ -158,6 +159,8 @@ export function createApp(options: AppOptions = {}): App {
   wss.on('connection', (socket: WebSocket) => {
     connections.add(socket);
     const connection = new SocketConnection(socket, metrics);
+    socket.send(AGENT_NOTICE);
+    metrics.countMessage('out', Buffer.byteLength(AGENT_NOTICE));
     socket.on('message', (data: RawData) => {
       const bytes = toBytes(data);
       metrics.countMessage('in', bytes.byteLength);

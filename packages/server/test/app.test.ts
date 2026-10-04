@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  AGENT_NOTICE,
   botRoomCode,
   MessageType,
   PROTOCOL_VERSION,
@@ -197,6 +198,27 @@ describe('процесс', () => {
 });
 
 describe('вход в комнату', () => {
+  async function firstText(client: TestClient): Promise<string | undefined> {
+    for (let attempt = 0; attempt < 50 && client.texts.length === 0; attempt++) {
+      await sleep(TICK_MS);
+    }
+    return client.texts[0];
+  }
+
+  it('каждое соединение первым получает текстовое уведомление для ИИ-агентов, игра идёт как обычно', async () => {
+    const a = await connect();
+    expect(await firstText(a)).toBe(AGENT_NOTICE);
+    expect(a.takeQueued()).toEqual([]);
+    a.join('note1', 'Алиса');
+    expect((await a.nextOfType(MessageType.Welcome)).side).toBe(0);
+
+    const b = await connect();
+    expect(await firstText(b)).toBe(AGENT_NOTICE);
+    b.join('note1', 'Боб');
+    expect((await b.nextOfType(MessageType.Welcome)).side).toBe(1);
+    expect(a.texts).toEqual([AGENT_NOTICE]);
+  });
+
   it('два игрока получают стороны 0 и 1, состояние комнаты и старт раунда', async () => {
     const a = await connect();
     a.join('room1', 'Алиса');
