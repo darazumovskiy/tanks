@@ -14,6 +14,7 @@ describe('код комнаты против бота', () => {
   it('у каждого уровня есть имя и описание', () => {
     for (const level of BOT_LEVELS) {
       expect(BOT_LEVEL_INFO[level].name).not.toBe('');
+      expect(BOT_LEVEL_INFO[level].tagline).not.toBe('');
       expect(BOT_LEVEL_INFO[level].summary).not.toBe('');
     }
   });

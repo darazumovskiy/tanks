@@ -6,16 +6,35 @@ const LEVEL_PATTERN = new RegExp(`^${BOT_ROOM_PREFIX}(\\d{${String(LEVEL_DIGITS)
 export const BOT_LEVELS = [1, 2, 3, 10] as const;
 export type BotLevel = (typeof BOT_LEVELS)[number];
 
+// tagline — короткое описание для игрока; summary — техническая подсказка под иконкой.
 export interface BotLevelInfo {
   name: string;
+  tagline: string;
   summary: string;
 }
 
 export const BOT_LEVEL_INFO: Readonly<Record<BotLevel, BotLevelInfo>> = {
-  1: { name: 'Манекен', summary: 'ездит куда попало, стреляет редко и мимо' },
-  2: { name: 'Карусель', summary: 'кружит и стреляет по тебе каждую перезарядку, без упреждения' },
-  3: { name: 'Охотник', summary: 'упреждение, уход от пуль, аптечки — спарринг-бот арены' },
-  10: { name: 'ПАРАЛЛАКС-ASTRA', summary: 'бот GPT-6 Astra из турнира; победить нельзя, попасть — уже успех' },
+  1: {
+    name: 'Манекен',
+    tagline: 'Груша для битья. Иногда огрызается',
+    summary: 'Ездит случайными курсами, целится медленно и с шумом, стреляет редко.',
+  },
+  2: {
+    name: 'Карусель',
+    tagline: 'Кружится и палит. Стены для него — слухи',
+    summary:
+      'Манекен из tank-arena: едет кругами, стреляет в твоё текущее положение каждую перезарядку, без упреждения.',
+  },
+  3: {
+    name: 'Охотник',
+    tagline: 'Уворачивается от пули, которую ты ещё не выпустил',
+    summary: 'Спарринг-бот tank-arena: путь по сетке, упреждение по скорости, уход от летящих пуль, аптечки, зона.',
+  },
+  10: {
+    name: 'ПАРАЛЛАКС-ASTRA',
+    tagline: 'Босс. Попал один раз — рассказывай внукам',
+    summary: 'Бот GPT-6 Astra из турнира tank-arena, без изменений. Не предполагается выигрываемым.',
+  },
 };
 
 function isBotLevel(value: number): value is BotLevel {

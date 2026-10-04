@@ -16,6 +16,8 @@ const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const APK_ROUTE = '/app/tanks.apk';
 const SETTINGS_KEY_CODE = 'KeyO';
 const AUTOFIRE_ACTIVE_CLASS = 'is-active';
+const LEVEL_SELECTED_CLASS = 'is-selected';
+const LEVEL_INFO_OPEN_CLASS = 'is-open';
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 
 function randomCode(): string {
@@ -48,26 +50,92 @@ function parseBotLevel(raw: string | null): BotLevel {
   return known ?? DEFAULT_BOT_LEVEL;
 }
 
-// Список уровней — из общего с сервером контракта; выбранный уровень запоминается на устройстве.
-function fillBotLevels(select: HTMLSelectElement): void {
-  for (const level of BOT_LEVELS) {
-    const option = document.createElement('option');
-    option.value = String(level);
-    option.textContent = `${String(level)} · ${BOT_LEVEL_INFO[level].name} — ${BOT_LEVEL_INFO[level].summary}`;
-    select.append(option);
+interface LevelCard {
+  level: BotLevel;
+  card: HTMLElement;
+}
+
+// Карточка — радиокнопка с клавиатуры и касанием; внутри настоящая кнопка подсказки, поэтому сама карточка — не <button>.
+function buildLevelCard(level: BotLevel): LevelCard {
+  const info = BOT_LEVEL_INFO[level];
+  const card = document.createElement('div');
+  card.className = 'level';
+  card.dataset.level = String(level);
+  card.setAttribute('role', 'radio');
+  card.tabIndex = 0;
+
+  const badge = document.createElement('span');
+  badge.className = 'level-badge';
+  badge.textContent = String(level);
+
+  const body = document.createElement('span');
+  body.className = 'level-body';
+  const name = document.createElement('span');
+  name.className = 'level-name';
+  name.textContent = info.name;
+  const tagline = document.createElement('span');
+  tagline.className = 'level-tagline';
+  tagline.textContent = info.tagline;
+  const hint = document.createElement('span');
+  hint.className = 'level-hint';
+  hint.textContent = info.summary;
+  hint.hidden = true;
+  body.append(name, tagline, hint);
+
+  const infoButton = document.createElement('button');
+  infoButton.type = 'button';
+  infoButton.className = 'level-info';
+  infoButton.setAttribute('aria-label', 'Подробнее');
+  infoButton.textContent = 'i';
+  // Подсказка раскрывается по иконке, не выбирая уровень.
+  infoButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+    hint.hidden = !hint.hidden;
+    infoButton.classList.toggle(LEVEL_INFO_OPEN_CLASS, !hint.hidden);
+  });
+
+  card.append(badge, body, infoButton);
+  return { level, card };
+}
+
+// Карточки уровней — из общего с сервером контракта; выбранный уровень запоминается на устройстве.
+function mountLevelPicker(container: HTMLElement): { selected: () => BotLevel } {
+  const cards = BOT_LEVELS.map(buildLevelCard);
+  let selected = parseBotLevel(localStorage.getItem(BOT_LEVEL_KEY));
+  const render = (): void => {
+    for (const { level, card } of cards) {
+      const isSelected = level === selected;
+      card.classList.toggle(LEVEL_SELECTED_CLASS, isSelected);
+      card.setAttribute('aria-checked', String(isSelected));
+    }
+  };
+  for (const { level, card } of cards) {
+    const select = (): void => {
+      selected = level;
+      localStorage.setItem(BOT_LEVEL_KEY, String(level));
+      render();
+    };
+    card.addEventListener('click', select);
+    card.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        select();
+      }
+    });
+    container.append(card);
   }
-  select.value = String(parseBotLevel(localStorage.getItem(BOT_LEVEL_KEY)));
+  render();
+  return { selected: () => selected };
 }
 
 function showHome(): void {
   const home = byId('home', HTMLElement);
   const nickname = byId('nickname', HTMLInputElement);
   const statsInput = byId('stats', HTMLInputElement);
-  const botLevel = byId('bot-level', HTMLSelectElement);
   home.hidden = false;
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
   statsInput.value = localStorage.getItem(STATS_KEY) ?? '3322';
-  fillBotLevels(botLevel);
+  const picker = mountLevelPicker(byId('bot-levels', HTMLElement));
   const startDuelWith = (code: string): void => {
     localStorage.setItem(NICKNAME_KEY, nickname.value);
     localStorage.setItem(STATS_KEY, statsInput.value);
@@ -77,9 +145,7 @@ function showHome(): void {
     startDuelWith(randomCode());
   });
   byId('create-bot', HTMLButtonElement).addEventListener('click', () => {
-    const level = parseBotLevel(botLevel.value);
-    localStorage.setItem(BOT_LEVEL_KEY, String(level));
-    startDuelWith(botRoomCode(level, randomCode()));
+    startDuelWith(botRoomCode(picker.selected(), randomCode()));
   });
   void showAndroidDownload();
 }

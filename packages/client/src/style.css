@@ -317,6 +317,15 @@ input {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+.home h1 {
+  margin: 0 0 8px;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 40px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
 }
 
 .home label {
@@ -327,28 +336,154 @@ input {
   opacity: 0.9;
 }
 
-.home input,
-.home select {
+.home input {
   padding: 10px 12px;
   font-size: 18px;
+  font-family: inherit;
   color: #f4f1e8;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 8px;
 }
 
-.home select option {
-  color: #0b0f0d;
+.levels {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
 }
 
-.home button.secondary {
+.levels-title {
+  margin: 0;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.levels-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Карточка уровня: выбранная подсвечена акцентом игры, остальные приглушены. */
+.level {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.level:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.level:active {
+  transform: scale(0.99);
+}
+
+.level:focus-visible {
+  outline: 2px solid #e8825a;
+  outline-offset: 2px;
+}
+
+.level.is-selected {
+  background: rgba(232, 130, 90, 0.14);
+  border-color: #e8825a;
+}
+
+.level-badge {
+  flex: none;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 8px;
+  display: grid;
+  place-items: center;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 18px;
+  color: #f4f1e8;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.level.is-selected .level-badge {
+  color: #0b0f0d;
+  background: #e8825a;
+}
+
+.level-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.level-name {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 17px;
+  letter-spacing: 0.01em;
+}
+
+.level-tagline {
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.level-hint {
+  margin-top: 6px;
+  padding-top: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(244, 241, 232, 0.55);
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
+.level-info {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font:
+    italic 600 13px/1 Georgia,
+    'Times New Roman',
+    serif;
+  color: rgba(244, 241, 232, 0.6);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.level-info:hover,
+.level-info.is-open {
+  color: #f4f1e8;
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.home .action.secondary {
   color: #f4f1e8;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.25);
 }
 
-.home button {
+.home .action {
   padding: 14px;
+  font-family: inherit;
   font-size: 20px;
   font-weight: 700;
   color: #0b0f0d;

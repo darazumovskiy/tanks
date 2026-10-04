@@ -30,8 +30,8 @@ export interface DebugState {
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
 const AUTOFIRE_BUTTON = '#autofire';
-const BOT_LEVEL_SELECT = '#bot-level';
 const CREATE_BOT_BUTTON = '#create-bot';
+const levelCardSelector = (level: number): string => `#bot-levels .level[data-level="${String(level)}"]`;
 const COPY_BUTTON = '#overlay .overlay-copy';
 const OPEN_APP_BANNER = '#open-app';
 const OPEN_APP_LINK = '#open-app-link';
@@ -116,7 +116,7 @@ export class Player {
     );
     const page = await context.newPage();
     await page.goto(`${baseUrl}/`);
-    await page.locator(BOT_LEVEL_SELECT).selectOption(String(botLevel));
+    await page.locator(levelCardSelector(botLevel)).click();
     await page.locator(CREATE_BOT_BUTTON).click();
     return new Player(context, page, name);
   }

@@ -17,3 +17,4 @@
 | [frontend/invite-link.md](frontend/invite-link.md) | Приглашение по ссылке: «Копировать» и «Поделиться», открытие ссылки Android-приложением (App Links, `assetlinks.json`), плашка «Открыть в приложении» |
 | [infra/deploy-proto.md](infra/deploy-proto.md) | Выкладка пробы на машину в Милане: Caddy, systemd, скрипты |
 | [infra/android-app.md](infra/android-app.md) | Android-приложение: оболочка Capacitor, сборка APK в Docker, раздача по QR |
+| [infra/monitoring.md](infra/monitoring.md) | Мониторинг: `/metrics` игры, Vector → Grafana Cloud, `/telemetry` клиента, лимиты Vector, план тестирования |
