@@ -1,6 +1,10 @@
 import { expect, test, type Browser } from '@playwright/test';
+import { analyzeLogs } from '@tanks/analysis';
 import { botRoomCode, type BotLevel } from '@tanks/shared/protocol';
-import { Player, sleep, until, type DebugState } from './player.js';
+import { existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { normalizeAngle, Player, sleep, until, type DebugState } from './player.js';
 import { GameServer } from './server.js';
 
 const DEFAULT_STATS = '3322';
@@ -23,6 +27,23 @@ const AUTOFIRE_START_TIMEOUT_MS = 5_000;
 const AUTOFIRE_STOP_TIMEOUT_MS = 8_000;
 // Дольше перезарядки: за это время выключенный авто-огонь выпустил бы новый снаряд.
 const NO_FIRE_CHECK_MS = 2_000;
+// Зажатая кнопка огня дольше перезарядки по умолчанию даёт не меньше двух выстрелов.
+const HOLD_FIRE_MS = 1_500;
+const SHOT_LINE_MARK = 'ev kind=shot side=0 ';
+// Противник въезжает в кадр телефона (окно камеры у своего края поля кончается на x ≈ 1285) и уходит с оси
+// появления: на ней башня телефона и так смотрит на него, доворота не увидеть. Через проход между стенами
+// «Полигона» — двумя отрезками.
+const OFF_AXIS_WAYPOINT = { x: 1150, y: 450 };
+const OFF_AXIS_POST = { x: 1100, y: 250 };
+const AUTO_AIM_TIMEOUT_MS = 8_000;
+// Касание правой половины экрана телефона 844×390 и протяжка вниз на весь радиус стика — башня к π/2.
+const PHONE_AIM_TOUCH = { x: 650, y: 200 };
+const PHONE_AIM_DRAG_DOWN = { x: 650, y: 300 };
+const TURRET_DOWN = Math.PI / 2;
+// Короче паузы автоведения (500 мс): башня ещё должна стоять там, куда её увёл игрок.
+const AUTO_AIM_HOLD_CHECK_MS = 250;
+const AUTO_AIM_HOLD_TOLERANCE = 0.1;
+const MIN_TURRET_CHANGE = 0.1;
 const ANDROID_PACKAGE = 'io.github.darazumovskiy.tanks';
 const ANDROID_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 15; 24129PN74G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
@@ -196,6 +217,41 @@ test('телефон: кнопка авто-огня стреляет без к�
   await desktop.close();
 });
 
+test('телефон: башня сама держит противника в кадре, стик перебивает, после отпускания ведение возвращается', async ({
+  browser,
+}) => {
+  const code = roomCode();
+  const phone = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, { isTouch: true });
+  const desktop = await Player.open(browser, server.baseUrl, code, 'Компьютер', DEFAULT_STATS);
+  const phoneStart = await phone.waitForFight();
+  const desktopStart = await desktop.waitForFight();
+  expect(desktopStart.isAutoAiming).toBe(false);
+
+  await desktop.driveTo(OFF_AXIS_WAYPOINT, ARRIVE_DISTANCE);
+  await desktop.driveTo(OFF_AXIS_POST, ARRIVE_DISTANCE);
+  const desktopPost = (await desktop.waitForBattle()).me;
+  const tracked = await phone.waitForTurretAt(desktopPost, AUTO_AIM_TIMEOUT_MS, 'башня не навелась на противника');
+  expect(tracked.isAutoAiming).toBe(true);
+  expect(Math.abs(normalizeAngle(tracked.me.turret - phoneStart.me.turret))).toBeGreaterThan(MIN_TURRET_CHANGE);
+  const desktopNow = await desktop.waitForBattle();
+  expect(desktopNow.isAutoAiming).toBe(false);
+  expect(desktopNow.me.turret).toBe(desktopStart.me.turret);
+
+  const drag = await phone.touchDrag(PHONE_AIM_TOUCH, PHONE_AIM_DRAG_DOWN);
+  const manual = await phone.waitForTurretAngle(TURRET_DOWN, AUTO_AIM_TIMEOUT_MS, 'башня не пошла за стиком');
+  expect(manual.isAutoAiming).toBe(false);
+  await drag.release();
+  await sleep(AUTO_AIM_HOLD_CHECK_MS);
+  const held = await phone.waitForBattle();
+  expect(Math.abs(normalizeAngle(held.me.turret - TURRET_DOWN))).toBeLessThan(AUTO_AIM_HOLD_TOLERANCE);
+  expect(held.isAutoAiming).toBe(false);
+  const resumed = await phone.waitForTurretAt(desktopPost, AUTO_AIM_TIMEOUT_MS, 'ведение не возобновилось');
+  expect(resumed.isAutoAiming).toBe(true);
+
+  await phone.close();
+  await desktop.close();
+});
+
 async function expectEnemyMoves(human: Player, start: DebugState, what: string): Promise<void> {
   await until(
     async () => {
@@ -270,6 +326,40 @@ test('браузер Android видит плашку «Открыть в при�
   await expect(desktop.openAppBanner()).toBeHidden();
   await android.close();
   await desktop.close();
+});
+
+test('анализатор журналов разбирает партию стенда: игра, устройство, выстрелы, отчёт', async ({ browser }) => {
+  const [shooter, target] = await openPair(browser, roomCode());
+  const { gameId } = await shooter.waitForFight();
+  await target.waitForFight();
+  await shooter.setFiring(true);
+  await sleep(HOLD_FIRE_MS);
+  await shooter.setFiring(false);
+  await shooter.close();
+  await target.close();
+  const log = await until(
+    () => {
+      const text = server.gameLog(gameId);
+      return Promise.resolve(text.includes(' leave side=') && text.includes(SHOT_LINE_MARK) ? text : null);
+    },
+    LOG_TIMEOUT_MS,
+    'в журнале игры нет выстрелов и ухода игроков',
+  );
+  const shotLines = log.split(SHOT_LINE_MARK).length - 1;
+
+  const outDir = mkdtempSync(join(tmpdir(), 'tanks-e2e-analysis-'));
+  const result = analyzeLogs(server.logDir, { outDir, only: [gameId] });
+  const summary = result.games[0]?.summary;
+
+  expect(result.games).toHaveLength(1);
+  expect(summary?.id).toBe(gameId);
+  expect(summary?.human_side).toBe(0);
+  expect(summary?.human_name).toBe('Алиса');
+  expect(summary?.device_source).toBe('комната');
+  expect(summary?.device.startsWith('?')).toBe(false);
+  expect(summary?.shooting_human.shots).toBe(shotLines);
+  expect(shotLines).toBeGreaterThanOrEqual(2);
+  expect(existsSync(result.reportPath)).toBe(true);
 });
 
 test('сервер отдаёт подтверждение домена для Android App Links', async ({ request }) => {

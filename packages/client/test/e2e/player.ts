@@ -21,6 +21,7 @@ export interface DebugState {
   nicknames: [string, string];
   isFighting: boolean;
   isAutoFiring: boolean;
+  isAutoAiming: boolean;
   me: TankState;
   enemy: Point & { heading: number; isAlive: boolean };
   bullets: number;
@@ -240,18 +241,7 @@ export class Player {
     const viewportHeight = this.page.viewportSize()?.height ?? 0;
     const scale = viewportHeight / camera.height;
     await this.page.mouse.move((target.x - camera.x) * scale, (target.y - camera.y) * scale);
-    await until(
-      async () => {
-        const state = await this.state();
-        if (state === null) {
-          return null;
-        }
-        const wanted = Math.atan2(target.y - state.me.y, target.x - state.me.x);
-        return Math.abs(normalizeAngle(wanted - state.me.turret)) < TURRET_TOLERANCE ? true : null;
-      },
-      timeoutMs,
-      `${this.name}: башня не навелась`,
-    );
+    await this.waitForTurretAt(target, timeoutMs, 'башня не навелась');
   }
 
   async setFiring(isFiring: boolean): Promise<void> {
@@ -277,6 +267,43 @@ export class Player {
 
   isAutoFireButtonVisible(): Promise<boolean> {
     return this.page.locator(AUTOFIRE_BUTTON).isVisible();
+  }
+
+  // Настоящее касание через протокол отладки: палец ложится в `from`, тянется в `to` и остаётся там, пока не
+  // вызван `release`; Playwright сам умеет только тап.
+  async touchDrag(from: Point, to: Point): Promise<{ release: () => Promise<void> }> {
+    const session = await this.context.newCDPSession(this.page);
+    await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [from] });
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [to] });
+    return {
+      release: async (): Promise<void> => {
+        await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await session.detach();
+      },
+    };
+  }
+
+  // Ждёт, пока башня не смотрит на точку с допуском, и возвращает состояние в этот момент.
+  waitForTurretAt(target: Point, timeoutMs: number, what: string): Promise<DebugState> {
+    return this.waitForTurret((me) => Math.atan2(target.y - me.y, target.x - me.x), timeoutMs, what);
+  }
+
+  waitForTurretAngle(angle: number, timeoutMs: number, what: string): Promise<DebugState> {
+    return this.waitForTurret(() => angle, timeoutMs, what);
+  }
+
+  private waitForTurret(wanted: (me: TankState) => number, timeoutMs: number, what: string): Promise<DebugState> {
+    return until(
+      async () => {
+        const state = await this.state();
+        if (state === null) {
+          return null;
+        }
+        return Math.abs(normalizeAngle(wanted(state.me) - state.me.turret)) < TURRET_TOLERANCE ? state : null;
+      },
+      timeoutMs,
+      `${this.name}: ${what}`,
+    );
   }
 
   async releaseAll(): Promise<void> {

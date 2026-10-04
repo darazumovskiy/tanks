@@ -7,6 +7,7 @@ export interface Settings {
   deadZone: number;
   hasFireRing: boolean;
   fireRing: number;
+  hasAutoAim: boolean;
   cameraMode: PhoneCameraMode;
   minViewPercent: number;
   followLookAhead: number;
@@ -17,7 +18,7 @@ export interface Settings {
   showFrameGraph: boolean;
 }
 
-export type BooleanSettingKey = 'hasFireRing' | 'showFrameGraph';
+export type BooleanSettingKey = 'hasFireRing' | 'hasAutoAim' | 'showFrameGraph';
 export type NumericSettingKey = Exclude<keyof Settings, BooleanSettingKey | 'cameraMode'>;
 
 export interface BooleanSettingField {
@@ -39,26 +40,35 @@ export interface NumericSettingField {
   requiresFlag?: BooleanSettingKey;
 }
 
-export const DEFAULT_SETTINGS: Readonly<Settings> = {
-  stickRadiusPx: 40,
-  deadZone: 0.07,
-  hasFireRing: false,
-  fireRing: 0.89,
-  cameraMode: 'follow',
-  minViewPercent: 75,
-  followLookAhead: 0.35,
-  followLagMs: 120,
-  pairLagMs: 300,
-  zoomLagMs: 600,
-  pairVoidPercent: 25,
-  showFrameGraph: false,
-};
+// Помощь башне — только касанию: на компьютере мышь указывает точку мгновенно и точно.
+export function defaultSettings(isTouchDevice: boolean): Settings {
+  return {
+    stickRadiusPx: 40,
+    deadZone: 0.07,
+    hasFireRing: false,
+    fireRing: 0.89,
+    hasAutoAim: isTouchDevice,
+    cameraMode: 'follow',
+    minViewPercent: 75,
+    followLookAhead: 0.35,
+    followLagMs: 120,
+    pairLagMs: 300,
+    zoomLagMs: 600,
+    pairVoidPercent: 25,
+    showFrameGraph: false,
+  };
+}
 
 export const BOOLEAN_FIELDS: readonly BooleanSettingField[] = [
   {
     key: 'hasFireRing',
     label: 'Кольцо огня',
     hint: 'стрелять только у края правого стика; без кольца стреляет любое касание правой половины',
+  },
+  {
+    key: 'hasAutoAim',
+    label: 'Башня сама держит противника',
+    hint: 'пока не тянешь правый стик, башня смотрит на противника; потянул — рулишь сам',
   },
   { key: 'showFrameGraph', label: 'График кадров', hint: 'длительность последних кадров внизу слева' },
 ];
@@ -133,20 +143,20 @@ export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
 
 export const SETTINGS_STORAGE_KEY = 'tanks.settings';
 
-function clampField(field: NumericSettingField, value: unknown): number {
+function clampField(field: NumericSettingField, value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return DEFAULT_SETTINGS[field.key];
+    return fallback;
   }
   return Math.min(field.max, Math.max(field.min, value));
 }
 
-function parseCameraMode(value: unknown): PhoneCameraMode {
+function parseCameraMode(value: unknown, fallback: PhoneCameraMode): PhoneCameraMode {
   const known = PHONE_CAMERA_MODES.find((entry) => entry.mode === value);
-  return known === undefined ? DEFAULT_SETTINGS.cameraMode : known.mode;
+  return known === undefined ? fallback : known.mode;
 }
 
-export function parseSettings(raw: string | null): Settings {
-  const settings: Settings = { ...DEFAULT_SETTINGS };
+export function parseSettings(raw: string | null, defaults: Readonly<Settings>): Settings {
+  const settings: Settings = { ...defaults };
   if (raw === null) {
     return settings;
   }
@@ -161,9 +171,9 @@ export function parseSettings(raw: string | null): Settings {
   }
   const record = parsed as Record<string, unknown>;
   for (const field of NUMERIC_FIELDS) {
-    settings[field.key] = clampField(field, record[field.key]);
+    settings[field.key] = clampField(field, record[field.key], defaults[field.key]);
   }
-  settings.cameraMode = parseCameraMode(record.cameraMode);
+  settings.cameraMode = parseCameraMode(record.cameraMode, defaults.cameraMode);
   for (const field of BOOLEAN_FIELDS) {
     const value = record[field.key];
     if (typeof value === 'boolean') {
@@ -176,8 +186,11 @@ export function parseSettings(raw: string | null): Settings {
 export class SettingsStore {
   readonly value: Settings;
 
-  constructor(private readonly storage: Storage) {
-    this.value = parseSettings(storage.getItem(SETTINGS_STORAGE_KEY));
+  constructor(
+    private readonly storage: Storage,
+    private readonly defaults: Readonly<Settings>,
+  ) {
+    this.value = parseSettings(storage.getItem(SETTINGS_STORAGE_KEY), defaults);
   }
 
   setNumber(key: NumericSettingKey, value: number): void {
@@ -185,7 +198,7 @@ export class SettingsStore {
     if (field === undefined) {
       return;
     }
-    this.value[key] = clampField(field, value);
+    this.value[key] = clampField(field, value, this.defaults[key]);
     this.save();
   }
 
@@ -200,7 +213,7 @@ export class SettingsStore {
   }
 
   reset(): void {
-    Object.assign(this.value, DEFAULT_SETTINGS);
+    Object.assign(this.value, this.defaults);
     this.save();
   }
 

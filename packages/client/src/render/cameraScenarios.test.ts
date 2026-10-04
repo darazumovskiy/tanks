@@ -1,6 +1,6 @@
 import { ARENA } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, type Settings } from '../settings.js';
+import { defaultSettings, type Settings } from '../settings.js';
 import { TANK_AREA, tankBottomLimit, type Camera, type Point } from './camera.js';
 import { ENEMY_AREA, enemyAreaOf, fitRatio, zoomLadder, ZOOM_IN_RATIO, ZOOM_OUT_RATIO } from './cameraLevels.js';
 import {
@@ -21,6 +21,7 @@ import {
 } from './cameraScenarios.js';
 import { createCameraStrategy, PHONE_CAMERA_MODES, type PhoneCameraMode } from './cameraStrategy.js';
 
+const DEFAULT_SETTINGS = defaultSettings(true);
 const GRID_X = [24, 140, 400, 800, 1200, 1460, 1576];
 const GRID_Y = [24, 140, 450, 760, 876];
 const GRID: Point[] = GRID_X.flatMap((x) => GRID_Y.map((y) => ({ x, y })));

@@ -2,13 +2,13 @@ import { ARENA, KIT, ROUND_SECONDS, ZONE, type Side } from '@tanks/shared/engine
 import { gameTimecode } from '@tanks/shared/protocol';
 import type { WorldView } from '../prediction.js';
 import type { Settings } from '../settings.js';
-import { isStickFiring, type StickState } from '../touch.js';
+import type { StickState } from '../touch.js';
 import { drawTankSprite, TankArt } from './art.js';
 import { edgeMarker, frameCamera, screenToWorld, type Camera } from './camera.js';
 import { createCameraStrategy, type CameraMode, type CameraStrategy } from './cameraStrategy.js';
 import type { Effects } from './effects.js';
 import { floorFor } from './floor.js';
-import { BODY_FONT, HEAD_FONT, SIDE_COLORS, clamp, easeOut } from './view.js';
+import { BODY_FONT, HEAD_FONT, SIDE_COLORS, clamp, easeOut, rgba } from './view.js';
 
 export interface HudInfo {
   names: [string, string];
@@ -25,6 +25,7 @@ export interface HudInfo {
   worstFrameMs: number;
   isMuted: boolean;
   sticks: readonly StickState[];
+  isAutoAiming: boolean;
   frameMs: number;
   frameTimes: readonly number[];
 }
@@ -74,6 +75,15 @@ const STICK_KNOB_COLOR = 'rgba(244,241,232,0.75)';
 const FIRE_RING_IDLE_COLOR = 'rgba(232,130,90,0.35)';
 const FIRE_RING_ACTIVE_COLOR = 'rgba(232,130,90,0.95)';
 
+// Скобки автоведения вокруг противника в единицах поля: появляются, сжимаясь к танку, и гаснут плавно.
+const AUTO_AIM_COLOR = '#e8825a';
+const AUTO_AIM_FADE_MS = 160;
+const AUTO_AIM_HALF_SIZE = 44;
+const AUTO_AIM_CORNER = 13;
+const AUTO_AIM_LINE_WIDTH = 2.5;
+const AUTO_AIM_ALPHA = 0.9;
+const AUTO_AIM_SPREAD = 0.35;
+
 interface Screen {
   width: number;
   height: number;
@@ -89,6 +99,7 @@ export class Renderer {
   private camera: Camera;
   private strategy: CameraStrategy;
   private strategyMode: CameraMode;
+  private autoAimGlow = 0;
 
   // На компьютере поле показывается целиком; на устройстве с касанием камеру ведёт стратегия из настроек.
   // `viewport` — размер холста в CSS-пикселях и плотность; по умолчанию окно браузера (лаборатория задаёт своё).
@@ -257,7 +268,35 @@ export class Renderer {
         this.drawTankTag(view, side, hud.names[side]);
       }
     }
+    this.drawAutoAimBrackets(view, hud);
     this.effects.drawPopups(ctx);
+    ctx.restore();
+  }
+
+  private drawAutoAimBrackets(view: WorldView, hud: HudInfo): void {
+    const step = hud.frameMs / AUTO_AIM_FADE_MS;
+    this.autoAimGlow = clamp(this.autoAimGlow + (hud.isAutoAiming ? step : -step), 0, 1);
+    const enemy = view.tanks[hud.mySide === 0 ? 1 : 0];
+    if (this.autoAimGlow <= 0 || !enemy.isAlive) {
+      return;
+    }
+    const { ctx } = this;
+    const eased = easeOut(this.autoAimGlow);
+    const half = AUTO_AIM_HALF_SIZE * (1 + AUTO_AIM_SPREAD * (1 - eased));
+    ctx.save();
+    ctx.translate(enemy.x, enemy.y);
+    ctx.strokeStyle = rgba(AUTO_AIM_COLOR, AUTO_AIM_ALPHA * eased);
+    ctx.lineWidth = AUTO_AIM_LINE_WIDTH;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (const sx of [-1, 1]) {
+      for (const sy of [-1, 1]) {
+        ctx.moveTo(sx * half, sy * (half - AUTO_AIM_CORNER));
+        ctx.lineTo(sx * half, sy * half);
+        ctx.lineTo(sx * (half - AUTO_AIM_CORNER), sy * half);
+      }
+    }
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -586,7 +625,7 @@ export class Renderer {
     ctx.lineWidth = 2;
     for (const stick of sticks) {
       const radius = stick.radiusPx;
-      const isFiring = isStickFiring(stick);
+      const { isFiring } = stick;
       // Без кольца стреляет само касание — огонь показывает контур основания.
       const isEdgeFiring = isFiring && stick.fireRing === null;
       ctx.fillStyle = STICK_BASE_COLOR;

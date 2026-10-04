@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, NUMERIC_FIELDS, SettingsStore } from './settings.js';
+import { defaultSettings, NUMERIC_FIELDS, SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
+
+const DEFAULT_SETTINGS = defaultSettings(true);
+const AUTO_AIM_LABEL = 'Башня сама держит противника';
 
 describe('SettingsPanel', () => {
   let root: HTMLElement;
@@ -14,7 +17,7 @@ describe('SettingsPanel', () => {
     root.hidden = true;
     toggle = document.createElement('button');
     document.body.append(root, toggle);
-    store = new SettingsStore(localStorage);
+    store = new SettingsStore(localStorage, DEFAULT_SETTINGS);
     new SettingsPanel(root, toggle, store, true);
   });
 
@@ -73,7 +76,7 @@ describe('SettingsPanel', () => {
     radius.value = '90';
     radius.dispatchEvent(new Event('input'));
     expect(store.value.stickRadiusPx).toBe(90);
-    expect(new SettingsStore(localStorage).value.stickRadiusPx).toBe(90);
+    expect(new SettingsStore(localStorage, DEFAULT_SETTINGS).value.stickRadiusPx).toBe(90);
   });
 
   it('флажок графика кадров', () => {
@@ -81,6 +84,28 @@ describe('SettingsPanel', () => {
     checkbox.checked = true;
     checkbox.dispatchEvent(new Event('change'));
     expect(store.value.showFrameGraph).toBe(true);
+  });
+
+  it('флажок автоведения на телефоне отмечен по умолчанию, снятие уходит в хранилище', () => {
+    const checkbox = checkFor(AUTO_AIM_LABEL);
+    expect(checkbox.checked).toBe(true);
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event('change'));
+    expect(store.value.hasAutoAim).toBe(false);
+    expect(localStorage.getItem('tanks.settings')).toContain('"hasAutoAim":false');
+    root.querySelector<HTMLButtonElement>('button.settings-reset')?.click();
+    expect(checkFor(AUTO_AIM_LABEL).checked).toBe(true);
+  });
+
+  it('на компьютере флажок автоведения есть и снят по умолчанию', () => {
+    const desktopRoot = document.createElement('aside');
+    document.body.append(desktopRoot);
+    const desktopStore = new SettingsStore(localStorage, defaultSettings(false));
+    new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, false);
+    const checkbox = Array.from(desktopRoot.querySelectorAll<HTMLLabelElement>('label.settings-check'))
+      .find((row) => row.querySelector('.settings-head span')?.textContent === AUTO_AIM_LABEL)
+      ?.querySelector<HTMLInputElement>('input[type=checkbox]');
+    expect(checkbox?.checked).toBe(false);
   });
 
   it('флажок кольца огня стоит перед ползунком радиуса и показывает его только включённым', () => {

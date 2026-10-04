@@ -11,7 +11,7 @@ import {
 import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrategy.js';
 import { Effects } from './render/effects.js';
 import { Renderer, type HudInfo } from './render/renderer.js';
-import { DEFAULT_SETTINGS, type Settings } from './settings.js';
+import { defaultSettings, type Settings } from './settings.js';
 import type { StickState } from './touch.js';
 
 // Лаборатория камеры (`/?lab=camera`): танки ставятся в позиции сценария без сервера и рисуются настоящим
@@ -53,16 +53,18 @@ function viewOf(round: Round): WorldView {
   };
 }
 
-function thumbSticks(width: number, height: number): StickState[] {
+function thumbSticks(width: number, height: number, settings: Readonly<Settings>): StickState[] {
   const make = (role: 'move' | 'aim', spot: { fx: number; fy: number }): StickState => ({
     role,
     baseX: width * spot.fx,
     baseY: height * spot.fy,
     dx: 0,
     dy: 0,
-    radiusPx: DEFAULT_SETTINGS.stickRadiusPx,
-    deadZone: DEFAULT_SETTINGS.deadZone,
-    fireRing: DEFAULT_SETTINGS.hasFireRing ? DEFAULT_SETTINGS.fireRing : null,
+    radiusPx: settings.stickRadiusPx,
+    deadZone: settings.deadZone,
+    fireRing: settings.hasFireRing ? settings.fireRing : null,
+    isActive: false,
+    isFiring: false,
   });
   return [make('move', THUMB_LEFT), make('aim', THUMB_RIGHT)];
 }
@@ -86,7 +88,7 @@ export function showCameraLab(root: HTMLElement): void {
   }
   root.hidden = false;
   root.innerHTML = '';
-  const settings: Settings = { ...DEFAULT_SETTINGS };
+  const settings: Settings = defaultSettings(true);
   const scenarioSelect = buildSelect(CAMERA_SCENARIOS, (s) => s.title);
   const modeSelect = buildSelect(
     PHONE_CAMERA_MODES.map((entry) => ({ id: entry.mode, label: entry.label })),
@@ -151,7 +153,8 @@ export function showCameraLab(root: HTMLElement): void {
       fps: 0,
       worstFrameMs: 0,
       isMuted: true,
-      sticks: thumbSticks(screen.width, screen.height),
+      sticks: thumbSticks(screen.width, screen.height, settings),
+      isAutoAiming: false,
       frameMs: SETTLE_MS,
       frameTimes: [],
     };

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   edgeMarker,
   frameCamera,
+  isInView,
   resolveAxis,
   screenToWorld,
   smoothCamera,
@@ -60,6 +61,17 @@ describe('перевод координат', () => {
     const screen = worldToScreen(camera, { x: 800, y: 450 });
     expect(screen.x).toBeCloseTo(PHONE.width / 2, 6);
     expect(screen.y).toBeCloseTo(PHONE.height / 2, 6);
+  });
+});
+
+describe('isInView', () => {
+  const camera = frameCamera({ x: 800, y: 450 }, PHONE.width, PHONE.height, VIEW_HEIGHT);
+
+  it('точка внутри и на границе окна — в кадре, за краем — нет', () => {
+    expect(isInView(camera, { x: 800, y: 450 })).toBe(true);
+    expect(isInView(camera, { x: camera.x, y: camera.y + camera.height })).toBe(true);
+    expect(isInView(camera, { x: camera.x - 1, y: 450 })).toBe(false);
+    expect(isInView(camera, { x: 800, y: camera.y + camera.height + 1 })).toBe(false);
   });
 });
 

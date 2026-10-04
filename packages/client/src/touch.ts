@@ -1,14 +1,20 @@
 import type { Settings } from './settings.js';
-import { isStickActive, stickMagnitude, type StickVector } from './steering.js';
+import { stickMagnitude, type StickVector } from './steering.js';
 
 export const TAP_MAX_MS = 200;
+// Сдвиг пальца от точки касания, до которого касание ещё считается тапом (порог Android — 8 dp).
+export const TAP_SLOP_PX = 10;
 // Основание стика отступает от края экрана на эту долю радиуса, чтобы ручку можно было довести до упора в любую сторону.
 export const EDGE_GAP_RATIO = 0.12;
+// Выход из мёртвой зоны и с кольца огня — ближе к центру, чем вход, чтобы палец на границе не дребезжал.
+export const DEAD_ZONE_EXIT_GAP = 0.03;
+export const FIRE_RING_EXIT_GAP = 0.04;
 
 export type StickRole = 'move' | 'aim';
 
 // Размеры и пороги фиксируются в момент касания: смена настроек в панели не дёргает уже зажатый стик.
 // `fireRing` — доля радиуса, с которой стик башни стреляет; `null` — кольца нет, стреляет само касание.
+// `isActive` и `isFiring` считаются с гистерезисом при каждом сдвиге пальца.
 export interface StickState extends StickVector {
   role: StickRole;
   baseX: number;
@@ -16,28 +22,32 @@ export interface StickState extends StickVector {
   radiusPx: number;
   deadZone: number;
   fireRing: number | null;
+  isActive: boolean;
+  isFiring: boolean;
 }
 
 interface ActiveStick extends StickState {
   pointerId: number;
+  startX: number;
+  startY: number;
   startedAt: number;
-  hasLeftDeadZone: boolean;
+  hasMovedPastTapSlop: boolean;
 }
 
 export type StickSettings = Pick<Settings, 'stickRadiusPx' | 'deadZone' | 'hasFireRing' | 'fireRing'>;
 
-export function isStickFiring(stick: StickState): boolean {
-  if (stick.role !== 'aim') {
-    return false;
+function isPastThreshold(magnitude: number, threshold: number, exitGap: number, wasPast: boolean): boolean {
+  if (wasPast) {
+    return magnitude >= threshold - exitGap;
   }
-  return stick.fireRing === null || stickMagnitude(stick) >= stick.fireRing;
+  return magnitude >= threshold;
 }
 
 // Плавающие стики: касание левой половины экрана рождает стик корпуса, правой — стик башни.
 // Основание — в точке касания, ручка следует за пальцем в пределах радиуса.
 export class TouchSticks {
   private readonly active = new Map<StickRole, ActiveStick>();
-  private hasPendingTap = false;
+  private hasPendingFire = false;
 
   constructor(
     target: HTMLElement,
@@ -63,7 +73,7 @@ export class TouchSticks {
     // Приложение ушло в фон или потеряло фокус — касания могут не прийти к завершению, стики сбрасываются.
     const dropAll = (): void => {
       this.active.clear();
-      this.hasPendingTap = false;
+      this.hasPendingFire = false;
     };
     window.addEventListener('blur', dropAll);
     window.addEventListener('pagehide', dropAll);
@@ -83,15 +93,14 @@ export class TouchSticks {
   }
 
   get isFiringByStick(): boolean {
-    const aim = this.active.get('aim');
-    return aim !== undefined && isStickFiring(aim);
+    return this.active.get('aim')?.isFiring === true;
   }
 
-  // Тап по правой половине — одиночный выстрел; флаг снимается при чтении.
-  takeTapFire(): boolean {
-    const hasTap = this.hasPendingTap;
-    this.hasPendingTap = false;
-    return hasTap;
+  // Стик стрелял между двумя чтениями ввода (выброс к кольцу, тап) — выстрел не теряется; флаг снимается чтением.
+  takePendingFire(): boolean {
+    const hasFire = this.hasPendingFire;
+    this.hasPendingFire = false;
+    return hasFire;
   }
 
   private begin(event: PointerEvent): void {
@@ -111,8 +120,12 @@ export class TouchSticks {
       radiusPx,
       deadZone: this.settings.deadZone,
       fireRing: this.settings.hasFireRing ? this.settings.fireRing : null,
+      isActive: false,
+      isFiring: false,
+      startX: event.clientX,
+      startY: event.clientY,
       startedAt: this.now(),
-      hasLeftDeadZone: false,
+      hasMovedPastTapSlop: false,
     };
     this.active.set(role, stick);
     this.deflect(stick, event.clientX, event.clientY);
@@ -133,9 +146,22 @@ export class TouchSticks {
     const scale = length > 1 ? 1 / length : 1;
     stick.dx = rawX * scale;
     stick.dy = rawY * scale;
-    if (isStickActive(stick, stick.deadZone)) {
-      stick.hasLeftDeadZone = true;
+    const magnitude = stickMagnitude(stick);
+    stick.isActive = isPastThreshold(magnitude, stick.deadZone, DEAD_ZONE_EXIT_GAP, stick.isActive);
+    stick.isFiring = stick.role === 'aim' && this.isAimFiring(stick, magnitude);
+    if (stick.isFiring) {
+      this.hasPendingFire = true;
     }
+    if (Math.hypot(clientX - stick.startX, clientY - stick.startY) > TAP_SLOP_PX) {
+      stick.hasMovedPastTapSlop = true;
+    }
+  }
+
+  private isAimFiring(stick: ActiveStick, magnitude: number): boolean {
+    if (stick.fireRing === null) {
+      return true;
+    }
+    return isPastThreshold(magnitude, stick.fireRing, FIRE_RING_EXIT_GAP, stick.isFiring);
   }
 
   private end(event: PointerEvent, isCompleted: boolean): void {
@@ -145,8 +171,8 @@ export class TouchSticks {
     }
     this.active.delete(stick.role);
     const isQuick = this.now() - stick.startedAt <= TAP_MAX_MS;
-    if (isCompleted && stick.role === 'aim' && isQuick && !stick.hasLeftDeadZone) {
-      this.hasPendingTap = true;
+    if (isCompleted && stick.role === 'aim' && isQuick && !stick.hasMovedPastTapSlop) {
+      this.hasPendingFire = true;
     }
   }
 

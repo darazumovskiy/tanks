@@ -1,6 +1,13 @@
 import type { Action } from '@tanks/shared/engine';
-import { aimTurret, isStickActive, steerHull } from './steering.js';
+import type { Settings } from './settings.js';
+import { aimTurret, steerHull } from './steering.js';
 import { TouchSticks, type StickSettings, type StickState } from './touch.js';
+
+// После того как игрок отпустил стик башни, автоведение ждёт: осознанный выстрел в стену на рикошет не должен
+// перебиваться доворотом на противника.
+export const AUTO_AIM_RESUME_MS = 500;
+
+export type InputSettings = StickSettings & Pick<Settings, 'hasAutoAim'>;
 
 export interface Viewport {
   toWorld(clientX: number, clientY: number): { x: number; y: number };
@@ -14,12 +21,18 @@ export interface SteeredTank {
   stats: { turnRate: number };
 }
 
+export interface AimTarget {
+  x: number;
+  y: number;
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
 }
 
 // Клавиатура — корпус, мышь — башня и выстрел; активный стик касания замещает свой источник.
 // Авто-огонь — выстрел в каждом тике независимо от остальных источников, пока включён.
+// Башня без ручного источника при включённом автоведении держит переданную цель.
 export class InputReader {
   private readonly keys = new Set<string>();
   private readonly sticks: TouchSticks;
@@ -27,11 +40,14 @@ export class InputReader {
   private isMouseDown = false;
   private isReversing = false;
   private isAutoFireOn = false;
+  private isAutoAimingNow = false;
+  private lastManualAimAt: number | null = null;
 
   constructor(
     target: HTMLElement,
     private readonly viewport: Viewport,
-    settings: StickSettings,
+    private readonly settings: Readonly<InputSettings>,
+    private readonly now: () => number = () => performance.now(),
   ) {
     this.sticks = new TouchSticks(target, settings);
     window.addEventListener('keydown', (event) => {
@@ -78,22 +94,29 @@ export class InputReader {
     return this.isAutoFireOn;
   }
 
+  get isAutoAiming(): boolean {
+    return this.isAutoAimingNow;
+  }
+
   setAutoFire(isOn: boolean): void {
     this.isAutoFireOn = isOn;
   }
 
-  read(me: SteeredTank): Action {
+  read(me: SteeredTank, target: AimTarget | null): Action {
     const hull = this.readHull(me);
-    const hasTapFire = this.sticks.takeTapFire();
-    const isFiringByHand = this.isMouseDown || this.keys.has('Space') || this.sticks.isFiringByStick || hasTapFire;
+    const hasPendingFire = this.sticks.takePendingFire();
+    const isFiringByHand = this.isMouseDown || this.keys.has('Space') || this.sticks.isFiringByStick || hasPendingFire;
     const isFiring = this.isAutoFireOn || isFiringByHand;
-    return { throttle: hull.throttle, turn: hull.turn, turretTurn: this.readTurretTurn(me), isFiring };
+    return { throttle: hull.throttle, turn: hull.turn, turretTurn: this.readTurretTurn(me, target), isFiring };
   }
 
   private readHull(me: SteeredTank): { throttle: number; turn: number } {
     const stick = this.sticks.stick('move');
     if (stick !== null) {
-      const steering = steerHull(stick, stick.deadZone, me.heading, me.stats.turnRate, this.isReversing);
+      if (!stick.isActive) {
+        return { throttle: 0, turn: 0 };
+      }
+      const steering = steerHull(stick, me.heading, me.stats.turnRate, this.isReversing);
       this.isReversing = steering.isReversing;
       return steering;
     }
@@ -105,17 +128,31 @@ export class InputReader {
     return { throttle: (isForward ? 1 : 0) - (isBack ? 1 : 0), turn: (isRight ? 1 : 0) - (isLeft ? 1 : 0) };
   }
 
-  private readTurretTurn(me: SteeredTank): number {
+  // Палец в мёртвой зоне стика башни — не ручное направление, но и не мышь: башню ведёт автоматика.
+  private readTurretTurn(me: SteeredTank, target: AimTarget | null): number {
+    this.isAutoAimingNow = false;
     const stick = this.sticks.stick('aim');
-    if (stick !== null) {
-      if (!isStickActive(stick, stick.deadZone)) {
-        return 0;
-      }
+    if (stick?.isActive === true) {
+      this.lastManualAimAt = this.now();
       return aimTurret(Math.atan2(stick.dy, stick.dx), me.turret);
     }
-    if (this.mouse === null) {
+    const mouse = this.mouse;
+    const isMouseAiming = stick === null && mouse !== null;
+    if (isMouseAiming) {
+      return aimTurret(Math.atan2(mouse.y - me.y, mouse.x - me.x), me.turret);
+    }
+    return this.readAutoAim(me, target);
+  }
+
+  private readAutoAim(me: SteeredTank, target: AimTarget | null): number {
+    if (!this.settings.hasAutoAim || target === null || this.mouse !== null) {
       return 0;
     }
-    return aimTurret(Math.atan2(this.mouse.y - me.y, this.mouse.x - me.x), me.turret);
+    const isResting = this.lastManualAimAt !== null && this.now() - this.lastManualAimAt < AUTO_AIM_RESUME_MS;
+    if (isResting) {
+      return 0;
+    }
+    this.isAutoAimingNow = true;
+    return aimTurret(Math.atan2(target.y - me.y, target.x - me.x), me.turret);
   }
 }

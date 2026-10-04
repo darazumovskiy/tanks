@@ -6,7 +6,7 @@ import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js'
 import { readClientInfo } from './clientInfo.js';
 import { Game } from './game.js';
 import { showCameraLab } from './lab.js';
-import { SettingsStore } from './settings.js';
+import { defaultSettings, SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
 import { mountStatsPicker, statsLeft } from './statsPicker.js';
 import { Telemetry } from './telemetry.js';
@@ -238,8 +238,8 @@ function startDuel(roomCode: string): void {
   const canvas = byId('stage', HTMLCanvasElement);
   canvas.hidden = false;
   document.body.classList.add('duel');
-  const store = new SettingsStore(localStorage);
   const hasTouch = isTouchDevice();
+  const store = new SettingsStore(localStorage, defaultSettings(hasTouch));
   const autoFireButton = byId('autofire', HTMLButtonElement);
   const autoFire = bindAutoFire(autoFireButton, hasTouch);
   const game = new Game({

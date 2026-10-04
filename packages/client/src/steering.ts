@@ -19,22 +19,9 @@ export function stickMagnitude(stick: StickVector): number {
   return Math.min(1, Math.hypot(stick.dx, stick.dy));
 }
 
-export function isStickActive(stick: StickVector, deadZone: number): boolean {
-  return stickMagnitude(stick) >= deadZone;
-}
-
-// Стик задаёт желаемый курс; поворот доводит до него за тик, газ падает с ростом угла доворота.
+// Активный стик задаёт желаемый курс; поворот доводит до него за тик, газ падает с ростом угла доворота.
 // Задний ход включается при большом расхождении и выключается при малом — с зазором, чтобы режим не дрожал.
-export function steerHull(
-  stick: StickVector,
-  deadZone: number,
-  heading: number,
-  turnRate: number,
-  isReversing: boolean,
-): HullSteering {
-  if (!isStickActive(stick, deadZone)) {
-    return { throttle: 0, turn: 0, isReversing };
-  }
+export function steerHull(stick: StickVector, heading: number, turnRate: number, isReversing: boolean): HullSteering {
   const wanted = Math.atan2(stick.dy, stick.dx);
   const forwardError = normalizeAngle(wanted - heading);
   const isReversingNow = nextReverseMode(Math.abs(forwardError), isReversing);

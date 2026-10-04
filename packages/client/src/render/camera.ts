@@ -161,14 +161,15 @@ export interface EdgeMarker {
   angle: number;
 }
 
+export function isInView(camera: Camera, point: Point): boolean {
+  const isInsideX = point.x >= camera.x && point.x <= camera.x + camera.width;
+  const isInsideY = point.y >= camera.y && point.y <= camera.y + camera.height;
+  return isInsideX && isInsideY;
+}
+
 // Точка вне окна → место на рамке экрана (с отступом в пикселях) на луче из центра окна и направление луча.
 export function edgeMarker(camera: Camera, point: Point, insetPx: number): EdgeMarker | null {
-  const isInside =
-    point.x >= camera.x &&
-    point.x <= camera.x + camera.width &&
-    point.y >= camera.y &&
-    point.y <= camera.y + camera.height;
-  if (isInside) {
+  if (isInView(camera, point)) {
     return null;
   }
   const screenWidth = camera.width * camera.scale;

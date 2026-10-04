@@ -11,9 +11,9 @@ import { DiagLog } from './diag.js';
 import { InputReader } from './input.js';
 import { browserInviteActions, renderInvite } from './invite.js';
 import { NetClient, websocketUrl } from './net.js';
-import { Prediction } from './prediction.js';
+import { Prediction, type WorldView } from './prediction.js';
 import { hideRoundEnd, showRoundEnd, type RoundResult } from './roundEnd.js';
-import type { Camera } from './render/camera.js';
+import { isInView, type Camera, type Point } from './render/camera.js';
 import { Effects } from './render/effects.js';
 import { Renderer, type Overlay } from './render/renderer.js';
 import type { Settings } from './settings.js';
@@ -79,6 +79,7 @@ export class Game {
   private inputsThisSecond = 0;
   private summaryAt = performance.now();
   private loggedCamera: { mode: string; height: number } | null = null;
+  private loggedAutoAim: { isOn: boolean } | null = null;
 
   constructor(private readonly options: GameOptions) {
     this.diag = new DiagLog(options.roomCode);
@@ -127,6 +128,7 @@ export class Game {
           hideRoundEnd(this.options.roundEnd);
           // Забытый авто-огонь на старте раунда расстреливает стену перед собой и ловит рикошеты.
           this.setAutoFire(false);
+          this.logAutoAim(true);
           this.prediction = new Prediction(this.side, message.mapIndex, message.tanks, this.lastInputSeq);
           this.effects.reset();
           this.renderer.resetCamera();
@@ -197,6 +199,28 @@ export class Game {
     this.diag.write(`autofire on=${isOn ? '1' : '0'}`);
   }
 
+  // Анализатор журналов группирует серию по настройке: строка на каждом старте раунда и при смене флажка.
+  private logAutoAim(isRoundStart: boolean): void {
+    const isOn = this.options.settings.hasAutoAim;
+    if (!isRoundStart && this.loggedAutoAim?.isOn === isOn) {
+      return;
+    }
+    this.loggedAutoAim = { isOn };
+    this.diag.write(`autoaim on=${isOn ? '1' : '0'}`);
+  }
+
+  // Помощник не добывает информацию: цель — только живой противник в кадре камеры и только во время боя.
+  private autoAimTarget(prediction: Prediction, view: WorldView, side: Side): Point | null {
+    const enemy = view.tanks[side === 0 ? 1 : 0];
+    if (!prediction.isFighting || !enemy.isAlive) {
+      return null;
+    }
+    if (!isInView(this.renderer.currentCamera, enemy)) {
+      return null;
+    }
+    return { x: enemy.x, y: enemy.y };
+  }
+
   private logSnapshot(prediction: Prediction, message: SnapshotMessage, receivedAt: number): void {
     const side = this.side ?? 0;
     const enemySide: Side = side === 0 ? 1 : 0;
@@ -238,6 +262,7 @@ export class Game {
     nicknames: [string, string];
     isFighting: boolean;
     isAutoFiring: boolean;
+    isAutoAiming: boolean;
     rttMs: number;
     serverTick: number;
     me: unknown;
@@ -263,6 +288,7 @@ export class Game {
       nicknames: this.names(),
       isFighting: this.prediction.isFighting,
       isAutoFiring: this.input.isAutoFiring,
+      isAutoAiming: this.input.isAutoAiming,
       rttMs: this.net.rttMs,
       serverTick: this.net.serverTick,
       me: { ...this.prediction.me, tally: undefined, stats: undefined },
@@ -361,10 +387,12 @@ export class Game {
       return;
     }
 
+    this.logAutoAim(false);
     this.accumulator += elapsed;
+    const aimTarget = this.autoAimTarget(prediction, prediction.view(now), side);
     while (this.accumulator >= TICK_MS) {
       this.accumulator -= TICK_MS;
-      const action = quantizeAction(this.input.read(prediction.me));
+      const action = quantizeAction(this.input.read(prediction.me, aimTarget));
       const bulletsBefore = prediction.myBulletCount;
       const seq = prediction.predict(action);
       this.lastInputSeq = seq;
@@ -416,6 +444,7 @@ export class Game {
         worstFrameMs: this.worstFrameMs,
         isMuted: this.sfx.isMuted,
         sticks: this.input.stickStates,
+        isAutoAiming: this.input.isAutoAiming,
         frameMs: elapsed,
         frameTimes: this.frameTimes,
       },
