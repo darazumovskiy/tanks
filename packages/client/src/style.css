@@ -391,6 +391,189 @@ input {
   font-size: 14px;
 }
 
+.fx-lab .lab-controls {
+  align-items: center;
+}
+
+.fx-stage-canvas {
+  display: block;
+  max-width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.fx-params {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 4px 16px;
+  max-width: 1280px;
+}
+
+.fx-params button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.fx-param {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(244, 241, 232, 0.7);
+}
+
+.fx-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fx-sheet canvas {
+  max-width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.fx-download {
+  color: #e8825a;
+  align-self: flex-start;
+}
+
+.fx-review h2 {
+  margin: 0;
+  font-family: 'Russo One', sans-serif;
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.fx-round-links {
+  display: flex;
+  gap: 12px;
+}
+
+.fx-round-links a,
+.fx-lab a {
+  color: rgba(244, 241, 232, 0.7);
+}
+
+.fx-round-links a.is-selected {
+  color: #e8825a;
+}
+
+.fx-review button.is-selected,
+.fx-lightbox-bar button.is-selected {
+  color: #0b0f0d;
+  background: #e8825a;
+  border-color: #e8825a;
+}
+
+.fx-review-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.fx-review-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.fx-review-row h3 {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(244, 241, 232, 0.8);
+}
+
+.fx-cell {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: zoom-in;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  overflow: hidden;
+  background: #0b0f0d;
+}
+
+.fx-cell.is-pick {
+  border-color: #e8825a;
+}
+
+.fx-cell canvas {
+  display: block;
+}
+
+/* Подпись не раздвигает карточку шире кадра. */
+.fx-cell figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 0;
+  min-width: 100%;
+  padding: 0 10px 8px;
+  font-size: 12px;
+}
+
+.fx-cell-note {
+  flex-basis: 100%;
+  color: rgba(244, 241, 232, 0.55);
+}
+
+.fx-badge {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #0b0f0d;
+  background: rgba(244, 241, 232, 0.6);
+}
+
+.fx-badge.is-pick {
+  background: #e8825a;
+}
+
+.fx-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: rgba(5, 6, 8, 0.96);
+}
+
+.fx-lightbox-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 13px;
+}
+
+.fx-lightbox-caption {
+  flex: 1;
+  color: rgba(244, 241, 232, 0.8);
+}
+
+.fx-lightbox-viewport {
+  flex: 1;
+  overflow: auto;
+  display: grid;
+  place-items: start;
+  padding: 16px;
+}
+
+.fx-lightbox-canvas {
+  display: block;
+  margin: auto;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
 .rotate-hint {
   position: fixed;
   top: 12px;

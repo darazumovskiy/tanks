@@ -32,6 +32,8 @@ export default defineConfig({
         'packages/client/src/aimLine.ts',
         'packages/client/src/zoneFire.ts',
         'packages/client/src/admin.ts',
+        'packages/client/src/render/aimLineStyle.ts',
+        'packages/client/src/fxLab/{scenes,styleParams,paramPanel,contactSheet}.ts',
         'packages/client/src/clientInfo.ts',
         'packages/client/src/telemetry.ts',
         'packages/analysis/src/**/*.ts',
@@ -53,6 +55,13 @@ export default defineConfig({
           functions: 95,
           lines: 95,
         },
+        'packages/client/src/{render/aimLineStyle,fxLab/scenes,fxLab/styleParams,fxLab/paramPanel,fxLab/contactSheet}.ts':
+          {
+            statements: 90,
+            branches: 85,
+            functions: 90,
+            lines: 90,
+          },
       },
     },
   },

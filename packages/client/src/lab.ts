@@ -8,18 +8,16 @@ import {
   type CameraScenario,
   type ScreenGeometry,
 } from './render/cameraScenarios.js';
+import { buildSelect, labHud, thumbSticks } from './labShared.js';
 import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrategy.js';
 import { Effects } from './render/effects.js';
-import { Renderer, type HudInfo } from './render/renderer.js';
+import { Renderer } from './render/renderer.js';
 import { defaultSettings, type Settings } from './settings.js';
-import type { StickState } from './touch.js';
 
 // Лаборатория камеры (`/?lab=camera`): танки ставятся в позиции сценария без сервера и рисуются настоящим
 // рендером на холсте размером с экран телефона; выбираются стратегия и экран; рядом — установившаяся камера
-// и нарушенные инварианты. Стики нарисованы там, где обычно лежат большие пальцы, чтобы видеть перекрытие.
+// и нарушенные инварианты.
 
-const THUMB_LEFT = { fx: 0.12, fy: 0.75 };
-const THUMB_RIGHT = { fx: 0.88, fy: 0.75 };
 const SPRITE_RETRY_MS = 300;
 
 function fakeRound(scenario: CameraScenario): Round {
@@ -51,33 +49,6 @@ function viewOf(round: Round): WorldView {
     ],
     bullets: [],
   };
-}
-
-function thumbSticks(width: number, height: number, settings: Readonly<Settings>): StickState[] {
-  const make = (role: 'move' | 'aim', spot: { fx: number; fy: number }): StickState => ({
-    role,
-    baseX: width * spot.fx,
-    baseY: height * spot.fy,
-    dx: 0,
-    dy: 0,
-    radiusPx: settings.stickRadiusPx,
-    deadZone: settings.deadZone,
-    fireRing: settings.hasFireRing ? settings.fireRing : null,
-    isActive: false,
-    isFiring: false,
-  });
-  return [make('move', THUMB_LEFT), make('aim', THUMB_RIGHT)];
-}
-
-function buildSelect<T extends { id: string }>(items: readonly T[], title: (item: T) => string): HTMLSelectElement {
-  const select = document.createElement('select');
-  for (const item of items) {
-    const option = document.createElement('option');
-    option.value = item.id;
-    option.textContent = title(item);
-    select.append(option);
-  }
-  return select;
 }
 
 export function showCameraLab(root: HTMLElement): void {
@@ -139,29 +110,7 @@ export function showCameraLab(root: HTMLElement): void {
     const target = rendererFor(screen);
     target.resetCamera();
     const view = viewOf(fakeRound(scenario));
-    const hud: HudInfo = {
-      names: ['Я', 'Противник'],
-      score: [0, 0],
-      roundIndex: 0,
-      gameId: 'LAB',
-      gameTick: 0,
-      mySide: 0,
-      rttMs: 0,
-      serverTick: 0,
-      pending: 0,
-      correctionPx: 0,
-      fps: 0,
-      worstFrameMs: 0,
-      isMuted: true,
-      sticks: thumbSticks(screen.width, screen.height, settings),
-      isAutoAiming: false,
-      isShotGuarded: false,
-      isZoneFiring: false,
-      isReversing: false,
-      aimLine: null,
-      frameMs: SETTLE_MS,
-      frameTimes: [],
-    };
+    const hud = labHud(thumbSticks(screen.width, screen.height, settings), SETTLE_MS, null);
     // Первый кадр после сброса — установившееся состояние; второй нужен, чтобы стратегия сменилась, если её переключили.
     target.draw(view, hud, null);
     target.resetCamera();
