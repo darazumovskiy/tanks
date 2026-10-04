@@ -13,7 +13,7 @@ export interface AimLineStyleEntry {
   style: AimLineStyle;
 }
 
-export const DEFAULT_AIM_LINE_STYLE_ID: AimLineStyleId = 'soft-tracer';
+export const DEFAULT_AIM_LINE_STYLE_ID: AimLineStyleId = 'dots';
 
 const STATE_COLORS = { onTarget: '#e8825a', lead: '#5dffa0', danger: '#ff5a6a' };
 const COLD = '#9fb4c8';

@@ -35,7 +35,6 @@ export function labHud(sticks: StickState[], frameMs: number, aimLine: AimLine |
     worstFrameMs: 0,
     isMuted: true,
     sticks,
-    isAutoAiming: false,
     isShotGuarded: false,
     isZoneFiring: false,
     isReversing: false,

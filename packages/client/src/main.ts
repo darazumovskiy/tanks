@@ -243,7 +243,7 @@ function startDuel(roomCode: string): void {
   canvas.hidden = false;
   document.body.classList.add('duel');
   const hasTouch = isTouchDevice();
-  const store = new SettingsStore(localStorage, defaultSettings(hasTouch), { isAdmin });
+  const store = new SettingsStore(localStorage, defaultSettings(), { isAdmin });
   const autoFireButton = byId('autofire', HTMLButtonElement);
   const autoFire = bindAutoFire(autoFireButton, hasTouch);
   const game = new Game({

@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { defaultSettings, parseSettings, SETTINGS_STORAGE_KEY, SettingsStore } from './settings.js';
 
-const PHONE_DEFAULTS = defaultSettings(true);
-const DESKTOP_DEFAULTS = defaultSettings(false);
+const PHONE_DEFAULTS = defaultSettings();
+const DESKTOP_DEFAULTS = defaultSettings();
 const PLAYER = { isAdmin: false };
 const ADMIN = { isAdmin: true };
 
 describe('defaultSettings', () => {
-  it('автоведение включено только на устройстве с касанием, остальное одинаково', () => {
-    expect(PHONE_DEFAULTS.hasAutoAim).toBe(true);
-    expect(DESKTOP_DEFAULTS.hasAutoAim).toBe(false);
-    expect({ ...PHONE_DEFAULTS, hasAutoAim: false }).toEqual(DESKTOP_DEFAULTS);
+  it('умолчания одинаковы для телефона и компьютера: предохранитель включён, обзор 85 %', () => {
+    expect(PHONE_DEFAULTS).toEqual(DESKTOP_DEFAULTS);
+    expect(PHONE_DEFAULTS.hasRicochetGuard).toBe(true);
+    expect(PHONE_DEFAULTS.minViewPercent).toBe(85);
   });
 
   it('порог газа на повороте — 0,8 на обоих устройствах, зажимается в 0–1', () => {
@@ -20,10 +20,9 @@ describe('defaultSettings', () => {
     expect(parseSettings(JSON.stringify({ pivotThrottle: 0.2 }), PHONE_DEFAULTS, PLAYER).pivotThrottle).toBe(0.2);
   });
 
-  it('линия выстрела включена, предохранитель, подсказка упреждения и огонь по цели выключены на обоих устройствах', () => {
+  it('линия выстрела включена, подсказка упреждения и огонь по цели выключены на обоих устройствах', () => {
     for (const defaults of [PHONE_DEFAULTS, DESKTOP_DEFAULTS]) {
       expect(defaults.hasAimLine).toBe(true);
-      expect(defaults.hasRicochetGuard).toBe(false);
       expect(defaults.hasLeadHint).toBe(false);
       expect(defaults.hasZoneFire).toBe(false);
     }
@@ -61,21 +60,19 @@ describe('parseSettings', () => {
     expect(settings.hasFireRing).toBe(true);
     const legacy = JSON.stringify({ stickRadiusPx: 60 });
     expect(parseSettings(legacy, PHONE_DEFAULTS, PLAYER).hasFireRing).toBe(false);
-    expect(parseSettings(legacy, PHONE_DEFAULTS, PLAYER).hasAutoAim).toBe(true);
-    expect(parseSettings(legacy, DESKTOP_DEFAULTS, PLAYER).hasAutoAim).toBe(false);
-    expect(parseSettings(JSON.stringify({ hasAutoAim: false }), PHONE_DEFAULTS, PLAYER).hasAutoAim).toBe(false);
   });
 
-  it('флаг предохранителя: без записи — false, с записью — читается; старый ключ hasQuickReverse не ломает разбор', () => {
+  it('флаг предохранителя: без записи — умолчание true, с записью — читается; старые ключи hasQuickReverse и hasAutoAim не ломают разбор и не попадают в настройки', () => {
     const legacy = parseSettings(JSON.stringify({ stickRadiusPx: 60 }), PHONE_DEFAULTS, PLAYER);
-    expect(legacy.hasRicochetGuard).toBe(false);
-    const enabled = parseSettings(
-      JSON.stringify({ hasRicochetGuard: true, hasQuickReverse: true }),
+    expect(legacy.hasRicochetGuard).toBe(true);
+    const disabled = parseSettings(
+      JSON.stringify({ hasRicochetGuard: false, hasQuickReverse: true, hasAutoAim: true }),
       DESKTOP_DEFAULTS,
       PLAYER,
     );
-    expect(enabled.hasRicochetGuard).toBe(true);
-    expect('hasQuickReverse' in enabled).toBe(false);
+    expect(disabled.hasRicochetGuard).toBe(false);
+    expect('hasQuickReverse' in disabled).toBe(false);
+    expect('hasAutoAim' in disabled).toBe(false);
   });
 
   it('линия выстрела читается всем; подсказка упреждения — только с правом админа', () => {
@@ -95,14 +92,12 @@ describe('parseSettings', () => {
     expect(parseSettings(raw, PHONE_DEFAULTS, ADMIN).hasZoneFire).toBe(true);
   });
 
-  it('вид прицела: умолчание «тихий трассер» на обоих устройствах, известный читается, неизвестный — умолчание', () => {
-    expect(PHONE_DEFAULTS.aimLineStyle).toBe('soft-tracer');
-    expect(DESKTOP_DEFAULTS.aimLineStyle).toBe('soft-tracer');
-    expect(parseSettings(JSON.stringify({ aimLineStyle: 'dots' }), PHONE_DEFAULTS, PLAYER).aimLineStyle).toBe('dots');
-    expect(parseSettings(JSON.stringify({ aimLineStyle: 'laser' }), PHONE_DEFAULTS, PLAYER).aimLineStyle).toBe(
-      'soft-tracer',
-    );
-    expect(parseSettings(JSON.stringify({ aimLineStyle: 7 }), PHONE_DEFAULTS, PLAYER).aimLineStyle).toBe('soft-tracer');
+  it('вид прицела: умолчание «точки» на обоих устройствах, известный читается, неизвестный — умолчание', () => {
+    expect(PHONE_DEFAULTS.aimLineStyle).toBe('dots');
+    expect(DESKTOP_DEFAULTS.aimLineStyle).toBe('dots');
+    expect(parseSettings(JSON.stringify({ aimLineStyle: 'neon' }), PHONE_DEFAULTS, PLAYER).aimLineStyle).toBe('neon');
+    expect(parseSettings(JSON.stringify({ aimLineStyle: 'laser' }), PHONE_DEFAULTS, PLAYER).aimLineStyle).toBe('dots');
+    expect(parseSettings(JSON.stringify({ aimLineStyle: 7 }), PHONE_DEFAULTS, PLAYER).aimLineStyle).toBe('dots');
   });
 });
 
@@ -116,12 +111,12 @@ describe('SettingsStore', () => {
     store.setNumber('stickRadiusPx', 80);
     store.setFlag('showFrameGraph', true);
     store.setFlag('hasFireRing', true);
-    store.setFlag('hasAutoAim', false);
+    store.setFlag('hasRicochetGuard', false);
     const again = new SettingsStore(localStorage, PHONE_DEFAULTS, PLAYER);
     expect(again.value.stickRadiusPx).toBe(80);
     expect(again.value.showFrameGraph).toBe(true);
     expect(again.value.hasFireRing).toBe(true);
-    expect(again.value.hasAutoAim).toBe(false);
+    expect(again.value.hasRicochetGuard).toBe(false);
     expect(localStorage.getItem(SETTINGS_STORAGE_KEY)).not.toBeNull();
   });
 
@@ -154,16 +149,16 @@ describe('SettingsStore', () => {
   it('сброс возвращает умолчания своего устройства и сохраняет их', () => {
     const store = new SettingsStore(localStorage, PHONE_DEFAULTS, PLAYER);
     store.setNumber('minViewPercent', 40);
-    store.setFlag('hasAutoAim', false);
+    store.setFlag('hasRicochetGuard', false);
     store.reset();
     expect(store.value).toEqual(PHONE_DEFAULTS);
     expect(new SettingsStore(localStorage, PHONE_DEFAULTS, PLAYER).value.minViewPercent).toBe(
       PHONE_DEFAULTS.minViewPercent,
     );
     const desktop = new SettingsStore(localStorage, DESKTOP_DEFAULTS, PLAYER);
-    desktop.setFlag('hasAutoAim', true);
+    desktop.setFlag('hasAimLine', false);
     desktop.reset();
-    expect(desktop.value.hasAutoAim).toBe(false);
+    expect(desktop.value.hasAimLine).toBe(true);
   });
 
   it('админский флаг в хранилище без права читается выключенным, с правом — как записан', () => {

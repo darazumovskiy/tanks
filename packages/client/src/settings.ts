@@ -9,7 +9,6 @@ export interface Settings {
   pivotThrottle: number;
   hasFireRing: boolean;
   fireRing: number;
-  hasAutoAim: boolean;
   hasRicochetGuard: boolean;
   hasAimLine: boolean;
   aimLineStyle: AimLineStyleId;
@@ -26,7 +25,7 @@ export interface Settings {
 }
 
 export type BooleanSettingKey =
-  'hasFireRing' | 'hasAutoAim' | 'hasRicochetGuard' | 'hasAimLine' | 'hasLeadHint' | 'hasZoneFire' | 'showFrameGraph';
+  'hasFireRing' | 'hasRicochetGuard' | 'hasAimLine' | 'hasLeadHint' | 'hasZoneFire' | 'showFrameGraph';
 export type NumericSettingKey = Exclude<keyof Settings, BooleanSettingKey | 'cameraMode' | 'aimLineStyle'>;
 
 // Флажок с `isTouchOnly` показывается только на устройстве с касанием: настройка касается стиков.
@@ -56,22 +55,22 @@ export interface NumericSettingField {
   requiresFlag?: BooleanSettingKey;
 }
 
-// Помощь башне — только касанию: на компьютере мышь указывает точку мгновенно и точно.
-export function defaultSettings(isTouchDevice: boolean): Settings {
+// Умолчания — настройки Димы из боевых игр 2026-10-04: предохранитель включён, прицел «Точки», обзор 85 %.
+// Одинаковы для телефона и компьютера.
+export function defaultSettings(): Settings {
   return {
     stickRadiusPx: 40,
     deadZone: 0.07,
     pivotThrottle: 0.8,
     hasFireRing: false,
     fireRing: 0.89,
-    hasAutoAim: isTouchDevice,
-    hasRicochetGuard: false,
+    hasRicochetGuard: true,
     hasAimLine: true,
     aimLineStyle: DEFAULT_AIM_LINE_STYLE_ID,
     hasLeadHint: false,
     hasZoneFire: false,
     cameraMode: 'follow',
-    minViewPercent: 75,
+    minViewPercent: 85,
     followLookAhead: 0.35,
     followLagMs: 120,
     pairLagMs: 300,
@@ -86,11 +85,6 @@ export const BOOLEAN_FIELDS: readonly BooleanSettingField[] = [
     key: 'hasFireRing',
     label: 'Кольцо огня',
     hint: 'стрелять только у края правого стика; без кольца стреляет любое касание правой половины',
-  },
-  {
-    key: 'hasAutoAim',
-    label: 'Башня сама держит противника',
-    hint: 'пока не тянешь правый стик, башня смотрит на противника; потянул — рулишь сам',
   },
   {
     key: 'hasRicochetGuard',

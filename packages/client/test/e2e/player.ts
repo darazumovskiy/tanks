@@ -23,7 +23,6 @@ export interface DebugState {
   nicknames: [string, string];
   isFighting: boolean;
   isAutoFiring: boolean;
-  isAutoAiming: boolean;
   isShotGuarded: boolean;
   isZoneFiring: boolean;
   isReversing: boolean;

@@ -30,7 +30,7 @@ export function makeTarget(screen: FxScreen): Target {
   canvas.style.width = `${String(screen.width)}px`;
   canvas.style.height = `${String(screen.height)}px`;
   canvas.className = 'fx-stage-canvas';
-  const settings = defaultSettings(screen.isTouchDevice);
+  const settings = defaultSettings();
   const effects = new Effects(() => ['Я', 'Противник']);
   const renderer = new Renderer(canvas, effects, settings, screen.isTouchDevice, () => ({
     width: screen.width,

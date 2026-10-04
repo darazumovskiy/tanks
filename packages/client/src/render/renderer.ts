@@ -28,7 +28,6 @@ export interface HudInfo {
   worstFrameMs: number;
   isMuted: boolean;
   sticks: readonly StickState[];
-  isAutoAiming: boolean;
   isShotGuarded: boolean;
   isZoneFiring: boolean;
   isReversing: boolean;
@@ -83,15 +82,6 @@ const FIRE_RING_IDLE_COLOR = 'rgba(232,130,90,0.35)';
 const FIRE_RING_ACTIVE_COLOR = 'rgba(232,130,90,0.95)';
 const REVERSE_EDGE_COLOR = 'rgba(120,200,230,0.9)';
 
-// Скобки автоведения вокруг противника в единицах поля: появляются, сжимаясь к танку, и гаснут плавно.
-const AUTO_AIM_COLOR = '#e8825a';
-const AUTO_AIM_FADE_MS = 160;
-const AUTO_AIM_HALF_SIZE = 44;
-const AUTO_AIM_CORNER = 13;
-const AUTO_AIM_LINE_WIDTH = 2.5;
-const AUTO_AIM_ALPHA = 0.9;
-const AUTO_AIM_SPREAD = 0.35;
-
 // Штрих предохранителя поперёк ствола сразу за дулом своего танка: выстрел сдерживается.
 const GUARD_COLOR = '#ff5a6a';
 const GUARD_FADE_MS = 120;
@@ -115,7 +105,6 @@ export class Renderer {
   private camera: Camera;
   private strategy: CameraStrategy;
   private strategyMode: CameraMode;
-  private autoAimGlow = 0;
   private guardGlow = 0;
   private aimLineGlow = 0;
   // Последняя линия остаётся на время угасания после выключения или гибели.
@@ -299,7 +288,6 @@ export class Renderer {
         this.drawTankTag(view, side, hud.names[side]);
       }
     }
-    this.drawAutoAimBrackets(view, hud);
     this.drawGuardMark(view, hud);
     this.effects.drawPopups(ctx);
     ctx.restore();
@@ -341,33 +329,6 @@ export class Renderer {
     ctx.beginPath();
     ctx.moveTo(GUARD_OFFSET, -GUARD_HALF_LENGTH * eased);
     ctx.lineTo(GUARD_OFFSET, GUARD_HALF_LENGTH * eased);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  private drawAutoAimBrackets(view: WorldView, hud: HudInfo): void {
-    const step = hud.frameMs / AUTO_AIM_FADE_MS;
-    this.autoAimGlow = clamp(this.autoAimGlow + (hud.isAutoAiming ? step : -step), 0, 1);
-    const enemy = view.tanks[hud.mySide === 0 ? 1 : 0];
-    if (this.autoAimGlow <= 0 || !enemy.isAlive) {
-      return;
-    }
-    const { ctx } = this;
-    const eased = easeOut(this.autoAimGlow);
-    const half = AUTO_AIM_HALF_SIZE * (1 + AUTO_AIM_SPREAD * (1 - eased));
-    ctx.save();
-    ctx.translate(enemy.x, enemy.y);
-    ctx.strokeStyle = rgba(AUTO_AIM_COLOR, AUTO_AIM_ALPHA * eased);
-    ctx.lineWidth = AUTO_AIM_LINE_WIDTH;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    for (const sx of [-1, 1]) {
-      for (const sy of [-1, 1]) {
-        ctx.moveTo(sx * half, sy * (half - AUTO_AIM_CORNER));
-        ctx.lineTo(sx * half, sy * half);
-        ctx.lineTo(sx * (half - AUTO_AIM_CORNER), sy * half);
-      }
-    }
     ctx.stroke();
     ctx.restore();
   }

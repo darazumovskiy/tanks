@@ -3,14 +3,10 @@ import type { Settings } from './settings.js';
 import { aimTurret, IDLE_HULL, isBehind, steerHull, type HullSteering } from './steering.js';
 import { TouchSticks, type StickSettings, type StickState } from './touch.js';
 
-// После того как игрок отпустил стик башни, автоведение ждёт: осознанный выстрел в стену на рикошет не должен
-// перебиваться доворотом на противника.
-export const AUTO_AIM_RESUME_MS = 500;
 // Предохранитель задерживает опасный выстрел не дольше этого: башня не ушла — тап отменяется.
 export const RICOCHET_GUARD_HOLD_MS = 300;
 
-export type InputSettings = StickSettings &
-  Pick<Settings, 'pivotThrottle' | 'hasAutoAim' | 'hasRicochetGuard' | 'hasZoneFire'>;
+export type InputSettings = StickSettings & Pick<Settings, 'pivotThrottle' | 'hasRicochetGuard' | 'hasZoneFire'>;
 
 export type GuardEvent = 'hold' | 'cancel';
 
@@ -31,15 +27,9 @@ export interface SteeredTank {
   stats: { turnRate: number };
 }
 
-export interface AimTarget {
-  x: number;
-  y: number;
-}
-
-// Что известно о выстреле с текущего угла башни: цель автоведения, вернётся ли снаряд в свой корпус,
-// проходит ли линия через зону противника.
+// Что известно о выстреле с текущего угла башни: вернётся ли снаряд в свой корпус, проходит ли линия через зону
+// противника.
 export interface ShotContext {
-  target: AimTarget | null;
   isReturning: boolean;
   isInZone: boolean;
 }
@@ -51,7 +41,6 @@ function isTypingTarget(target: EventTarget | null): boolean {
 // Клавиатура — корпус, мышь — башня и выстрел; активный стик касания замещает свой источник.
 // Задний ход со стика — только бросок пальца за корму танка; дальше режим ведёт `steerHull`.
 // Авто-огонь — выстрел в каждом тике независимо от остальных источников, пока включён.
-// Башня без ручного источника при включённом автоведении держит переданную цель.
 // Огонь по цели пропускает выстрелы касания (стик, авто-огонь, выброс стика) только в зоне противника;
 // тап, мышь и пробел зоной не ограничены.
 // Предохранитель сдерживает выстрел, пока он опасен (признак приходит снаружи), и не дольше задержки.
@@ -64,8 +53,6 @@ export class InputReader {
   private isMouseDown = false;
   private hull: Readonly<HullSteering> = IDLE_HULL;
   private isAutoFireOn = false;
-  private isAutoAimingNow = false;
-  private lastManualAimAt: number | null = null;
   // Выстрел из защёлки стика, пойманный во время задержки: доживает до безопасного чтения или до таймаута.
   private hasHeldFire = false;
   private guardStartedAt: number | null = null;
@@ -125,10 +112,6 @@ export class InputReader {
     return this.isAutoFireOn;
   }
 
-  get isAutoAiming(): boolean {
-    return this.isAutoAimingNow;
-  }
-
   get isShotGuarded(): boolean {
     return this.isShotGuardedNow;
   }
@@ -147,7 +130,7 @@ export class InputReader {
 
   read(me: SteeredTank, shot: ShotContext): Action {
     const hull = this.readHull(me);
-    const turretTurn = this.readTurretTurn(me, shot.target);
+    const turretTurn = this.readTurretTurn(me);
     const isFiring = this.readFire(shot);
     return { throttle: hull.throttle, turn: hull.turn, turretTurn, isFiring };
   }
@@ -206,12 +189,10 @@ export class InputReader {
     return { throttle: (isForward ? 1 : 0) - (isBack ? 1 : 0), turn: (isRight ? 1 : 0) - (isLeft ? 1 : 0) };
   }
 
-  // Палец в мёртвой зоне стика башни — не ручное направление, но и не мышь: башню ведёт автоматика.
-  private readTurretTurn(me: SteeredTank, target: AimTarget | null): number {
-    this.isAutoAimingNow = false;
+  // Палец в мёртвой зоне стика башни — не ручное направление, но и не мышь: башня стоит.
+  private readTurretTurn(me: SteeredTank): number {
     const stick = this.sticks.stick('aim');
     if (stick?.isActive === true) {
-      this.lastManualAimAt = this.now();
       return aimTurret(Math.atan2(stick.dy, stick.dx), me.turret);
     }
     const mouse = this.mouse;
@@ -219,18 +200,6 @@ export class InputReader {
     if (isMouseAiming) {
       return aimTurret(Math.atan2(mouse.y - me.y, mouse.x - me.x), me.turret);
     }
-    return this.readAutoAim(me, target);
-  }
-
-  private readAutoAim(me: SteeredTank, target: AimTarget | null): number {
-    if (!this.settings.hasAutoAim || target === null || this.mouse !== null) {
-      return 0;
-    }
-    const isResting = this.lastManualAimAt !== null && this.now() - this.lastManualAimAt < AUTO_AIM_RESUME_MS;
-    if (isResting) {
-      return 0;
-    }
-    this.isAutoAimingNow = true;
-    return aimTurret(Math.atan2(target.y - me.y, target.x - me.x), me.turret);
+    return 0;
   }
 }

@@ -59,7 +59,7 @@ export function showCameraLab(root: HTMLElement): void {
   }
   root.hidden = false;
   root.innerHTML = '';
-  const settings: Settings = defaultSettings(true);
+  const settings: Settings = defaultSettings();
   const scenarioSelect = buildSelect(CAMERA_SCENARIOS, (s) => s.title);
   const modeSelect = buildSelect(
     PHONE_CAMERA_MODES.map((entry) => ({ id: entry.mode, label: entry.label })),

@@ -68,12 +68,11 @@ function formatFlag(isOn: boolean): string {
 
 // Анализатор журналов группирует серию по настройкам: одна строка на все флажки.
 function formatFlags(settings: Readonly<Settings>): string {
-  const autoaim = formatFlag(settings.hasAutoAim);
   const guard = formatFlag(settings.hasRicochetGuard);
   const aimLine = formatFlag(settings.hasAimLine);
   const leadHint = formatFlag(settings.hasLeadHint);
   const zoneFire = formatFlag(settings.hasZoneFire);
-  return `flags autoaim=${autoaim} guard=${guard} aimline=${aimLine} leadhint=${leadHint} zonefire=${zoneFire} aimstyle=${settings.aimLineStyle}`;
+  return `flags guard=${guard} aimline=${aimLine} leadhint=${leadHint} zonefire=${zoneFire} aimstyle=${settings.aimLineStyle}`;
 }
 
 // Связывает сеть, предсказание, ввод, эффекты, звук и рендер; держит цикл кадров и фиксированный шаг ввода.
@@ -236,18 +235,19 @@ export class Game {
     this.diag.write(`autofire on=${isOn ? '1' : '0'}`);
   }
 
-  // Строка на каждом старте раунда и при любой смене флажков.
+  // Строка флажков и полный снимок настроек — на каждом старте раунда и при любой смене настроек.
   private logFlags(isRoundStart: boolean): void {
-    const line = formatFlags(this.options.settings);
-    if (!isRoundStart && this.loggedFlags === line) {
+    const settingsLine = `settings ${JSON.stringify(this.options.settings)}`;
+    if (!isRoundStart && this.loggedFlags === settingsLine) {
       return;
     }
-    this.loggedFlags = line;
-    this.diag.write(line);
+    this.loggedFlags = settingsLine;
+    this.diag.write(formatFlags(this.options.settings));
+    this.diag.write(settingsLine);
   }
 
-  // Помощники не добывают информацию: автоведение, предохранитель, линия выстрела и огонь по цели знают только
-  // о живом противнике в кадре камеры и только во время боя.
+  // Помощники не добывают информацию: предохранитель, линия выстрела и огонь по цели знают только о живом
+  // противнике в кадре камеры и только во время боя.
   private visibleEnemy(prediction: Prediction, view: WorldView, side: Side): InterpolatedTank | null {
     const enemy = view.tanks[side === 0 ? 1 : 0];
     if (!prediction.isFighting || !enemy.isAlive) {
@@ -266,11 +266,7 @@ export class Game {
     const isInZone =
       this.options.settings.hasZoneFire &&
       isShotInZone({ walls, shooter: { x: me.x, y: me.y, turret: me.turret }, bulletSpeed, enemy });
-    return {
-      target: enemy === null ? null : { x: enemy.x, y: enemy.y },
-      isReturning: isShotReturning(walls, me, me.turret, bulletSpeed, enemy),
-      isInZone,
-    };
+    return { isReturning: isShotReturning(walls, me, me.turret, bulletSpeed, enemy), isInZone };
   }
 
   private aimLineFor(
@@ -335,7 +331,6 @@ export class Game {
     nicknames: [string, string];
     isFighting: boolean;
     isAutoFiring: boolean;
-    isAutoAiming: boolean;
     isShotGuarded: boolean;
     isZoneFiring: boolean;
     isReversing: boolean;
@@ -367,7 +362,6 @@ export class Game {
       nicknames: this.names(),
       isFighting: this.prediction.isFighting,
       isAutoFiring: this.input.isAutoFiring,
-      isAutoAiming: this.input.isAutoAiming,
       isShotGuarded: this.input.isShotGuarded,
       isZoneFiring: this.input.isZoneFiring,
       isReversing: this.input.isReversing,
@@ -531,7 +525,6 @@ export class Game {
         worstFrameMs: this.worstFrameMs,
         isMuted: this.sfx.isMuted,
         sticks: this.input.stickStates,
-        isAutoAiming: this.input.isAutoAiming,
         isShotGuarded: this.input.isShotGuarded,
         isZoneFiring: this.input.isZoneFiring,
         isReversing: this.input.isReversing,

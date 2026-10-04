@@ -2,10 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { defaultSettings, NUMERIC_FIELDS, SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
 
-const DEFAULT_SETTINGS = defaultSettings(true);
+const DEFAULT_SETTINGS = defaultSettings();
 const PLAYER = { isAdmin: false };
 const ADMIN = { isAdmin: true };
-const AUTO_AIM_LABEL = 'Башня сама держит противника';
 const GUARD_LABEL = 'Предохранитель';
 const AIM_LINE_LABEL = 'Линия выстрела';
 const LEAD_HINT_LABEL = 'Подсказка упреждения';
@@ -102,45 +101,29 @@ describe('SettingsPanel', () => {
     expect(store.value.showFrameGraph).toBe(true);
   });
 
-  it('флажок автоведения на телефоне отмечен по умолчанию, снятие уходит в хранилище', () => {
-    const checkbox = checkFor(AUTO_AIM_LABEL);
-    expect(checkbox.checked).toBe(true);
-    checkbox.checked = false;
-    checkbox.dispatchEvent(new Event('change'));
-    expect(store.value.hasAutoAim).toBe(false);
-    expect(localStorage.getItem('tanks.settings')).toContain('"hasAutoAim":false');
-    root.querySelector<HTMLButtonElement>('button.settings-reset')?.click();
-    expect(checkFor(AUTO_AIM_LABEL).checked).toBe(true);
-  });
-
   const desktopCheckLabels = (): (string | null)[] => {
     const desktopRoot = document.createElement('aside');
     document.body.append(desktopRoot);
-    const desktopStore = new SettingsStore(localStorage, defaultSettings(false), PLAYER);
+    const desktopStore = new SettingsStore(localStorage, defaultSettings(), PLAYER);
     new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, false);
     return Array.from(desktopRoot.querySelectorAll<HTMLLabelElement>('label.settings-check')).map(
       (row) => row.querySelector('.settings-head span')?.textContent ?? null,
     );
   };
 
-  it('на компьютере флажок автоведения есть и снят по умолчанию', () => {
-    const desktopRoot = document.createElement('aside');
-    document.body.append(desktopRoot);
-    const desktopStore = new SettingsStore(localStorage, defaultSettings(false), PLAYER);
-    new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, false);
-    const checkbox = Array.from(desktopRoot.querySelectorAll<HTMLLabelElement>('label.settings-check'))
-      .find((row) => row.querySelector('.settings-head span')?.textContent === AUTO_AIM_LABEL)
-      ?.querySelector<HTMLInputElement>('input[type=checkbox]');
-    expect(checkbox?.checked).toBe(false);
+  it('флажок предохранителя отмечен по умолчанию, снятие уходит в хранилище, сброс возвращает', () => {
+    const checkbox = checkFor(GUARD_LABEL);
+    expect(checkbox.checked).toBe(true);
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event('change'));
+    expect(store.value.hasRicochetGuard).toBe(false);
+    expect(localStorage.getItem('tanks.settings')).toContain('"hasRicochetGuard":false');
+    root.querySelector<HTMLButtonElement>('button.settings-reset')?.click();
+    expect(checkFor(GUARD_LABEL).checked).toBe(true);
   });
 
-  it('флажок предохранителя снят по умолчанию, отметка уходит в хранилище', () => {
-    const checkbox = checkFor(GUARD_LABEL);
-    expect(checkbox.checked).toBe(false);
-    checkbox.checked = true;
-    checkbox.dispatchEvent(new Event('change'));
-    expect(store.value.hasRicochetGuard).toBe(true);
-    expect(localStorage.getItem('tanks.settings')).toContain('"hasRicochetGuard":true');
+  it('флажки без админ-режима: кольцо, предохранитель, линия, график — и ничего больше', () => {
+    expect(checkLabels(root)).toEqual(['Кольцо огня', GUARD_LABEL, AIM_LINE_LABEL, 'График кадров']);
   });
 
   it('на компьютере есть предохранитель и линия выстрела', () => {
@@ -177,7 +160,7 @@ describe('SettingsPanel', () => {
     expect(options.map((option) => option.querySelector('.style-name')?.textContent)).toContain('Точки');
     expect(options.every((option) => option.querySelector('canvas.style-preview') !== null)).toBe(true);
     const toggleButton = root.querySelector<HTMLButtonElement>('.style-toggle');
-    expect(toggleButton?.querySelector('.style-name')?.textContent).toBe('Тихий трассер');
+    expect(toggleButton?.querySelector('.style-name')?.textContent).toBe('Точки');
     expect(toggleButton?.querySelector('canvas.style-preview')).not.toBeNull();
     const list = root.querySelector<HTMLElement>('.style-list');
     expect(list?.hidden).toBe(true);
@@ -240,7 +223,7 @@ describe('SettingsPanel', () => {
 
     const desktopRoot = document.createElement('aside');
     document.body.append(desktopRoot);
-    const desktopStore = new SettingsStore(localStorage, defaultSettings(false), ADMIN);
+    const desktopStore = new SettingsStore(localStorage, defaultSettings(), ADMIN);
     new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, false);
     const desktopLabels = checkLabels(desktopRoot);
     expect(desktopLabels).toContain(LEAD_HINT_LABEL);

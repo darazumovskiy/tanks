@@ -4,7 +4,7 @@ import { botRoomCode, type BotLevel } from '@tanks/shared/protocol';
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { normalizeAngle, Player, sleep, until, type DebugState } from './player.js';
+import { Player, sleep, until, type DebugState } from './player.js';
 import { GameServer } from './server.js';
 
 const DEFAULT_STATS = '3322';
@@ -30,20 +30,12 @@ const NO_FIRE_CHECK_MS = 2_000;
 // Зажатая кнопка огня дольше перезарядки по умолчанию даёт не меньше двух выстрелов.
 const HOLD_FIRE_MS = 1_500;
 const SHOT_LINE_MARK = 'ev kind=shot side=0 ';
-// Противник въезжает в кадр телефона (окно камеры у своего края поля кончается на x ≈ 1285) и уходит с оси
-// появления: на ней башня телефона и так смотрит на него, доворота не увидеть. Через проход между стенами
-// «Полигона» — двумя отрезками.
-const OFF_AXIS_WAYPOINT = { x: 1150, y: 450 };
-const OFF_AXIS_POST = { x: 1100, y: 250 };
-const AUTO_AIM_TIMEOUT_MS = 8_000;
-// Касание правой половины экрана телефона 844×390 и протяжка вниз на весь радиус стика — башня к π/2.
+// Касание правой половины экрана телефона 844×390 и протяжка вправо на весь радиус стика (40 px) — башня к 0,
+// вдоль оси появления.
 const PHONE_AIM_TOUCH = { x: 650, y: 200 };
-const PHONE_AIM_DRAG_DOWN = { x: 650, y: 300 };
-const TURRET_DOWN = Math.PI / 2;
-// Короче паузы автоведения (500 мс): башня ещё должна стоять там, куда её увёл игрок.
-const AUTO_AIM_HOLD_CHECK_MS = 250;
-const AUTO_AIM_HOLD_TOLERANCE = 0.1;
-const MIN_TURRET_CHANGE = 0.1;
+const PHONE_AIM_DRAG_RIGHT = { x: 690, y: 200 };
+const TURRET_RIGHT = 0;
+const TURRET_TIMEOUT_MS = 8_000;
 // Левый стик телефона: касание и точки на кольце радиуса 40 px (размер стика по умолчанию) — вправо, вниз, влево.
 const PHONE_MOVE_TOUCH = { x: 200, y: 200 };
 const PHONE_MOVE_RIGHT = { x: 240, y: 200 };
@@ -210,7 +202,11 @@ test('сервер перезапущен под открытыми страни
 
 test('телефон: кнопка авто-огня стреляет без касания стика, повторное касание выключает', async ({ browser }) => {
   const code = roomCode();
-  const phone = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, { isTouch: true });
+  // Со старта башня смотрит в стену перпендикулярно — предохранитель не дал бы выстрелить.
+  const phone = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, {
+    isTouch: true,
+    settings: { hasRicochetGuard: false },
+  });
   const desktop = await Player.open(browser, server.baseUrl, code, 'Компьютер', DEFAULT_STATS);
   await phone.waitForFight();
   await desktop.waitForFight();
@@ -239,41 +235,6 @@ test('телефон: кнопка авто-огня стреляет без к�
   );
   await sleep(NO_FIRE_CHECK_MS);
   expect((await desktop.state())?.bullets).toBe(0);
-
-  await phone.close();
-  await desktop.close();
-});
-
-test('телефон: башня сама держит противника в кадре, стик перебивает, после отпускания ведение возвращается', async ({
-  browser,
-}) => {
-  const code = roomCode();
-  const phone = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, { isTouch: true });
-  const desktop = await Player.open(browser, server.baseUrl, code, 'Компьютер', DEFAULT_STATS);
-  const phoneStart = await phone.waitForFight();
-  const desktopStart = await desktop.waitForFight();
-  expect(desktopStart.isAutoAiming).toBe(false);
-
-  await desktop.driveTo(OFF_AXIS_WAYPOINT, ARRIVE_DISTANCE);
-  await desktop.driveTo(OFF_AXIS_POST, ARRIVE_DISTANCE);
-  const desktopPost = (await desktop.waitForBattle()).me;
-  const tracked = await phone.waitForTurretAt(desktopPost, AUTO_AIM_TIMEOUT_MS, 'башня не навелась на противника');
-  expect(tracked.isAutoAiming).toBe(true);
-  expect(Math.abs(normalizeAngle(tracked.me.turret - phoneStart.me.turret))).toBeGreaterThan(MIN_TURRET_CHANGE);
-  const desktopNow = await desktop.waitForBattle();
-  expect(desktopNow.isAutoAiming).toBe(false);
-  expect(desktopNow.me.turret).toBe(desktopStart.me.turret);
-
-  const drag = await phone.touchDrag(PHONE_AIM_TOUCH, PHONE_AIM_DRAG_DOWN);
-  const manual = await phone.waitForTurretAngle(TURRET_DOWN, AUTO_AIM_TIMEOUT_MS, 'башня не пошла за стиком');
-  expect(manual.isAutoAiming).toBe(false);
-  await drag.release();
-  await sleep(AUTO_AIM_HOLD_CHECK_MS);
-  const held = await phone.waitForBattle();
-  expect(Math.abs(normalizeAngle(held.me.turret - TURRET_DOWN))).toBeLessThan(AUTO_AIM_HOLD_TOLERANCE);
-  expect(held.isAutoAiming).toBe(false);
-  const resumed = await phone.waitForTurretAt(desktopPost, AUTO_AIM_TIMEOUT_MS, 'ведение не возобновилось');
-  expect(resumed.isAutoAiming).toBe(true);
 
   await phone.close();
   await desktop.close();
@@ -381,12 +342,12 @@ function waitForAimLineState(player: Player, state: 'none' | 'onTarget' | 'lead'
   );
 }
 
-test('линия выстрела: автоведение держит противника на полосе — «на нём»; он уехал за стену — линия без цели', async ({
+test('линия выстрела: башня мышью на противника на полосе — «на нём»; он уехал за стену — линия без цели', async ({
   browser,
 }) => {
   const code = roomCode();
   const shooter = await Player.open(browser, server.baseUrl, code, 'Алиса', DEFAULT_STATS, {
-    settings: { hasAimLine: true, hasAutoAim: true },
+    settings: { hasAimLine: true },
   });
   const target = await Player.open(browser, server.baseUrl, code, 'Боб', DEFAULT_STATS, {
     settings: { hasAimLine: false },
@@ -394,9 +355,9 @@ test('линия выстрела: автоведение держит прот�
   await shooter.waitForFight();
   await target.waitForFight();
   await Promise.all([shooter.driveTo(SHOOTER_POST, ARRIVE_DISTANCE), target.driveTo(TARGET_POST, ARRIVE_DISTANCE)]);
+  await shooter.aimAt((await target.waitForBattle()).me);
 
   const onTarget = await waitForAimLineState(shooter, 'onTarget', 'линия не поймала противника на полосе');
-  expect(onTarget.isAutoAiming).toBe(true);
   expect(onTarget.aimLine?.isReturning).toBe(false);
 
   await target.driveTo(BEHIND_WALL_POST, ARRIVE_DISTANCE);
@@ -414,7 +375,7 @@ test('огонь по цели: касание молчит, пока проти
   const code = roomCode();
   const phone = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, {
     isTouch: true,
-    settings: { hasZoneFire: true, hasAutoAim: true },
+    settings: { hasZoneFire: true },
     query: '?admin=1',
   });
   const desktop = await Player.open(browser, server.baseUrl, code, 'Компьютер', DEFAULT_STATS);
@@ -423,11 +384,10 @@ test('огонь по цели: касание молчит, пока проти
   for (const waypoint of ZONE_HIDDEN_WAYPOINTS) {
     await desktop.driveTo(waypoint, ARRIVE_DISTANCE);
   }
-  const hiddenPost = (await desktop.waitForBattle()).me;
-  const tracking = await phone.waitForTurretAt(hiddenPost, AUTO_AIM_TIMEOUT_MS, 'башня не навелась на противника');
-  expect(tracking.isAutoAiming).toBe(true);
 
-  const touch = await phone.touchDrag(PHONE_AIM_TOUCH, PHONE_AIM_TOUCH);
+  // Стик держит башню вдоль оси появления: противник за стеной в стороне от линии, открытая позиция — на ней.
+  const touch = await phone.touchDrag(PHONE_AIM_TOUCH, PHONE_AIM_DRAG_RIGHT);
+  await phone.waitForTurretAngle(TURRET_RIGHT, TURRET_TIMEOUT_MS, 'башня не встала вдоль оси появления');
   await sleep(NO_FIRE_CHECK_MS);
   const silent = await phone.waitForBattle();
   expect(silent.isZoneFiring).toBe(false);
@@ -443,7 +403,7 @@ test('огонь по цели: касание молчит, пока проти
     ZONE_FIRE_TIMEOUT_MS,
     'огонь по цели не открылся на открытой линии',
   );
-  expect(firing.isAutoAiming).toBe(true);
+  expect(firing.bullets).toBeGreaterThan(0);
   await until(
     async () => {
       const state = await desktop.state();
@@ -487,7 +447,9 @@ test('вид прицела: читается из хранилища, меня�
     LOG_TIMEOUT_MS,
     'в журнале нет строки flags с новым видом прицела',
   );
-  expect(server.gameLog(start.gameId)).toContain('aimstyle=dots');
+  const log = server.gameLog(start.gameId);
+  expect(log).toContain('aimstyle=dots');
+  expect(log).toMatch(/settings \{.*"stickRadiusPx":\d+.*"aimLineStyle":"neon"/);
   await player.close();
 });
 
@@ -568,7 +530,14 @@ test('браузер Android видит плашку «Открыть в при�
 });
 
 test('анализатор журналов разбирает партию стенда: игра, устройство, выстрелы, отчёт', async ({ browser }) => {
-  const [shooter, target] = await openPair(browser, roomCode());
+  // Стрелок бьёт со старта в стену перпендикулярно — без предохранителя, иначе выстрелов не будет.
+  const code = roomCode();
+  const shooter = await Player.open(browser, server.baseUrl, code, 'Алиса', DEFAULT_STATS, {
+    settings: { hasRicochetGuard: false },
+  });
+  const target = await Player.open(browser, server.baseUrl, code, 'Боб', DEFAULT_STATS);
+  await shooter.waitForBattle();
+  await target.waitForBattle();
   const { gameId } = await shooter.waitForFight();
   await target.waitForFight();
   await shooter.setFiring(true);
