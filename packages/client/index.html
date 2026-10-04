@@ -35,10 +35,10 @@
         Имя
         <input id="nickname" maxlength="16" placeholder="как тебя звать" autocomplete="off" />
       </label>
-      <label>
-        Характеристики: броня, двигатель, пушка, перезарядка (сумма ≤ 10)
-        <input id="stats" maxlength="4" pattern="[0-5]{4}" value="3322" autocomplete="off" />
-      </label>
+      <section class="stats">
+        <h2 class="levels-title">Танк</h2>
+        <div id="stats-picker" class="stats-picker"></div>
+      </section>
       <button id="create" class="action">Создать дуэль</button>
       <section class="levels">
         <h2 class="levels-title">Против бота</h2>

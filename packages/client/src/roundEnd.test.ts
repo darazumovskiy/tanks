@@ -27,6 +27,13 @@ describe('попап итога раунда', () => {
     expect(container.querySelector<HTMLAnchorElement>('.round-end-menu')?.getAttribute('href')).toBe('/');
   });
 
+  it('кнопка «В бой» убирает попап, не трогая страницу', () => {
+    showRoundEnd(container, info(), fixedRandom);
+    container.querySelector<HTMLButtonElement>('.round-end-fight')?.click();
+    expect(container.hidden).toBe(true);
+    expect(container.childElementCount).toBe(0);
+  });
+
   it('поражение и ничья — без конфетти, со своими заголовками и причинами', () => {
     showRoundEnd(container, info({ result: 'loss', isByTime: true }), fixedRandom);
     expect(container.querySelector('.round-end-title')?.textContent).toBe('ПОРАЖЕНИЕ');

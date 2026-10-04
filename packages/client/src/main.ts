@@ -3,10 +3,13 @@ import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared
 import { BOT_LEVEL_INFO, BOT_LEVELS, botRoomCode, type BotLevel } from '@tanks/shared/protocol';
 import QRCode from 'qrcode';
 import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
+import { readClientInfo } from './clientInfo.js';
 import { Game } from './game.js';
 import { showCameraLab } from './lab.js';
 import { SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
+import { mountStatsPicker, statsLeft } from './statsPicker.js';
+import { Telemetry } from './telemetry.js';
 
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
@@ -20,6 +23,9 @@ const LEVEL_SELECTED_CLASS = 'is-selected';
 const LEVEL_INFO_OPEN_CLASS = 'is-open';
 const LEVEL_LIST_OPEN_CLASS = 'is-open';
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
+// Один на страницу: ошибки главной и боя уходят с одинаковым описанием клиента.
+const telemetry = new Telemetry(readClientInfo());
+telemetry.installErrorHandlers();
 
 function randomCode(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
@@ -146,14 +152,29 @@ function mountLevelPicker(elements: LevelPickerElements): { selected: () => BotL
   return { selected: () => selected };
 }
 
+function formatStats(stats: Stats): string {
+  return STAT_KEYS.map((key) => String(stats[key])).join('');
+}
+
 function showHome(): void {
   const home = byId('home', HTMLElement);
   const nickname = byId('nickname', HTMLInputElement);
-  const statsInput = byId('stats', HTMLInputElement);
+  const create = byId('create', HTMLButtonElement);
+  const createBot = byId('create-bot', HTMLButtonElement);
   home.hidden = false;
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
-  statsInput.value = localStorage.getItem(STATS_KEY) ?? '3322';
-  const picker = mountLevelPicker({
+  // Старт только с полностью розданными очками: иначе бой нечестный к сопернику с полной раскладкой.
+  const picker = mountStatsPicker(
+    byId('stats-picker', HTMLElement),
+    parseStats(localStorage.getItem(STATS_KEY)),
+    (stats) => {
+      localStorage.setItem(STATS_KEY, formatStats(stats));
+      const isComplete = statsLeft(stats) === 0;
+      create.disabled = !isComplete;
+      createBot.disabled = !isComplete;
+    },
+  );
+  const levels = mountLevelPicker({
     toggle: byId('bot-level-toggle', HTMLButtonElement),
     list: byId('bot-levels', HTMLElement),
     hint: byId('level-hint', HTMLElement),
@@ -161,14 +182,14 @@ function showHome(): void {
   });
   const startDuelWith = (code: string): void => {
     localStorage.setItem(NICKNAME_KEY, nickname.value);
-    localStorage.setItem(STATS_KEY, statsInput.value);
+    localStorage.setItem(STATS_KEY, formatStats(picker.value()));
     location.assign(`/d/${code}`);
   };
-  byId('create', HTMLButtonElement).addEventListener('click', () => {
+  create.addEventListener('click', () => {
     startDuelWith(randomCode());
   });
-  byId('create-bot', HTMLButtonElement).addEventListener('click', () => {
-    startDuelWith(botRoomCode(picker.selected(), randomCode()));
+  createBot.addEventListener('click', () => {
+    startDuelWith(botRoomCode(levels.selected(), randomCode()));
   });
   void showAndroidDownload();
 }
@@ -228,6 +249,7 @@ function startDuel(roomCode: string): void {
     roundEnd: byId('round-end', HTMLElement),
     settings: store.value,
     isTouchDevice: hasTouch,
+    telemetry,
   });
   const settingsToggle = byId('settings-toggle', HTMLButtonElement);
   settingsToggle.hidden = false;

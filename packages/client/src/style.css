@@ -152,17 +152,39 @@ input {
   color: rgba(244, 241, 232, 0.6);
 }
 
-.round-end-menu {
+.round-end-buttons {
+  display: flex;
+  gap: 10px;
   margin-top: 12px;
-  padding: 10px 22px;
+}
+
+/* «В бой» — главное действие, зелёная; «Меню» — второстепенное, серая. */
+.round-end-fight,
+.round-end-menu {
+  padding: 11px 24px;
+  font-family: inherit;
   font-size: 15px;
   font-weight: 700;
-  color: #f4f1e8;
   text-decoration: none;
+  border-radius: 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.round-end-fight {
+  color: #0b0f0d;
+  background: #4cc27a;
+  border: 0;
+}
+
+.round-end-fight:hover {
+  background: #62d48c;
+}
+
+.round-end-menu {
+  color: #f4f1e8;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 10px;
-  touch-action: manipulation;
 }
 
 .round-end-menu:hover {
@@ -516,11 +538,121 @@ input {
   border-radius: 8px;
 }
 
-.levels {
+.levels,
+.stats {
   display: flex;
   flex-direction: column;
   gap: 10px;
   margin-top: 8px;
+}
+
+.stats-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stats-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stats-preset {
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(244, 241, 232, 0.8);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.stats-preset.is-selected {
+  color: #0b0f0d;
+  background: #e8825a;
+  border-color: #e8825a;
+}
+
+.stats-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+}
+
+.stat-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.stat-name {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 14px;
+}
+
+.stat-effect {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.stat-pips {
+  flex: none;
+  display: flex;
+  gap: 5px;
+}
+
+/* Деление — крупная цель для пальца; заполненные — акцентом, недоступные по очкам — почти прозрачные. */
+.stat-pip {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 7px;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background-color 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.stat-pip.is-filled {
+  background: #e8825a;
+  border-color: #e8825a;
+}
+
+.stat-pip.is-disabled:not(.is-filled) {
+  opacity: 0.25;
+}
+
+.stats-left {
+  font-size: 13px;
+  color: #e8825a;
+}
+
+.stats-left.is-complete {
+  color: rgba(244, 241, 232, 0.55);
+}
+
+.home .action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .levels-title {

@@ -112,11 +112,22 @@ export function showRoundEnd(container: HTMLElement, info: RoundEndInfo, random:
   const reason = document.createElement('p');
   reason.className = 'round-end-reason';
   reason.textContent = reasonText(info);
+  const buttons = document.createElement('div');
+  buttons.className = 'round-end-buttons';
+  const fight = document.createElement('button');
+  fight.type = 'button';
+  fight.className = 'round-end-fight';
+  fight.textContent = 'В бой';
+  // Следующий раунд сервер начнёт сам; кнопка лишь убирает попап с глаз.
+  fight.addEventListener('click', () => {
+    hideRoundEnd(container);
+  });
   const menu = document.createElement('a');
   menu.className = 'round-end-menu';
   menu.href = HOME_PATH;
-  menu.textContent = 'В меню';
-  card.append(title, subtitle, scoreLine(info.score, info.mySide), reason, menu);
+  menu.textContent = 'Меню';
+  buttons.append(fight, menu);
+  card.append(title, subtitle, scoreLine(info.score, info.mySide), reason, buttons);
   container.append(card);
   container.hidden = false;
 }
