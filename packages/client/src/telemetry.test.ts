@@ -142,6 +142,19 @@ describe('Telemetry', () => {
     expect(beaconed).toHaveLength(1);
   });
 
+  it('скрытие страницы — событие vis и отправка сразу, возврат — событие без отправки', () => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(beaconed).toHaveLength(1);
+    expect(parse(beaconed[0] ?? { url: '', body: '' })[0]).toMatchObject({ kind: 'vis', msg: 'hidden' });
+
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(beaconed).toHaveLength(1);
+    telemetry.flush();
+    expect(parse(beaconed[1] ?? { url: '', body: '' })[0]).toMatchObject({ kind: 'vis', msg: 'visible' });
+  });
+
   it('без параметров использует navigator.sendBeacon, а при его отсутствии не падает', () => {
     const sendBeacon = vi.fn(() => true);
     Object.defineProperty(navigator, 'sendBeacon', { value: sendBeacon, configurable: true });

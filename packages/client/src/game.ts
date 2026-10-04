@@ -97,10 +97,12 @@ export class Game {
           this.diag.setSide(message.side);
           this.options.telemetry.setSide(message.side);
           this.diag.write(`net welcome side=${String(message.side)} room=${message.roomCode}`);
+          this.options.telemetry.event('net', 'welcome', { room: message.roomCode });
         },
         onRoomState: (message): void => {
           const slots = message.slots.map((slot) => (slot.isTaken ? slot.nickname : '-')).join('|');
           this.diag.write(`net room slots=${slots}`);
+          this.options.telemetry.event('net', 'room', { slots });
           if (message.slots.some((slot) => !slot.isTaken)) {
             this.prediction = null;
             this.roundStart = null;
@@ -118,6 +120,7 @@ export class Game {
           this.diag.write(
             `net roundstart game=${message.gameId} idx=${String(message.roundIndex)} map=${String(message.mapIndex)} score=${String(message.score[0])}:${String(message.score[1])}`,
           );
+          this.options.telemetry.event('net', 'roundstart', { idx: message.roundIndex, map: message.mapIndex });
           this.roundStart = message;
           this.roundStartedAt = performance.now();
           this.countdownBeeped = 0;

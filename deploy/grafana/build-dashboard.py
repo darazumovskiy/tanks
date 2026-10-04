@@ -161,7 +161,7 @@ PANELS = [
         width=THIRD,
     ),
     logs("Ошибки и события клиента", f'{CLIENT_EVENTS} | json | line_format "{CLIENT_EVENT_LINE}"'),
-    logs("События игр", '{app="tanks",stream="game"} |~ "game start|round start|leave|loop late|net |vis "'),
+    logs("События игр", '{app="tanks",stream="game"}'),
     row("Машина"),
     timeseries(
         "Процессор машины, %",

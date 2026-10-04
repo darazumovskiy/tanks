@@ -821,7 +821,7 @@
             "type": "loki",
             "uid": "grafanacloud-logs"
           },
-          "expr": "{app=\"tanks\",stream=\"game\"} |~ \"game start|round start|leave|loop late|net |vis \"",
+          "expr": "{app=\"tanks\",stream=\"game\"}",
           "refId": "A"
         }
       ],

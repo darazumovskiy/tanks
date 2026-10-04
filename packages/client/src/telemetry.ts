@@ -1,7 +1,7 @@
 import type { Side } from '@tanks/shared/engine';
 import type { ClientInfo } from './clientInfo.js';
 
-export type TelemetryKind = 'error' | 'net' | 'sec';
+export type TelemetryKind = 'error' | 'net' | 'sec' | 'vis';
 export type TelemetryFields = Record<string, string | number | boolean>;
 
 export interface TelemetryOptions {
@@ -52,10 +52,18 @@ export class Telemetry {
       this.flush();
     }, options.intervalMs ?? TELEMETRY_FLUSH_INTERVAL_MS);
     window.addEventListener('pagehide', this.onPageHide);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
 
   private readonly onPageHide = (): void => {
     this.flush();
+  };
+
+  private readonly onVisibilityChange = (): void => {
+    this.event('vis', document.visibilityState);
+    if (document.visibilityState === 'hidden') {
+      this.flush();
+    }
   };
 
   private readonly onError = (event: ErrorEvent): void => {
@@ -113,6 +121,7 @@ export class Telemetry {
   close(): void {
     window.clearInterval(this.timer);
     window.removeEventListener('pagehide', this.onPageHide);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
     if (this.hasErrorHandlers) {
       window.removeEventListener('error', this.onError);
       window.removeEventListener('unhandledrejection', this.onRejection);
