@@ -44,6 +44,14 @@ const TURRET_DOWN = Math.PI / 2;
 const AUTO_AIM_HOLD_CHECK_MS = 250;
 const AUTO_AIM_HOLD_TOLERANCE = 0.1;
 const MIN_TURRET_CHANGE = 0.1;
+// Левый стик телефона: касание и точки на кольце радиуса 40 px (размер стика по умолчанию) — вправо, вниз, влево.
+const PHONE_MOVE_TOUCH = { x: 200, y: 200 };
+const PHONE_MOVE_RIGHT = { x: 240, y: 200 };
+const PHONE_MOVE_DOWN = { x: 200, y: 240 };
+const PHONE_MOVE_LEFT = { x: 160, y: 200 };
+// Разворот на 180° при скорости поворота 2,55 рад/с — 1,23 с плюс торможение.
+const PIVOT_TIMEOUT_MS = 5_000;
+const REVERSE_TIMEOUT_MS = 3_000;
 // Точка появления стороны 0 на «Полигоне» — у левого края: башня в край перпендикулярно — снаряд вернётся в танк;
 // по диагонали вверх-вправо снаряд отскакивает от стены (330, 160, 44, 200) в левый край мимо корпуса.
 const EDGE_AIM_OFFSET = { x: 20, y: 0 };
@@ -266,6 +274,59 @@ test('телефон: башня сама держит противника в �
   expect(held.isAutoAiming).toBe(false);
   const resumed = await phone.waitForTurretAt(desktopPost, AUTO_AIM_TIMEOUT_MS, 'ведение не возобновилось');
   expect(resumed.isAutoAiming).toBe(true);
+
+  await phone.close();
+  await desktop.close();
+});
+
+test('телефон: стик за корму разворачивает танк без заднего хода, бросок через центр включает задний ход', async ({
+  browser,
+}) => {
+  const code = roomCode();
+  const phone = await Player.open(browser, server.baseUrl, code, 'Телефон', DEFAULT_STATS, { isTouch: true });
+  const desktop = await Player.open(browser, server.baseUrl, code, 'Компьютер', DEFAULT_STATS);
+  const start = await phone.waitForFight();
+  await desktop.waitForFight();
+  expect(start.me.heading).toBeCloseTo(0, 1);
+
+  const touch = await phone.touchBegin(PHONE_MOVE_TOUCH);
+  await touch.move(PHONE_MOVE_RIGHT);
+  await sleep(DRIVE_MS);
+  const driving = await phone.waitForBattle();
+  expect(driving.me.speed).toBeGreaterThan(0);
+  expect(driving.me.x).toBeGreaterThan(start.me.x);
+
+  // Палец за корму по кольцу, без провала к центру: разворот на месте, скорость не уходит ниже нуля.
+  await touch.move(PHONE_MOVE_DOWN);
+  await touch.move(PHONE_MOVE_LEFT);
+  let minSpeed = Infinity;
+  let hasReversed = false;
+  const turned = await phone.waitForHeading(Math.PI, PIVOT_TIMEOUT_MS, 'танк не развернулся за корму', (state) => {
+    minSpeed = Math.min(minSpeed, state.me.speed);
+    hasReversed = hasReversed || state.isReversing;
+  });
+  expect(minSpeed).toBeGreaterThanOrEqual(0);
+  expect(hasReversed).toBe(false);
+  expect(turned.isReversing).toBe(false);
+
+  // Бросок: через центр основания на противоположную сторону — палец встал позади танка.
+  await touch.move(PHONE_MOVE_TOUCH);
+  await touch.move(PHONE_MOVE_RIGHT);
+  const reversing = await until(
+    async () => {
+      const state = await phone.state();
+      return state?.isReversing === true && state.me.speed < 0 ? state : null;
+    },
+    REVERSE_TIMEOUT_MS,
+    'бросок не включил задний ход',
+  );
+  expect(reversing.me.speed).toBeLessThan(0);
+  await touch.release();
+  await until(
+    async () => ((await phone.state())?.isReversing === false ? true : null),
+    REVERSE_TIMEOUT_MS,
+    'задний ход не сброшен после отпускания стика',
+  );
 
   await phone.close();
   await desktop.close();

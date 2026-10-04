@@ -26,6 +26,7 @@ export default defineConfig({
         'packages/shared/src/engine/trajectory.ts',
         'packages/shared/src/engine/lead.ts',
         'packages/client/src/steering.ts',
+        'packages/client/src/flick.ts',
         'packages/client/src/touch.ts',
         'packages/client/src/input.ts',
         'packages/client/src/aimLine.ts',
@@ -46,7 +47,7 @@ export default defineConfig({
         'packages/analysis/src/**': { statements: 90, branches: 90, functions: 90, lines: 90 },
         'packages/shared/src/protocol/**': { statements: 95, branches: 85, functions: 95, lines: 95 },
         'packages/shared/src/engine/{trajectory,lead}.ts': { statements: 95, branches: 90, functions: 95, lines: 95 },
-        'packages/client/src/{steering,touch,input,clientInfo,telemetry,aimLine,zoneFire,admin}.ts': {
+        'packages/client/src/{steering,flick,touch,input,clientInfo,telemetry,aimLine,zoneFire,admin}.ts': {
           statements: 95,
           branches: 90,
           functions: 95,

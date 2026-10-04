@@ -30,7 +30,7 @@
 
 ## Журнал и настройки
 
-Строка `flags` журнала игры: `flags autoaim=<0|1> guard=<0|1> quickreverse=<0|1> aimline=<0|1> leadhint=<0|1> zonefire=<0|1>` — на старте раунда и при любой смене флажков ([game-log.md](../backend/game-log.md)).
+Строка `flags` журнала игры: `flags autoaim=<0|1> guard=<0|1> aimline=<0|1> leadhint=<0|1> zonefire=<0|1>` — на старте раунда и при любой смене флажков ([game-log.md](../backend/game-log.md)).
 
 | Флаг | Подпись | Подсказка | Кому |
 |---|---|---|---|

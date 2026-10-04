@@ -157,6 +157,7 @@ export function showCameraLab(root: HTMLElement): void {
       isAutoAiming: false,
       isShotGuarded: false,
       isZoneFiring: false,
+      isReversing: false,
       aimLine: null,
       frameMs: SETTLE_MS,
       frameTimes: [],

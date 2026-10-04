@@ -58,7 +58,6 @@ describe('InputReader', () => {
       fireRing: 0.85,
       hasAutoAim: false,
       hasRicochetGuard: false,
-      hasQuickReverse: false,
       hasZoneFire: false,
     };
     input = new InputReader(target, { toWorld: (x, y) => ({ x, y }) }, settings, {
@@ -110,18 +109,71 @@ describe('InputReader', () => {
     expect(read()).toMatchObject({ throttle: 1, turn: 0 });
   });
 
-  it('режим заднего хода живёт между чтениями и сбрасывается без стика', () => {
+  // Бросок левого стика: палец на одной стороне основания, через центр, на другую — за 100 мс.
+  const flickLeftStick = (from: { dx: number; dy: number }, to: { dx: number; dy: number }): void => {
+    target.dispatchEvent(pointer('pointermove', 1, LEFT_X + from.dx, Y + from.dy));
+    time += 100;
+    target.dispatchEvent(pointer('pointermove', 1, LEFT_X, Y));
+    time += 100;
+    target.dispatchEvent(pointer('pointermove', 1, LEFT_X + to.dx, Y + to.dy));
+  };
+
+  it('стик против курса без броска — разворот на месте, не задний ход', () => {
     target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
     target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 64, Y));
-    expect(read().throttle).toBeCloseTo(-1, 6);
-    // Стик под −80°: на заднем ходу корма доворачивает по часовой, на переднем нос — против.
-    target.dispatchEvent(pointer('pointermove', 1, LEFT_X + 11, Y - 63));
-    expect(read().turn).toBe(1);
-    target.dispatchEvent(pointer('pointerup', 1, LEFT_X + 11, Y - 63));
-    read();
+    const action = read();
+    expect(action.throttle).toBeCloseTo(0, 6);
+    expect(Math.abs(action.turn)).toBe(1);
+    expect(input.isReversing).toBe(false);
+  });
+
+  it('бросок с носа за корму — задний ход, держится до 70° от кормы, дальше — передний', () => {
     target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
-    target.dispatchEvent(pointer('pointermove', 1, LEFT_X + 11, Y - 63));
-    expect(read().turn).toBe(-1);
+    flickLeftStick({ dx: 64, dy: 0 }, { dx: -64, dy: 0 });
+    expect(read().throttle).toBeCloseTo(-1, 6);
+    expect(input.isReversing).toBe(true);
+    // 50° от кормы (стик под 130°): всё ещё задний ход, корма доворачивает.
+    target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 41, Y + 49));
+    const holding = read();
+    expect(holding.throttle).toBeLessThan(0);
+    expect(input.isReversing).toBe(true);
+    // 80° от кормы (стик под 100°): передний ход.
+    target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 11, Y + 63));
+    const forward = read();
+    expect(forward.throttle).toBeCloseTo(0, 6);
+    expect(forward.turn).toBe(1);
+    expect(input.isReversing).toBe(false);
+  });
+
+  it('бросок, после которого палец не позади танка, — просто поворот', () => {
+    target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
+    flickLeftStick({ dx: 0, dy: -64 }, { dx: 0, dy: 64 });
+    const action = read();
+    expect(action.throttle).toBeCloseTo(0, 6);
+    expect(action.turn).toBe(1);
+    expect(input.isReversing).toBe(false);
+  });
+
+  it('бросок обратно на сторону носа во время заднего хода — передний ход', () => {
+    target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
+    flickLeftStick({ dx: 64, dy: 0 }, { dx: -64, dy: 0 });
+    expect(read().throttle).toBeCloseTo(-1, 6);
+    flickLeftStick({ dx: -64, dy: 0 }, { dx: 64, dy: 0 });
+    expect(read()).toMatchObject({ throttle: 1, turn: 0 });
+    expect(input.isReversing).toBe(false);
+  });
+
+  it('отпускание на заднем ходу сбрасывает режим; новое касание к корме — передний ход', () => {
+    target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
+    flickLeftStick({ dx: 64, dy: 0 }, { dx: -64, dy: 0 });
+    expect(read().throttle).toBeCloseTo(-1, 6);
+    target.dispatchEvent(pointer('pointerup', 1, LEFT_X - 64, Y));
+    read();
+    expect(input.isReversing).toBe(false);
+    target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
+    target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 64, Y));
+    expect(read().throttle).toBeCloseTo(0, 6);
+    expect(input.isReversing).toBe(false);
   });
 
   it('мышь ведёт башню, активный правый стик её замещает, после отпускания — снова мышь', () => {
@@ -136,13 +188,16 @@ describe('InputReader', () => {
 
   it('левый стик в мёртвой зоне — нулевое действие, режим заднего хода сохраняется', () => {
     target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
-    target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 64, Y));
+    flickLeftStick({ dx: 64, dy: 0 }, { dx: -64, dy: 0 });
     expect(read().throttle).toBeCloseTo(-1, 6);
     target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 4, Y));
     expect(read()).toMatchObject({ throttle: 0, turn: 0 });
-    // Стик под −80° с сохранённым задним ходом: корма доворачивает по часовой.
-    target.dispatchEvent(pointer('pointermove', 1, LEFT_X + 11, Y - 63));
-    expect(read().turn).toBe(1);
+    expect(input.isReversing).toBe(true);
+    // Стик под 140° с сохранённым задним ходом: корма доворачивает против часовой.
+    target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 49, Y + 41));
+    const action = read();
+    expect(action.turn).toBe(-1);
+    expect(action.throttle).toBeLessThan(0);
   });
 
   it('выброс правого стика к кольцу и отпускание между чтениями — выстрел на следующем чтении', () => {
@@ -497,15 +552,9 @@ describe('InputReader', () => {
     });
   });
 
-  it('быстрый задний ход: стик под 100° с флагом едет назад, без флага — разворачивается', () => {
-    target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
-    target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 11, Y + 63));
-    expect(read().throttle).toBeCloseTo(0, 6);
-    settings.hasQuickReverse = true;
-    target.dispatchEvent(pointer('pointerup', 1, LEFT_X - 11, Y + 63));
-    read();
-    target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
-    target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 11, Y + 63));
-    expect(read().throttle).toBeLessThan(0);
+  it('клавиша S — задний ход с клавиатуры не меняется', () => {
+    window.dispatchEvent(key('keydown', 'KeyS'));
+    expect(read().throttle).toBe(-1);
+    expect(input.isReversing).toBe(false);
   });
 });

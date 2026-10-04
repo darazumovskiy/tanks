@@ -69,11 +69,10 @@ function formatFlag(isOn: boolean): string {
 function formatFlags(settings: Readonly<Settings>): string {
   const autoaim = formatFlag(settings.hasAutoAim);
   const guard = formatFlag(settings.hasRicochetGuard);
-  const quickReverse = formatFlag(settings.hasQuickReverse);
   const aimLine = formatFlag(settings.hasAimLine);
   const leadHint = formatFlag(settings.hasLeadHint);
   const zoneFire = formatFlag(settings.hasZoneFire);
-  return `flags autoaim=${autoaim} guard=${guard} quickreverse=${quickReverse} aimline=${aimLine} leadhint=${leadHint} zonefire=${zoneFire}`;
+  return `flags autoaim=${autoaim} guard=${guard} aimline=${aimLine} leadhint=${leadHint} zonefire=${zoneFire}`;
 }
 
 // Связывает сеть, предсказание, ввод, эффекты, звук и рендер; держит цикл кадров и фиксированный шаг ввода.
@@ -338,6 +337,7 @@ export class Game {
     isAutoAiming: boolean;
     isShotGuarded: boolean;
     isZoneFiring: boolean;
+    isReversing: boolean;
     aimLine: { state: AimLineState; isReturning: boolean } | null;
     rttMs: number;
     serverTick: number;
@@ -368,6 +368,7 @@ export class Game {
       isAutoAiming: this.input.isAutoAiming,
       isShotGuarded: this.input.isShotGuarded,
       isZoneFiring: this.input.isZoneFiring,
+      isReversing: this.input.isReversing,
       aimLine: this.aimLine === null ? null : { state: this.aimLine.state, isReturning: this.aimLine.isReturning },
       rttMs: this.net.rttMs,
       serverTick: this.net.serverTick,
@@ -530,6 +531,7 @@ export class Game {
         isAutoAiming: this.input.isAutoAiming,
         isShotGuarded: this.input.isShotGuarded,
         isZoneFiring: this.input.isZoneFiring,
+        isReversing: this.input.isReversing,
         aimLine: this.aimLine,
         frameMs: elapsed,
         frameTimes: this.frameTimes,

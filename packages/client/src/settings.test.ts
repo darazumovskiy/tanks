@@ -13,10 +13,9 @@ describe('defaultSettings', () => {
     expect({ ...PHONE_DEFAULTS, hasAutoAim: false }).toEqual(DESKTOP_DEFAULTS);
   });
 
-  it('предохранитель, быстрый задний ход, линия выстрела, подсказка упреждения и огонь по цели выключены на обоих устройствах', () => {
+  it('предохранитель, линия выстрела, подсказка упреждения и огонь по цели выключены на обоих устройствах', () => {
     for (const defaults of [PHONE_DEFAULTS, DESKTOP_DEFAULTS]) {
       expect(defaults.hasRicochetGuard).toBe(false);
-      expect(defaults.hasQuickReverse).toBe(false);
       expect(defaults.hasAimLine).toBe(false);
       expect(defaults.hasLeadHint).toBe(false);
       expect(defaults.hasZoneFire).toBe(false);
@@ -60,17 +59,16 @@ describe('parseSettings', () => {
     expect(parseSettings(JSON.stringify({ hasAutoAim: false }), PHONE_DEFAULTS, PLAYER).hasAutoAim).toBe(false);
   });
 
-  it('флаги предохранителя и быстрого заднего хода: без записи — false, с записью — читаются', () => {
+  it('флаг предохранителя: без записи — false, с записью — читается; старый ключ hasQuickReverse не ломает разбор', () => {
     const legacy = parseSettings(JSON.stringify({ stickRadiusPx: 60 }), PHONE_DEFAULTS, PLAYER);
     expect(legacy.hasRicochetGuard).toBe(false);
-    expect(legacy.hasQuickReverse).toBe(false);
     const enabled = parseSettings(
       JSON.stringify({ hasRicochetGuard: true, hasQuickReverse: true }),
       DESKTOP_DEFAULTS,
       PLAYER,
     );
     expect(enabled.hasRicochetGuard).toBe(true);
-    expect(enabled.hasQuickReverse).toBe(true);
+    expect('hasQuickReverse' in enabled).toBe(false);
   });
 
   it('линия выстрела читается всем; подсказка упреждения — только с правом админа', () => {

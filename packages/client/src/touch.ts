@@ -1,3 +1,4 @@
+import { FlickDetector } from './flick.js';
 import type { Settings } from './settings.js';
 import { stickMagnitude, type StickVector } from './steering.js';
 
@@ -36,6 +37,7 @@ interface ActiveStick extends StickState {
   startY: number;
   startedAt: number;
   hasMovedPastTapSlop: boolean;
+  flick: FlickDetector | null;
 }
 
 export type StickSettings = Pick<Settings, 'stickRadiusPx' | 'deadZone' | 'hasFireRing' | 'fireRing'>;
@@ -52,6 +54,7 @@ function isPastThreshold(magnitude: number, threshold: number, exitGap: number, 
 export class TouchSticks {
   private readonly active = new Map<StickRole, ActiveStick>();
   private pendingFire: PendingFire = 'none';
+  private hasPendingFlick = false;
 
   constructor(
     target: HTMLElement,
@@ -78,6 +81,7 @@ export class TouchSticks {
     const dropAll = (): void => {
       this.active.clear();
       this.pendingFire = 'none';
+      this.hasPendingFlick = false;
     };
     window.addEventListener('blur', dropAll);
     window.addEventListener('pagehide', dropAll);
@@ -107,6 +111,13 @@ export class TouchSticks {
     return pending;
   }
 
+  // Стик корпуса сделал бросок между двумя чтениями ввода; флаг снимается чтением и отпусканием стика.
+  takeReverseFlick(): boolean {
+    const hasFlicked = this.hasPendingFlick;
+    this.hasPendingFlick = false;
+    return hasFlicked;
+  }
+
   private begin(event: PointerEvent): void {
     const role: StickRole = event.clientX < window.innerWidth / 2 ? 'move' : 'aim';
     if (this.active.has(role)) {
@@ -130,6 +141,7 @@ export class TouchSticks {
       startY: event.clientY,
       startedAt: this.now(),
       hasMovedPastTapSlop: false,
+      flick: role === 'move' ? new FlickDetector() : null,
     };
     this.active.set(role, stick);
     this.deflect(stick, event.clientX, event.clientY);
@@ -156,6 +168,9 @@ export class TouchSticks {
     if (stick.isFiring && this.pendingFire === 'none') {
       this.pendingFire = 'stick';
     }
+    if (stick.flick?.push(stick, this.now()) === true) {
+      this.hasPendingFlick = true;
+    }
     if (Math.hypot(clientX - stick.startX, clientY - stick.startY) > TAP_SLOP_PX) {
       stick.hasMovedPastTapSlop = true;
     }
@@ -174,6 +189,9 @@ export class TouchSticks {
       return;
     }
     this.active.delete(stick.role);
+    if (stick.role === 'move') {
+      this.hasPendingFlick = false;
+    }
     const isQuick = this.now() - stick.startedAt <= TAP_MAX_MS;
     if (isCompleted && stick.role === 'aim' && isQuick && !stick.hasMovedPastTapSlop) {
       this.pendingFire = 'tap';

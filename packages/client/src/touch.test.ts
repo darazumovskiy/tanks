@@ -362,4 +362,36 @@ describe('TouchSticks', () => {
     expect(sticks.takePendingFire()).toBe('none');
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
   });
+
+  // Бросок: палец на одной стороне, через центр основания, на другую — за 100 мс.
+  const flickLeftStick = (fromDx: number, toDx: number): void => {
+    down({ id: 1, x: LEFT_X, y: Y });
+    move({ id: 1, x: LEFT_X + fromDx, y: Y });
+    time = 100;
+    move({ id: 1, x: LEFT_X, y: Y });
+    time = 200;
+    move({ id: 1, x: LEFT_X + toDx, y: Y });
+  };
+
+  it('бросок левого стика — защёлка заднего хода, снимается чтением', () => {
+    flickLeftStick(STICK_RADIUS_PX, -STICK_RADIUS_PX);
+    expect(sticks.takeReverseFlick()).toBe(true);
+    expect(sticks.takeReverseFlick()).toBe(false);
+  });
+
+  it('бросок правого стика защёлку не ставит', () => {
+    down({ id: 2, x: RIGHT_X, y: Y });
+    move({ id: 2, x: RIGHT_X + STICK_RADIUS_PX, y: Y });
+    time = 100;
+    move({ id: 2, x: RIGHT_X, y: Y });
+    time = 200;
+    move({ id: 2, x: RIGHT_X - STICK_RADIUS_PX, y: Y });
+    expect(sticks.takeReverseFlick()).toBe(false);
+  });
+
+  it('бросок и отпускание до чтения — защёлки нет', () => {
+    flickLeftStick(STICK_RADIUS_PX, -STICK_RADIUS_PX);
+    up({ id: 1, x: LEFT_X - STICK_RADIUS_PX, y: Y });
+    expect(sticks.takeReverseFlick()).toBe(false);
+  });
 });

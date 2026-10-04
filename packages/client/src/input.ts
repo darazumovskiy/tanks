@@ -1,6 +1,6 @@
 import type { Action } from '@tanks/shared/engine';
 import type { Settings } from './settings.js';
-import { aimTurret, steerHull } from './steering.js';
+import { aimTurret, IDLE_HULL, isBehind, steerHull, type HullSteering } from './steering.js';
 import { TouchSticks, type StickSettings, type StickState } from './touch.js';
 
 // После того как игрок отпустил стик башни, автоведение ждёт: осознанный выстрел в стену на рикошет не должен
@@ -9,8 +9,7 @@ export const AUTO_AIM_RESUME_MS = 500;
 // Предохранитель задерживает опасный выстрел не дольше этого: башня не ушла — тап отменяется.
 export const RICOCHET_GUARD_HOLD_MS = 300;
 
-export type InputSettings = StickSettings &
-  Pick<Settings, 'hasAutoAim' | 'hasRicochetGuard' | 'hasQuickReverse' | 'hasZoneFire'>;
+export type InputSettings = StickSettings & Pick<Settings, 'hasAutoAim' | 'hasRicochetGuard' | 'hasZoneFire'>;
 
 export type GuardEvent = 'hold' | 'cancel';
 
@@ -49,6 +48,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 // Клавиатура — корпус, мышь — башня и выстрел; активный стик касания замещает свой источник.
+// Задний ход со стика — только бросок пальца за корму танка; дальше режим ведёт `steerHull`.
 // Авто-огонь — выстрел в каждом тике независимо от остальных источников, пока включён.
 // Башня без ручного источника при включённом автоведении держит переданную цель.
 // Огонь по цели пропускает выстрелы касания (стик, авто-огонь, выброс стика) только в зоне противника;
@@ -61,7 +61,7 @@ export class InputReader {
   private readonly onGuard: (event: GuardEvent) => void;
   private mouse: { x: number; y: number } | null = null;
   private isMouseDown = false;
-  private isReversing = false;
+  private hull: Readonly<HullSteering> = IDLE_HULL;
   private isAutoFireOn = false;
   private isAutoAimingNow = false;
   private lastManualAimAt: number | null = null;
@@ -79,7 +79,7 @@ export class InputReader {
   ) {
     this.now = hooks.now ?? ((): number => performance.now());
     this.onGuard = hooks.onGuard ?? ((): void => undefined);
-    this.sticks = new TouchSticks(target, settings);
+    this.sticks = new TouchSticks(target, settings, this.now);
     window.addEventListener('keydown', (event) => {
       if (event.repeat || isTypingTarget(event.target)) {
         return;
@@ -136,6 +136,10 @@ export class InputReader {
     return this.isZoneFiringNow;
   }
 
+  get isReversing(): boolean {
+    return this.hull.isReversing;
+  }
+
   setAutoFire(isOn: boolean): void {
     this.isAutoFireOn = isOn;
   }
@@ -184,14 +188,16 @@ export class InputReader {
   private readHull(me: SteeredTank): { throttle: number; turn: number } {
     const stick = this.sticks.stick('move');
     if (stick !== null) {
+      const isFlicked = this.sticks.takeReverseFlick();
       if (!stick.isActive) {
         return { throttle: 0, turn: 0 };
       }
-      const steering = steerHull(stick, me.heading, me.stats.turnRate, this.isReversing, this.settings.hasQuickReverse);
-      this.isReversing = steering.isReversing;
-      return steering;
+      const isEnteringReverse = isFlicked && isBehind(stick, me.heading);
+      const previous = isEnteringReverse ? { ...this.hull, isReversing: true } : this.hull;
+      this.hull = steerHull(stick, me.heading, me.stats.turnRate, previous);
+      return this.hull;
     }
-    this.isReversing = false;
+    this.hull = IDLE_HULL;
     const isForward = this.keys.has('KeyW') || this.keys.has('ArrowUp');
     const isBack = this.keys.has('KeyS') || this.keys.has('ArrowDown');
     const isLeft = this.keys.has('KeyA') || this.keys.has('ArrowLeft');

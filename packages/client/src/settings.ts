@@ -9,7 +9,6 @@ export interface Settings {
   fireRing: number;
   hasAutoAim: boolean;
   hasRicochetGuard: boolean;
-  hasQuickReverse: boolean;
   hasAimLine: boolean;
   hasLeadHint: boolean;
   hasZoneFire: boolean;
@@ -24,14 +23,7 @@ export interface Settings {
 }
 
 export type BooleanSettingKey =
-  | 'hasFireRing'
-  | 'hasAutoAim'
-  | 'hasRicochetGuard'
-  | 'hasQuickReverse'
-  | 'hasAimLine'
-  | 'hasLeadHint'
-  | 'hasZoneFire'
-  | 'showFrameGraph';
+  'hasFireRing' | 'hasAutoAim' | 'hasRicochetGuard' | 'hasAimLine' | 'hasLeadHint' | 'hasZoneFire' | 'showFrameGraph';
 export type NumericSettingKey = Exclude<keyof Settings, BooleanSettingKey | 'cameraMode'>;
 
 // Флажок с `isTouchOnly` показывается только на устройстве с касанием: настройка касается стиков.
@@ -70,7 +62,6 @@ export function defaultSettings(isTouchDevice: boolean): Settings {
     fireRing: 0.89,
     hasAutoAim: isTouchDevice,
     hasRicochetGuard: false,
-    hasQuickReverse: false,
     hasAimLine: false,
     hasLeadHint: false,
     hasZoneFire: false,
@@ -100,12 +91,6 @@ export const BOOLEAN_FIELDS: readonly BooleanSettingField[] = [
     key: 'hasRicochetGuard',
     label: 'Предохранитель',
     hint: 'не стреляет, если снаряд отскочит в тебя же; доверни башню — выстрелит',
-  },
-  {
-    key: 'hasQuickReverse',
-    label: 'Быстрый задний ход',
-    hint: 'стик за спину — сразу едем назад, а не разворачиваемся',
-    isTouchOnly: true,
   },
   {
     key: 'hasAimLine',

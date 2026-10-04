@@ -26,6 +26,7 @@ export interface DebugState {
   isAutoAiming: boolean;
   isShotGuarded: boolean;
   isZoneFiring: boolean;
+  isReversing: boolean;
   aimLine: { state: 'none' | 'onTarget' | 'lead'; isReturning: boolean } | null;
   me: TankState;
   enemy: Point & { heading: number; isAlive: boolean };
@@ -310,15 +311,45 @@ export class Player {
   // Настоящее касание через протокол отладки: палец ложится в `from`, тянется в `to` и остаётся там, пока не
   // вызван `release`; Playwright сам умеет только тап.
   async touchDrag(from: Point, to: Point): Promise<{ release: () => Promise<void> }> {
+    const touch = await this.touchBegin(from);
+    await touch.move(to);
+    return touch;
+  }
+
+  // Палец ложится в точку и дальше ведётся вызовами `move`, пока не вызван `release`.
+  async touchBegin(at: Point): Promise<{ move: (to: Point) => Promise<void>; release: () => Promise<void> }> {
     const session = await this.context.newCDPSession(this.page);
-    await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [from] });
-    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [to] });
+    await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [at] });
     return {
+      move: async (to: Point): Promise<void> => {
+        await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [to] });
+      },
       release: async (): Promise<void> => {
         await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         await session.detach();
       },
     };
+  }
+
+  // Ждёт, пока корпус не встанет на курс с допуском; `onSample` зовётся на каждой выборке.
+  waitForHeading(
+    heading: number,
+    timeoutMs: number,
+    what: string,
+    onSample: (state: DebugState) => void = (): void => undefined,
+  ): Promise<DebugState> {
+    return until(
+      async () => {
+        const state = await this.state();
+        if (state === null) {
+          return null;
+        }
+        onSample(state);
+        return Math.abs(normalizeAngle(heading - state.me.heading)) < HULL_TURN_TOLERANCE ? state : null;
+      },
+      timeoutMs,
+      `${this.name}: ${what}`,
+    );
   }
 
   // Ждёт, пока башня не смотрит на точку с допуском, и возвращает состояние в этот момент.

@@ -29,6 +29,7 @@ export interface HudInfo {
   isAutoAiming: boolean;
   isShotGuarded: boolean;
   isZoneFiring: boolean;
+  isReversing: boolean;
   aimLine: AimLine | null;
   frameMs: number;
   frameTimes: readonly number[];
@@ -78,6 +79,7 @@ const STICK_EDGE_COLOR = 'rgba(244,241,232,0.45)';
 const STICK_KNOB_COLOR = 'rgba(244,241,232,0.75)';
 const FIRE_RING_IDLE_COLOR = 'rgba(232,130,90,0.35)';
 const FIRE_RING_ACTIVE_COLOR = 'rgba(232,130,90,0.95)';
+const REVERSE_EDGE_COLOR = 'rgba(120,200,230,0.9)';
 
 // Скобки автоведения вокруг противника в единицах поля: появляются, сжимаясь к танку, и гаснут плавно.
 const AUTO_AIM_COLOR = '#e8825a';
@@ -242,7 +244,7 @@ export class Renderer {
     if (this.settings.showFrameGraph) {
       this.drawFrameGraph(hud.frameTimes, screen);
     }
-    this.drawSticks(hud.sticks, hud.isZoneFiring);
+    this.drawSticks(hud.sticks, hud.isZoneFiring, hud.isReversing);
   }
 
   // Столбик — длительность кадра; линия — бюджет 60 к/с; красные столбики вышли за бюджет вдвое.
@@ -729,8 +731,8 @@ export class Renderer {
   }
 
   // Стики живут в CSS-пикселях окна, поэтому рисуются поверх кадра без масштаба поля.
-  // С огнём по цели стик подсвечивается, только когда зона пропускает выстрелы.
-  private drawSticks(sticks: readonly StickState[], isZoneFiring: boolean): void {
+  // С огнём по цели стик подсвечивается, только когда зона пропускает выстрелы; стик корпуса — на заднем ходу.
+  private drawSticks(sticks: readonly StickState[], isZoneFiring: boolean, isReversing: boolean): void {
     const { ctx } = this;
     ctx.save();
     ctx.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
@@ -741,9 +743,11 @@ export class Renderer {
       const isFiring = stick.isFiring && isZoneOpen;
       // Без кольца стреляет само касание — огонь показывает контур основания.
       const isEdgeFiring = isFiring && stick.fireRing === null;
+      const isEdgeReversing = stick.role === 'move' && isReversing;
+      const isEdgeLit = isEdgeFiring || isEdgeReversing;
       ctx.fillStyle = STICK_BASE_COLOR;
-      ctx.strokeStyle = isEdgeFiring ? FIRE_RING_ACTIVE_COLOR : STICK_EDGE_COLOR;
-      ctx.lineWidth = isEdgeFiring ? 4 : 2;
+      ctx.strokeStyle = edgeColor(isEdgeFiring, isEdgeReversing);
+      ctx.lineWidth = isEdgeLit ? 4 : 2;
       ctx.beginPath();
       ctx.arc(stick.baseX, stick.baseY, radius, 0, Math.PI * 2);
       ctx.fill();
@@ -776,6 +780,16 @@ export class Renderer {
     }
     ctx.restore();
   }
+}
+
+function edgeColor(isFiring: boolean, isReversing: boolean): string {
+  if (isFiring) {
+    return FIRE_RING_ACTIVE_COLOR;
+  }
+  if (isReversing) {
+    return REVERSE_EDGE_COLOR;
+  }
+  return STICK_EDGE_COLOR;
 }
 
 function windowViewport(): { width: number; height: number; pixelRatio: number } {

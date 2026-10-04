@@ -7,7 +7,6 @@ const PLAYER = { isAdmin: false };
 const ADMIN = { isAdmin: true };
 const AUTO_AIM_LABEL = 'Башня сама держит противника';
 const GUARD_LABEL = 'Предохранитель';
-const QUICK_REVERSE_LABEL = 'Быстрый задний ход';
 const AIM_LINE_LABEL = 'Линия выстрела';
 const LEAD_HINT_LABEL = 'Подсказка упреждения';
 const ZONE_FIRE_LABEL = 'Огонь по цели';
@@ -135,16 +134,10 @@ describe('SettingsPanel', () => {
     expect(localStorage.getItem('tanks.settings')).toContain('"hasRicochetGuard":true');
   });
 
-  it('флажок быстрого заднего хода есть на телефоне и пишет флаг; на компьютере его нет, предохранитель есть', () => {
-    const checkbox = checkFor(QUICK_REVERSE_LABEL);
-    expect(checkbox.checked).toBe(false);
-    checkbox.checked = true;
-    checkbox.dispatchEvent(new Event('change'));
-    expect(store.value.hasQuickReverse).toBe(true);
+  it('на компьютере есть предохранитель и линия выстрела', () => {
     const labels = desktopCheckLabels();
     expect(labels).toContain(GUARD_LABEL);
     expect(labels).toContain(AIM_LINE_LABEL);
-    expect(labels).not.toContain(QUICK_REVERSE_LABEL);
   });
 
   const checkLabels = (panelRoot: HTMLElement): (string | null)[] =>
