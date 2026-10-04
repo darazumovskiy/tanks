@@ -39,6 +39,7 @@
 | `packages/server` | Игровой сервер: комнаты, тик, WebSocket (`ws`) |
 | `packages/client` | Браузерный клиент: Vite, Canvas 2D |
 | `packages/mobile` | Оболочка Capacitor (Android, iOS): открывает клиент с игрового сервера; APK собирается в Docker — `deploy/android/build.sh`, см. [android-app.md](docs/tech/impl/infra/android-app.md) |
+| `packages/analysis` | Анализ журналов игр: `npm run analyze-logs -- <папка с *.log>` → `report.md`, `games.json`; см. [log-analysis.md](docs/tech/impl/backend/log-analysis.md) |
 
 Команды из корня: `npm test` (Vitest), `npm run test:coverage` (с порогами), `npm run test:e2e` (Playwright: собранные сервер и клиент, два браузера), `npm run lint` (ESLint + Prettier), `npm run typecheck`, `npm run build`. Тесты лежат рядом с кодом (`*.test.ts`) или в `packages/*/test/`. Перед финализацией любого шага — все команды зелёные.
 

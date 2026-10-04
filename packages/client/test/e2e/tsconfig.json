@@ -9,5 +9,5 @@
     "types": ["node"]
   },
   "include": ["."],
-  "references": [{ "path": "../../../shared" }]
+  "references": [{ "path": "../../../shared" }, { "path": "../../../analysis" }]
 }

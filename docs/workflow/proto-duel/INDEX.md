@@ -22,10 +22,13 @@
 | Лестница ботов: уровни, код комнаты, бот как подключение, файл бота Астры, стенд «бот против бота» | [tech/impl/backend/bot-ladder.md](../../tech/impl/backend/bot-ladder.md) |
 | Журнал игры: идентификатор и таймкод на экране, файлы `/opt/tanks-logs/<id>.log`, что пишут сервер и клиент, как читать | [tech/impl/backend/game-log.md](../../tech/impl/backend/game-log.md) |
 | Разбор «дёргания» на телефоне по журналу DNE5: пачки команд и снимков, цифры, причина, лечение | [knowledge/jitter-dne5.md](knowledge/jitter-dne5.md) |
+| Разбор заморозки на 2 с на стабильной сети по журналу MJTM: потеря пакетов и повторы TCP, отличие от джиттера, фикс | [knowledge/stall-mjtm.md](knowledge/stall-mjtm.md) |
 | Камера и управление: передача 2026-10-03 (задел `camera-lab`, порядок работ по управлению) | [knowledge/camera-handoff.md](knowledge/camera-handoff.md) |
 | Ревью камеры по коду: инварианты, контрпримеры, дыры | [knowledge/camera-review.md](knowledge/camera-review.md) |
 | Ревью сенсорного управления: инварианты, непокрытые случаи, рекомендации | [knowledge/controls-review.md](knowledge/controls-review.md) |
 | Как делают камеры в геймдеве и схема для дуэли | [research/camera-techniques.md](../../research/camera-techniques.md) |
+| Телефон против компьютера по журналам: где проседает (башня брошена, самопопадания, нет «назад»), пороги для контрольных серий | [knowledge/phone-vs-pc-logs.md](knowledge/phone-vs-pc-logs.md) |
+| Помощники прицела и управления: техники, прецеденты, наука о выравнивании, принципы честности | [research/mobile-aim-assist.md](../../research/mobile-aim-assist.md) |
 
 ## Ключевые файлы кода
 

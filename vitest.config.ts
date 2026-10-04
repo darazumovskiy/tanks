@@ -6,7 +6,7 @@ export default defineConfig({
       {
         test: {
           name: 'node',
-          include: ['packages/{shared,server}/src/**/*.test.ts', 'packages/{shared,server}/test/**/*.test.ts'],
+          include: ['packages/{shared,server,analysis}/src/**/*.test.ts', 'packages/{shared,server}/test/**/*.test.ts'],
         },
       },
       {
@@ -28,10 +28,17 @@ export default defineConfig({
         'packages/client/src/input.ts',
         'packages/client/src/clientInfo.ts',
         'packages/client/src/telemetry.ts',
+        'packages/analysis/src/**/*.ts',
       ],
-      exclude: ['**/*.test.ts', 'packages/server/src/main.ts'],
+      exclude: [
+        '**/*.test.ts',
+        'packages/server/src/main.ts',
+        'packages/analysis/src/main.ts',
+        'packages/analysis/src/logFixture.ts',
+      ],
       thresholds: {
         'packages/server/src/**': { statements: 100, branches: 100, functions: 100, lines: 100 },
+        'packages/analysis/src/**': { statements: 90, branches: 90, functions: 90, lines: 90 },
         'packages/shared/src/protocol/**': { statements: 95, branches: 85, functions: 95, lines: 95 },
         'packages/client/src/{steering,touch,input,clientInfo,telemetry}.ts': {
           statements: 95,
