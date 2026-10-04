@@ -13,6 +13,7 @@ import {
 } from '@tanks/shared/protocol';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { FileGameLog, LOG_ROUTE, NO_LOG, receiveClientLog, type GameLog } from './gameLog.js';
+import { createMetrics, type Metrics } from './metrics.js';
 import { DEFAULT_ROOM_OPTIONS, type Connection, type RoomOptions } from './room.js';
 import { isValidRoomCode, RoomManager } from './roomManager.js';
 import { APK_ROUTE, requestPath, serveApk, serveStatic } from './static.js';
@@ -42,16 +43,22 @@ export interface AppStats {
 
 const WS_PATH = '/ws';
 const HEALTH_PATH = '/healthz';
+const METRICS_PATH = '/metrics';
 // Отставание расписания больше этого числа тиков не навёрстывается пачкой — расписание начинается заново.
 const CATCH_UP_LIMIT_TICKS = 5;
 
 class SocketConnection implements Connection {
-  constructor(private readonly socket: WebSocket) {}
+  constructor(
+    private readonly socket: WebSocket,
+    private readonly metrics: Metrics,
+  ) {}
 
   send(bytes: Uint8Array): void {
-    if (this.socket.readyState === WebSocket.OPEN) {
-      this.socket.send(bytes);
+    if (this.socket.readyState !== WebSocket.OPEN) {
+      return;
     }
+    this.metrics.countMessage('out', bytes.byteLength);
+    this.socket.send(bytes);
   }
 }
 
@@ -64,13 +71,19 @@ function toBytes(data: RawData): Uint8Array {
 export function createApp(options: AppOptions = {}): App {
   const fileLog = options.logDir === undefined ? null : new FileGameLog(options.logDir);
   const log: GameLog = fileLog ?? NO_LOG;
-  const rooms = new RoomManager(options.room ?? DEFAULT_ROOM_OPTIONS, options.random ?? Math.random, log);
+  const metrics = createMetrics();
+  const rooms = new RoomManager(options.room ?? DEFAULT_ROOM_OPTIONS, options.random ?? Math.random, log, metrics);
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
   const server = createServer((request, response) => {
     const path = requestPath(request);
     if (path === HEALTH_PATH) {
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify(stats()));
+      return;
+    }
+    if (path === METRICS_PATH) {
+      response.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+      response.end(metrics.render({ rooms: rooms.roomCount, connections: connections.size }));
       return;
     }
     if (path === LOG_ROUTE && request.method === 'POST' && fileLog !== null) {
@@ -136,11 +149,13 @@ export function createApp(options: AppOptions = {}): App {
 
   wss.on('connection', (socket: WebSocket) => {
     connections.add(socket);
-    const connection = new SocketConnection(socket);
+    const connection = new SocketConnection(socket, metrics);
     socket.on('message', (data: RawData) => {
+      const bytes = toBytes(data);
+      metrics.countMessage('in', bytes.byteLength);
       let message;
       try {
-        message = decode(toBytes(data));
+        message = decode(bytes);
       } catch {
         sendError(socket, ErrorCode.BadMessage, 'сообщение не распознано');
         return;
@@ -175,7 +190,8 @@ export function createApp(options: AppOptions = {}): App {
     let windowStart = performance.now();
     const run = (): void => {
       const started = performance.now();
-      rooms.step(Math.max(0, started - next));
+      const lateMs = Math.max(0, started - next);
+      rooms.step(lateMs);
       tick++;
       const duration = performance.now() - started;
       if (started - windowStart > 1000) {
@@ -183,6 +199,7 @@ export function createApp(options: AppOptions = {}): App {
         tickDurationMaxMs = 0;
       }
       tickDurationMaxMs = Math.max(tickDurationMaxMs, duration);
+      metrics.recordTick(duration, lateMs > tickMs);
       next += tickMs;
       const delay = next - performance.now();
       if (delay < -CATCH_UP_LIMIT_TICKS * tickMs) {
@@ -208,6 +225,7 @@ export function createApp(options: AppOptions = {}): App {
     },
     close(): Promise<void> {
       clearTimeout(timer);
+      metrics.close();
       fileLog?.close();
       for (const socket of connections) {
         socket.terminate();

@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "grafana-tanks": {
+      "command": "${workspaceFolder}/.cursor/bin/mcp-grafana.sh"
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { botLevelOf, isBotRoomCode } from '@tanks/shared/protocol';
 import { createBot } from './bots/ladder.js';
 import { NO_LOG, type GameLog } from './gameLog.js';
+import { NO_DROP_COUNTER, type InputDropCounter } from './metrics.js';
 import { DEFAULT_ROOM_OPTIONS, Room, type Connection, type RoomOptions, type Seat } from './room.js';
 
 const CODE_PATTERN = /^[a-z0-9]{3,16}$/;
@@ -28,6 +29,7 @@ export class RoomManager {
     private readonly options: RoomOptions = DEFAULT_ROOM_OPTIONS,
     private readonly random: () => number = Math.random,
     private readonly log: GameLog = NO_LOG,
+    private readonly dropCounter: InputDropCounter = NO_DROP_COUNTER,
   ) {}
 
   get roomCount(): number {
@@ -40,7 +42,7 @@ export class RoomManager {
     if (existing !== undefined) {
       return existing;
     }
-    const room = new Room(code, this.options, this.log);
+    const room = new Room(code, this.options, this.log, this.dropCounter);
     this.rooms.set(code, room);
     const level = botLevelOf(code);
     if (level !== null) {

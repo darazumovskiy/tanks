@@ -1,9 +1,9 @@
 #!/bin/bash
 # Собирает подписанный APK в Docker:  deploy/android/build.sh  →  packages/mobile/dist/tanks.apk
-# Ключ — из ~/.secrets/tanks-android (создаётся keystore.sh). Кэш Gradle живёт в томе tanks-gradle-cache.
+# Ключ — из ~/.secrets-tank/android (создаётся keystore.sh). Кэш Gradle живёт в томе tanks-gradle-cache.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-SECRETS=${TANKS_ANDROID_SECRETS:-$HOME/.secrets/tanks-android}
+SECRETS=${TANKS_ANDROID_SECRETS:-$HOME/.secrets-tank/android}
 IMAGE=tanks-android-build
 
 : "${TANKS_SERVER_URL:=https://172-232-212-157.sslip.io}"

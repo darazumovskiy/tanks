@@ -19,6 +19,13 @@ if ! command -v caddy >/dev/null; then
   apt-get install -y -qq caddy
 fi
 
+if ! command -v vector >/dev/null; then
+  bash -c "$(curl -fsSL https://setup.vector.dev)"
+  apt-get install -y -qq vector
+  usermod -aG systemd-journal vector
+fi
+[ -f /etc/default/vector ] || echo "нет /etc/default/vector — выполни deploy/vector-secrets.sh с рабочей машины" >&2
+
 id -u tanks >/dev/null 2>&1 || useradd --system --home /opt/tanks --shell /usr/sbin/nologin tanks
 
 if [ ! -d /opt/tanks/.git ]; then
@@ -32,7 +39,6 @@ mkdir -p /etc/systemd/system/caddy.service.d
 printf '[Service]\nEnvironment=TANKS_HOST=%s\n' "$TANKS_HOST" > /etc/systemd/system/caddy.service.d/tanks.conf
 
 systemctl daemon-reload
-systemctl enable tanks caddy >/dev/null
+systemctl enable tanks caddy vector >/dev/null
 bash /opt/tanks/deploy/deploy-local.sh
-systemctl restart caddy
 echo "готово: https://$TANKS_HOST"

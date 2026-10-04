@@ -23,6 +23,7 @@ import {
 import { randomInt } from 'node:crypto';
 import { toSnapshotEvent } from './events.js';
 import { LOG_SOURCE_SERVER, NO_LOG, type GameLog } from './gameLog.js';
+import { NO_DROP_COUNTER, type InputDropCounter } from './metrics.js';
 
 export interface Connection {
   send(bytes: Uint8Array): void;
@@ -112,11 +113,18 @@ export class Room {
   private score: [number, number] = [0, 0];
   private tick = 0;
   private readonly log: GameLog;
+  private readonly dropCounter: InputDropCounter;
 
-  constructor(code: string, options: RoomOptions = DEFAULT_ROOM_OPTIONS, log: GameLog = NO_LOG) {
+  constructor(
+    code: string,
+    options: RoomOptions = DEFAULT_ROOM_OPTIONS,
+    log: GameLog = NO_LOG,
+    dropCounter: InputDropCounter = NO_DROP_COUNTER,
+  ) {
     this.code = code;
     this.options = options;
     this.log = log;
+    this.dropCounter = dropCounter;
   }
 
   get isEmpty(): boolean {
@@ -174,10 +182,12 @@ export class Room {
   private acceptInput(player: Player, seq: number, action: Action): void {
     player.inputsThisSecond++;
     if (seq <= player.lastSeq) {
+      this.dropCounter.countDroppedInput('stale');
       this.writeLog(`input stale side=${String(player.side)} seq=${String(seq)} last=${String(player.lastSeq)}`);
       return;
     }
     if (player.inputsThisSecond > this.options.maxInputsPerSecond) {
+      this.dropCounter.countDroppedInput('limit');
       this.writeLog(`input limit side=${String(player.side)} seq=${String(seq)}`);
       return;
     }

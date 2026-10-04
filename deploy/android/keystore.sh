@@ -1,9 +1,9 @@
 #!/bin/bash
-# Создаёт ключ подписи APK в ~/.secrets/tanks-android (вне репозитория). Запускается один раз;
+# Создаёт ключ подписи APK в ~/.secrets-tank/android (вне репозитория). Запускается один раз;
 # Android ставит новую версию поверх старой только при той же подписи — ключ не терять.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-SECRETS=${TANKS_ANDROID_SECRETS:-$HOME/.secrets/tanks-android}
+SECRETS=${TANKS_ANDROID_SECRETS:-$HOME/.secrets-tank/android}
 IMAGE=tanks-android-build
 
 if [ -f "$SECRETS/keystore.jks" ]; then

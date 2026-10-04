@@ -1,0 +1,112 @@
+# Vector на игровой машине: читает метрики игры и машины, журнал systemd, файлы журналов игр и события
+# клиента, отправляет в Grafana Cloud. Доступы — переменные из /etc/default/vector (vector-secrets.sh).
+data_dir: /var/lib/vector
+
+sources:
+  game_metrics:
+    type: prometheus_scrape
+    endpoints: ['http://127.0.0.1:8080/metrics']
+    scrape_interval_secs: 15
+
+  host:
+    type: host_metrics
+    collectors: [cpu, memory, load, network, filesystem]
+    scrape_interval_secs: 15
+    filesystem:
+      mountpoints:
+        includes: ['/']
+    network:
+      devices:
+        excludes: ['lo']
+
+  journal:
+    type: journald
+    include_units: [tanks, caddy, vector]
+    current_boot_only: true
+
+  game_files:
+    type: file
+    include: ['/opt/tanks-logs/*.log']
+    ignore_older_secs: 3600
+
+  # За Caddy: POST /telemetry с телом из JSON-строк через перевод строки.
+  client_events:
+    type: http_server
+    address: 127.0.0.1:8094
+    path: /telemetry
+    strict_path: true
+    decoding:
+      codec: json
+    framing:
+      method: newline_delimited
+
+transforms:
+  journal_lines:
+    type: remap
+    inputs: [journal]
+    source: |
+      .labels = { "app": "tanks", "stream": "server", "unit": string!(._SYSTEMD_UNIT) }
+
+  # Подробные потиковые строки (tick, snap, in, cam, input) остаются на диске; в облако — редкие события
+  # и секундные сводки клиента с задержкой и кадрами.
+  game_events:
+    type: remap
+    inputs: [game_files]
+    drop_on_abort: true
+    source: |
+      line = string!(.message)
+      is_kept = match(line, r'^\S+ (S|C\d) gt=\d+ tc=\S+ (now=\S+ )?(game start|round start|leave|loop late|device |net |vis |sec )')
+      if !is_kept { abort }
+      .labels = {
+        "app": "tanks",
+        "stream": "game",
+        "game": parse_regex!(string!(.file), r'/(?P<game>[^/]+)\.log$').game,
+        "source": parse_regex!(line, r'^\S+ (?P<source>S|C\d) ').source,
+      }
+
+  client_lines:
+    type: remap
+    inputs: [client_events]
+    source: |
+      .message = to_string(.msg) ?? "событие без текста"
+      .labels = {
+        "app": "tanks",
+        "stream": "client",
+        "kind": to_string(.kind) ?? "unknown",
+        "game": to_string(.game) ?? "-",
+        "side": to_string(.side) ?? "-",
+      }
+
+sinks:
+  grafana_metrics:
+    type: prometheus_remote_write
+    inputs: [game_metrics, host]
+    endpoint: '${GRAFANA_CLOUD_PROM_URL}'
+    # Проверка здоровья делает GET, приёмник Grafana Cloud отвечает на него 405.
+    healthcheck:
+      enabled: false
+    auth:
+      strategy: basic
+      user: '${GRAFANA_CLOUD_PROM_USER}'
+      password: '${GRAFANA_CLOUD_WRITE_TOKEN}'
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: drop_newest
+
+  grafana_logs:
+    type: loki
+    inputs: [journal_lines, game_events, client_lines]
+    endpoint: '${GRAFANA_CLOUD_LOKI_URL}'
+    auth:
+      strategy: basic
+      user: '${GRAFANA_CLOUD_LOKI_USER}'
+      password: '${GRAFANA_CLOUD_WRITE_TOKEN}'
+    encoding:
+      codec: text
+    labels:
+      '*': '{{ labels }}'
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: drop_newest

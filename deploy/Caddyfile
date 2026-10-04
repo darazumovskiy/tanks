@@ -1,4 +1,20 @@
 {$TANKS_HOST} {
 	encode zstd gzip
-	reverse_proxy 127.0.0.1:8080
+
+	# Метрики игры читает только Vector с этой же машины.
+	handle /metrics {
+		respond 404
+	}
+
+	# События клиента уходят во Vector, минуя игровой процесс.
+	handle /telemetry {
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy 127.0.0.1:8094
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8080
+	}
 }

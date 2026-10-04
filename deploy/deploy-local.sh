@@ -13,12 +13,19 @@ main() {
   install -d -o tanks -g tanks -m 755 /opt/tanks-logs
   install -m 755 /opt/tanks/deploy/tanks-logs-cleanup /etc/cron.daily/tanks-logs-cleanup
   install -m 644 /opt/tanks/deploy/tanks.service /etc/systemd/system/tanks.service
+  install -m 644 /opt/tanks/deploy/Caddyfile /etc/caddy/Caddyfile
+  install -D -m 644 /opt/tanks/deploy/vector/vector.yaml /etc/vector/vector.yaml
+  install -D -m 644 /opt/tanks/deploy/vector/vector.conf /etc/systemd/system/vector.service.d/tanks.conf
   systemctl daemon-reload
   systemctl restart tanks
+  systemctl reload caddy
+  # Vector без доступов (/etc/default/vector) не стартует; игра от этого не зависит.
+  systemctl restart vector || true
   sleep 1
   systemctl is-active tanks
   curl -fsS http://127.0.0.1:8080/healthz
   echo
+  systemctl is-active vector || echo "vector не запущен: journalctl -u vector"
 }
 
 main "$@"

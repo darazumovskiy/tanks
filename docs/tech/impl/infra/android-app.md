@@ -11,7 +11,7 @@
 | `packages/mobile/package.json` | Нативные плагины Capacitor, которые `cap sync` кладёт в APK: `@capacitor/share` — системное меню «поделиться» |
 | `packages/mobile/ios/` | Проект iOS, создан, не собирается (см. research) |
 | `deploy/android/Dockerfile` | Образ сборки: JDK 21, Android SDK 36, build-tools 36 и 35. Всегда `linux/amd64` — инструменты SDK собраны под x86_64, на Apple Silicon идёт через Rosetta |
-| `deploy/android/keystore.sh` | Один раз создаёт ключ подписи в `~/.secrets/tanks-android/` (`keystore.jks`, `env` с паролями). Ключ не в репозитории; потеря ключа = переустановка приложения у всех |
+| `deploy/android/keystore.sh` | Один раз создаёт ключ подписи в `~/.secrets-tank/android/` (`keystore.jks`, `env` с паролями). Ключ не в репозитории; потеря ключа = переустановка приложения у всех |
 | `deploy/android/build.sh` | `cap sync` → Gradle `assembleRelease` в Docker с ключом → `packages/mobile/dist/tanks.apk` (~3 МБ). Кэш Gradle — том `tanks-gradle-cache`; первая сборка ~3,5 мин, дальше быстрее |
 | `deploy/android/upload.sh user@host` | Копирует APK в `/opt/tanks-files/tanks.apk` на сервере; перезапуск сервера не нужен |
 | `packages/server/src/static.ts` → `serveApk` | `GET`/`HEAD /app/tanks.apk`: `application/vnd.android.package-archive`, `Content-Disposition: attachment`, `Cache-Control: no-cache`; файл берётся из `APK_PATH` (`tanks.service`); нет файла — 404 |
