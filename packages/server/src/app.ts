@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
-import { TICK_RATE } from '@tanks/shared/engine';
+import { DEFAULT_RULES, TICK_RATE, type RoundRules } from '@tanks/shared/engine';
 import {
   decode,
   encode,
@@ -19,10 +19,12 @@ import { isValidRoomCode, RoomManager } from './roomManager.js';
 import { APK_ROUTE, requestPath, serveApk, serveStatic } from './static.js';
 
 // logDir — папка журналов игр; без неё журнал не ведётся и приёмщик строк клиента отключён.
+// rules — правила движка для всех комнат процесса.
 export interface AppOptions {
   staticRoot?: string;
   apkPath?: string;
   logDir?: string;
+  rules?: RoundRules;
   room?: RoomOptions;
   tickMs?: number;
   random?: () => number;
@@ -72,7 +74,13 @@ export function createApp(options: AppOptions = {}): App {
   const fileLog = options.logDir === undefined ? null : new FileGameLog(options.logDir);
   const log: GameLog = fileLog ?? NO_LOG;
   const metrics = createMetrics();
-  const rooms = new RoomManager(options.room ?? DEFAULT_ROOM_OPTIONS, options.random ?? Math.random, log, metrics);
+  const rooms = new RoomManager(
+    options.room ?? DEFAULT_ROOM_OPTIONS,
+    options.random ?? Math.random,
+    log,
+    metrics,
+    options.rules ?? DEFAULT_RULES,
+  );
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
   const server = createServer((request, response) => {
     const path = requestPath(request);

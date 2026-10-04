@@ -3,6 +3,7 @@ import {
   DT,
   isShotReturning,
   type Action,
+  type RoundRules,
   type Side,
   type Stats,
   type Wall,
@@ -159,7 +160,13 @@ export class Game {
           // Забытый авто-огонь на старте раунда расстреливает стену перед собой и ловит рикошеты.
           this.setAutoFire(false);
           this.logFlags(true);
-          this.prediction = new Prediction(this.side, message.mapIndex, message.tanks, this.lastInputSeq);
+          this.prediction = new Prediction(
+            this.side,
+            message.mapIndex,
+            message.tanks,
+            this.lastInputSeq,
+            message.rules,
+          );
           this.effects.reset();
           this.renderer.resetCamera();
           this.hideOverlay();
@@ -324,6 +331,7 @@ export class Game {
     gameTick: number;
     roundIndex: number;
     score: [number, number];
+    rules: RoundRules;
     nicknames: [string, string];
     isFighting: boolean;
     isAutoFiring: boolean;
@@ -353,6 +361,7 @@ export class Game {
       gameTick: this.prediction.latestGameTick,
       roundIndex: this.roundStart.roundIndex,
       score: this.roundStart.score,
+      rules: this.roundStart.rules,
       nicknames: this.names(),
       isFighting: this.prediction.isFighting,
       isAutoFiring: this.input.isAutoFiring,

@@ -216,6 +216,7 @@ describe('вход в комнату', () => {
     expect(start.tanks[1].nickname).toBe('Боб');
     expect(start.score).toEqual([0, 0]);
     expect(start.countdownTicks).toBe(FAST_ROOM.countdownTicks);
+    expect(start.rules).toEqual({ hasWallSlide: false });
     expect(app.stats().rooms).toBe(1);
   });
 
@@ -425,7 +426,7 @@ describe('журнал игры', () => {
       expect(line).toMatch(LINE);
     }
     const text = lines.join('\n');
-    expect(text).toContain(`S gt=0 tc=00:00 game start room=srvlog p0=Алиса p1=Боб`);
+    expect(text).toContain(`S gt=0 tc=00:00 game start room=srvlog p0=Алиса p1=Боб rules=0`);
     expect(text).toContain('round start idx=0 map=0 score=0:0');
     expect(text).toMatch(/tick rt=\d+ ph=c late=\d+\.\d a0=0\.00,0\.00,0\.00,0 ack0=0 in0=0 sil0=\d p0=140\.0,450\.0/);
     expect(text).toMatch(/tick rt=\d+ ph=f .*a0=1\.00,0\.00,0\.00,1 ack0=1 in0=1 /);
@@ -448,6 +449,17 @@ describe('журнал игры', () => {
     expect(lines[0]).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3} C1 gt=1 snap a$/);
     expect(lines[1]).toMatch(/ C1 gt=2 in b$/);
     expect(lines[2]).toMatch(/ C1 gt=3 sec c$/);
+  });
+
+  it('правила процесса уходят в RoundStart и в строку game start', async () => {
+    await app.close();
+    app = createApp({ logDir, rules: { hasWallSlide: true }, room: FAST_ROOM, tickMs: TICK_MS });
+    port = await app.listen(0, '127.0.0.1');
+    const [a] = await joinedPair('rules');
+    expect(lastRoundStart.rules).toEqual({ hasWallSlide: true });
+    await snapshotAfterCountdown(a);
+    await app.close();
+    expect(logLines(lastRoundStart.gameId).join('\n')).toContain('game start room=rules p0=Алиса p1=Боб rules=1');
   });
 
   it('отвергает недопустимый ключ или источник, слишком большое тело и не-POST', async () => {

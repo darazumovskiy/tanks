@@ -6,10 +6,12 @@ const host = process.env.HOST ?? '0.0.0.0';
 const staticRoot = process.env.STATIC_ROOT;
 const apkPath = process.env.APK_PATH;
 const logDir = process.env.LOG_DIR;
+const hasWallSlide = process.env.WALL_SLIDE === '1';
 const app = createApp({
   ...(staticRoot === undefined ? {} : { staticRoot }),
   ...(apkPath === undefined ? {} : { apkPath }),
   ...(logDir === undefined ? {} : { logDir }),
+  rules: { hasWallSlide },
 });
 
 const boundPort = await app.listen(port, host);

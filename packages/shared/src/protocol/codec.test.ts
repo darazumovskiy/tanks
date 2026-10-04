@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_STATS } from '../engine/index.js';
-import { decode, encode, quantizeAction } from './codec.js';
-import { ErrorCode, MESSAGE_TYPE_NAMES, MessageType, type Message, type SnapshotMessage } from './messages.js';
+import { decode, encode, quantizeAction, rulesFromFlags, rulesToFlags } from './codec.js';
+import {
+  ErrorCode,
+  MESSAGE_TYPE_NAMES,
+  MessageType,
+  RuleFlag,
+  type Message,
+  type RoundStartMessage,
+  type SnapshotMessage,
+} from './messages.js';
 
 const snapshot: SnapshotMessage = {
   type: MessageType.Snapshot,
@@ -32,6 +40,20 @@ const snapshot: SnapshotMessage = {
   ],
 };
 
+const roundStart: RoundStartMessage = {
+  type: MessageType.RoundStart,
+  gameId: 'K7MF',
+  roundIndex: 7,
+  mapIndex: 3,
+  countdownTicks: 90,
+  score: [3, 4],
+  rules: { hasWallSlide: false },
+  tanks: [
+    { nickname: 'A', stats: { armor: 3, engine: 3, gun: 2, reload: 2 } },
+    { nickname: 'B', stats: { armor: 5, engine: 5, gun: 0, reload: 0 } },
+  ],
+};
+
 const samples: Message[] = [
   {
     type: MessageType.Join,
@@ -50,18 +72,8 @@ const samples: Message[] = [
       { isTaken: false, nickname: '' },
     ],
   },
-  {
-    type: MessageType.RoundStart,
-    gameId: 'K7MF',
-    roundIndex: 7,
-    mapIndex: 3,
-    countdownTicks: 90,
-    score: [3, 4],
-    tanks: [
-      { nickname: 'A', stats: { armor: 3, engine: 3, gun: 2, reload: 2 } },
-      { nickname: 'B', stats: { armor: 5, engine: 5, gun: 0, reload: 0 } },
-    ],
-  },
+  roundStart,
+  { ...roundStart, rules: { hasWallSlide: true } },
   snapshot,
   { type: MessageType.Pong, clientTime: 12.5, serverTick: 999 },
   { type: MessageType.Error, code: ErrorCode.RoomFull, text: 'комната занята' },
@@ -94,6 +106,14 @@ describe('кодек протокола', () => {
       expect(decoded).toEqual(message);
     },
   );
+
+  it('правила раунда — бит 0 байта флагов, чужие биты не читаются', () => {
+    expect(rulesToFlags({ hasWallSlide: false })).toBe(0);
+    expect(rulesToFlags({ hasWallSlide: true })).toBe(RuleFlag.WallSlide);
+    expect(rulesFromFlags(0)).toEqual({ hasWallSlide: false });
+    expect(rulesFromFlags(RuleFlag.WallSlide)).toEqual({ hasWallSlide: true });
+    expect(rulesFromFlags(0xfe)).toEqual({ hasWallSlide: false });
+  });
 
   it('квантует оси в 1/127 и сохраняет знак', () => {
     const action = quantizeAction({ throttle: 0.5, turn: -0.3333, turretTurn: 0.003, isFiring: false });

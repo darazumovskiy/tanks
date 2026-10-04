@@ -10,6 +10,10 @@ import {
   REVERSE_FACTOR,
   ROUND_SECONDS,
   TANK_RADIUS,
+  WALL_BUMP_MIN_DROP,
+  WALL_BUMP_MIN_SPEED,
+  WALL_HIT_SPEED_FACTOR,
+  WALL_SLIDE_PENALTY,
   ZONE,
 } from './constants.js';
 import { boundsHit, circleRect, clamp, normalizeAngle } from './geometry.js';
@@ -83,11 +87,19 @@ export interface Zone {
 
 export type EndReason = 'kill' | 'time';
 
+// Включаемые правила движка; одинаковы на сервере, у бота и в предсказании клиента.
+export interface RoundRules {
+  hasWallSlide: boolean;
+}
+
+export const DEFAULT_RULES: Readonly<RoundRules> = { hasWallSlide: false };
+
 export interface Round {
   tick: number;
   time: number;
   mapIndex: number;
   map: MapDef;
+  rules: RoundRules;
   nextBulletId: number;
   tanks: [Tank, Tank];
   bullets: Bullet[];
@@ -172,7 +184,11 @@ export function sanitizeAction(raw: unknown): Action {
   };
 }
 
-export function createRound(mapIndex: number, setups: [TankSetup, TankSetup]): Round {
+export function createRound(
+  mapIndex: number,
+  setups: [TankSetup, TankSetup],
+  rules: Readonly<RoundRules> = DEFAULT_RULES,
+): Round {
   const map = mapByIndex(mapIndex);
   const makeTank = (setup: TankSetup, side: Side): Tank => {
     const stats = deriveStats(setup.stats);
@@ -197,6 +213,7 @@ export function createRound(mapIndex: number, setups: [TankSetup, TankSetup]): R
     time: 0,
     mapIndex: mapIndex % MAPS.length,
     map,
+    rules: { hasWallSlide: rules.hasWallSlide },
     nextBulletId: 1,
     tanks: [makeTank(setups[0], 0), makeTank(setups[1], 1)],
     bullets: [],
@@ -255,30 +272,53 @@ function moveTank(tank: Tank, action: Action): void {
   tank.y += Math.sin(tank.heading) * tank.speed * DT;
 }
 
-function resolveTankWalls(round: Round, tank: Tank, events: RoundEvent[]): void {
-  let hasBumped = false;
+// Выталкивает танк из стен и краёв поля; facing — наибольший |n·h| по всем контактам тика (1 — лоб, 0 — вдоль),
+// -1 — контактов не было.
+function pushOutOfWalls(round: Round, tank: Tank): number {
+  const hx = Math.cos(tank.heading);
+  const hy = Math.sin(tank.heading);
+  let facing = -1;
   for (let pass = 0; pass < 2; pass++) {
     for (const wall of round.map.walls) {
       const contact = circleRect(tank.x, tank.y, TANK_RADIUS, wall);
       if (contact !== null) {
         tank.x += contact.nx * contact.depth;
         tank.y += contact.ny * contact.depth;
-        hasBumped = true;
+        facing = Math.max(facing, Math.abs(contact.nx * hx + contact.ny * hy));
       }
     }
     const nx = clamp(tank.x, TANK_RADIUS, W - TANK_RADIUS);
     const ny = clamp(tank.y, TANK_RADIUS, H - TANK_RADIUS);
-    if (nx !== tank.x || ny !== tank.y) {
-      hasBumped = true;
+    if (nx !== tank.x) {
+      facing = Math.max(facing, Math.abs(hx));
+    }
+    if (ny !== tank.y) {
+      facing = Math.max(facing, Math.abs(hy));
     }
     tank.x = nx;
     tank.y = ny;
   }
-  if (hasBumped && Math.abs(tank.speed) > 60) {
-    events.push({ type: 'bump', side: tank.side, x: tank.x, y: tank.y });
+  return facing;
+}
+
+function resolveTankWalls(round: Round, tank: Tank, events: RoundEvent[]): void {
+  const facing = pushOutOfWalls(round, tank);
+  if (facing < 0) {
+    return;
   }
-  if (hasBumped) {
-    tank.speed *= 0.6;
+  if (!round.rules.hasWallSlide) {
+    if (Math.abs(tank.speed) > WALL_BUMP_MIN_SPEED) {
+      events.push({ type: 'bump', side: tank.side, x: tank.x, y: tank.y });
+    }
+    tank.speed *= WALL_HIT_SPEED_FACTOR;
+    return;
+  }
+  // Звук удара — по потере скорости за тик: в установившемся скольжении касание отнимает ровно разгон тика,
+  // меньше порога, и под любым углом молчит.
+  const speedBefore = Math.abs(tank.speed);
+  tank.speed *= 1 - WALL_SLIDE_PENALTY * facing ** 3;
+  if (speedBefore - Math.abs(tank.speed) > WALL_BUMP_MIN_DROP) {
+    events.push({ type: 'bump', side: tank.side, x: tank.x, y: tank.y });
   }
 }
 

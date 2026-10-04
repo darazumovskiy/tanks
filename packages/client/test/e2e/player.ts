@@ -8,6 +8,7 @@ export interface Point {
 export interface TankState extends Point {
   heading: number;
   turret: number;
+  speed: number;
   hp: number;
   isAlive: boolean;
 }
@@ -18,6 +19,7 @@ export interface DebugState {
   gameId: string;
   roundIndex: number;
   score: [number, number];
+  rules: { hasWallSlide: boolean };
   nicknames: [string, string];
   isFighting: boolean;
   isAutoFiring: boolean;
@@ -28,6 +30,7 @@ export interface DebugState {
   me: TankState;
   enemy: Point & { heading: number; isAlive: boolean };
   bullets: number;
+  correctionPx: number;
   camera: { x: number; y: number; height: number };
 }
 
@@ -249,6 +252,25 @@ export class Player {
     }
     await this.releaseAll();
     throw new Error(`${this.name}: не доехал до (${String(target.x)}, ${String(target.y)})`);
+  }
+
+  // Доворачивает корпус на курс клавишами и даёт газ; газ держится до `releaseAll`.
+  async driveOnHeading(heading: number, timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const { me } = await this.waitForBattle();
+      const diff = normalizeAngle(heading - me.heading);
+      if (Math.abs(diff) <= HULL_TURN_TOLERANCE) {
+        await this.releaseAll();
+        await this.setKey(KEY_FORWARD, true);
+        return;
+      }
+      await this.setKey(KEY_RIGHT, diff > 0);
+      await this.setKey(KEY_LEFT, diff < 0);
+      await sleep(POLL_MS);
+    }
+    await this.releaseAll();
+    throw new Error(`${this.name}: не довернул на курс ${heading.toFixed(2)}`);
   }
 
   // Наводит башню мышью: точка поля → точка окна через камеру из debugState, затем ждёт, пока башня довернётся.

@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DT, normalizeAngle, TURRET_RATE, type Action, type Stats } from '@tanks/shared/engine';
+import {
+  DEFAULT_STATS,
+  DT,
+  normalizeAngle,
+  TANK_RADIUS,
+  TURRET_RATE,
+  type Action,
+  type Stats,
+} from '@tanks/shared/engine';
 import {
   botRoomCode,
   EventFlag,
@@ -24,6 +32,11 @@ const SHOOTER: Stats = { armor: 0, engine: 0, gun: 5, reload: 5 };
 const RUNNER: Stats = { armor: 0, engine: 5, gun: 0, reload: 0 };
 const WEAK_GUN: Stats = { armor: 3, engine: 3, gun: 0, reload: 2 };
 const HUNTER: Stats = { armor: 0, engine: 3, gun: 4, reload: 3 };
+// Курс скольжения — около 26° к верхнему краю.
+const SLIDE_HEADING = -Math.PI / 7;
+const SLIDE_HEADING_TOLERANCE = 0.05;
+const SLIDE_TICKS = 30;
+const SLIDE_MIN_SPEED = 150;
 
 let app: App;
 let port: number;
@@ -305,6 +318,43 @@ describe('полный раунд', () => {
     expect(hasEvent(events, 'zoneStart')).toBe(true);
     expect(hasEvent(events, 'roundOver', EventFlag.ByTime)).toBe(true);
   }, 60000);
+});
+
+describe('скольжение вдоль стен', () => {
+  beforeEach(async () => {
+    await app.close();
+    app = createApp({ room: FAST_ROOM, tickMs: 1, random: seededRandom(42), rules: { hasWallSlide: true } });
+    port = await app.listen(0, '127.0.0.1');
+  });
+
+  it('танк под острым углом к краю поля держит скорость и не гремит ударами', async () => {
+    const pair = await connectPair('slide', DEFAULT_STATS, DEFAULT_STATS);
+    expect(firstRoundStart.rules).toEqual({ hasWallSlide: true });
+    const lanePost = { x: 140, y: 100 };
+    let isPosted = false;
+    let touchTick: number | null = null;
+    const slider: Script = ({ tick, tanks }) => {
+      const me = tanks[0];
+      isPosted = isPosted || Math.hypot(lanePost.x - me.x, lanePost.y - me.y) <= ARRIVE_DISTANCE;
+      if (!isPosted) {
+        return { ...steerTo(me, lanePost), turretTurn: 0, isFiring: false };
+      }
+      const diff = normalizeAngle(SLIDE_HEADING - me.heading);
+      if (Math.abs(diff) > SLIDE_HEADING_TOLERANCE) {
+        return { ...faceHeading(me, SLIDE_HEADING), turretTurn: 0, isFiring: false };
+      }
+      if (touchTick === null && me.y <= TANK_RADIUS) {
+        touchTick = tick;
+      }
+      return { ...STILL, throttle: 1 };
+    };
+    const isSliding = (snapshot: SnapshotMessage): boolean =>
+      touchTick !== null && snapshot.tick >= touchTick + SLIDE_TICKS;
+    const { last, events } = await play(pair, [slider, idle], isSliding);
+    expect(last.tanks[0].y).toBe(TANK_RADIUS);
+    expect(last.tanks[0].speed).toBeGreaterThanOrEqual(SLIDE_MIN_SPEED);
+    expect(hasEvent(events, 'bump')).toBe(false);
+  }, 20000);
 });
 
 describe('против бота', () => {

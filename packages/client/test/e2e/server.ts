@@ -12,10 +12,13 @@ const START_TIMEOUT_MS = 10_000;
 const PORT_LINE = /tanks server on \S*:(\d+)/;
 
 // Собранный игровой сервер как отдельный процесс — тот же бинарник, что едет на боевую машину.
+// extraEnv — переменные окружения поверх обязательных (например, серверный тумблер `WALL_SLIDE`).
 export class GameServer {
   private child: ChildProcess | null = null;
   private port = 0;
   readonly logDir = mkdtempSync(join(tmpdir(), 'tanks-e2e-log-'));
+
+  constructor(private readonly extraEnv: Record<string, string> = {}) {}
 
   get baseUrl(): string {
     return `http://127.0.0.1:${String(this.port)}`;
@@ -29,7 +32,7 @@ export class GameServer {
 
   async start(port = 0): Promise<void> {
     const child = spawn(process.execPath, [SERVER_ENTRY], {
-      env: { ...process.env, PORT: String(port), STATIC_ROOT, LOG_DIR: this.logDir },
+      env: { ...process.env, ...this.extraEnv, PORT: String(port), STATIC_ROOT, LOG_DIR: this.logDir },
       stdio: ['ignore', 'pipe', 'inherit'],
     });
     this.child = child;

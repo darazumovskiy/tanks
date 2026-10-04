@@ -1,12 +1,14 @@
 import {
   checkStats,
   createRound,
+  DEFAULT_RULES,
   DEFAULT_STATS,
   roundPlan,
   stepRound,
   TICK_RATE,
   type Action,
   type Round,
+  type RoundRules,
   type Side,
   type Stats,
 } from '@tanks/shared/engine';
@@ -14,6 +16,7 @@ import {
   encode,
   gameTimecode,
   MessageType,
+  rulesToFlags,
   type RoomStateMessage,
   type RoundStartMessage,
   type ServerMessage,
@@ -114,17 +117,20 @@ export class Room {
   private tick = 0;
   private readonly log: GameLog;
   private readonly dropCounter: InputDropCounter;
+  private readonly rules: Readonly<RoundRules>;
 
   constructor(
     code: string,
     options: RoomOptions = DEFAULT_ROOM_OPTIONS,
     log: GameLog = NO_LOG,
     dropCounter: InputDropCounter = NO_DROP_COUNTER,
+    rules: Readonly<RoundRules> = DEFAULT_RULES,
   ) {
     this.code = code;
     this.options = options;
     this.log = log;
     this.dropCounter = dropCounter;
+    this.rules = rules;
   }
 
   get isEmpty(): boolean {
@@ -286,31 +292,39 @@ export class Room {
     return result;
   }
 
+  private roundFor(mapIndex: number, players: [Player, Player]): Round {
+    const [a, b] = players;
+    return createRound(
+      mapIndex,
+      [
+        { name: a.nickname, stats: a.stats },
+        { name: b.nickname, stats: b.stats },
+      ],
+      this.rules,
+    );
+  }
+
   private startDuel(players: [Player, Player]): void {
     const [a, b] = players;
     const duel: Duel = {
       id: randomGameId(),
       startTick: this.tick,
       players,
-      round: createRound(roundPlan(this.roundIndex).mapIndex, [
-        { name: a.nickname, stats: a.stats },
-        { name: b.nickname, stats: b.stats },
-      ]),
+      round: this.roundFor(roundPlan(this.roundIndex).mapIndex, players),
       phase: 'countdown',
       phaseTicksLeft: this.options.countdownTicks,
     };
     this.duel = duel;
-    this.writeLog(`game start room=${this.code} p0=${a.nickname} p1=${b.nickname}`);
+    this.writeLog(
+      `game start room=${this.code} p0=${a.nickname} p1=${b.nickname} rules=${String(rulesToFlags(this.rules))}`,
+    );
     this.startRound(duel);
   }
 
   private startRound(duel: Duel): void {
     const [a, b] = duel.players;
     const plan = roundPlan(this.roundIndex);
-    duel.round = createRound(plan.mapIndex, [
-      { name: a.nickname, stats: a.stats },
-      { name: b.nickname, stats: b.stats },
-    ]);
+    duel.round = this.roundFor(plan.mapIndex, duel.players);
     duel.phase = 'countdown';
     duel.phaseTicksLeft = this.options.countdownTicks;
     for (const player of duel.players) {
@@ -327,6 +341,7 @@ export class Room {
       mapIndex: plan.mapIndex,
       countdownTicks: this.options.countdownTicks,
       score: [this.score[0], this.score[1]],
+      rules: { hasWallSlide: this.rules.hasWallSlide },
       tanks: [
         { nickname: a.nickname, stats: a.stats },
         { nickname: b.nickname, stats: b.stats },

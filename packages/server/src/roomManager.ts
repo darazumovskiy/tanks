@@ -1,3 +1,4 @@
+import { DEFAULT_RULES, type RoundRules } from '@tanks/shared/engine';
 import { botLevelOf, isBotRoomCode } from '@tanks/shared/protocol';
 import { createBot } from './bots/ladder.js';
 import { NO_LOG, type GameLog } from './gameLog.js';
@@ -30,6 +31,7 @@ export class RoomManager {
     private readonly random: () => number = Math.random,
     private readonly log: GameLog = NO_LOG,
     private readonly dropCounter: InputDropCounter = NO_DROP_COUNTER,
+    private readonly rules: Readonly<RoundRules> = DEFAULT_RULES,
   ) {}
 
   get roomCount(): number {
@@ -42,7 +44,7 @@ export class RoomManager {
     if (existing !== undefined) {
       return existing;
     }
-    const room = new Room(code, this.options, this.log, this.dropCounter);
+    const room = new Room(code, this.options, this.log, this.dropCounter, this.rules);
     this.rooms.set(code, room);
     const level = botLevelOf(code);
     if (level !== null) {

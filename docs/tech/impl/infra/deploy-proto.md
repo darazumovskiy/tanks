@@ -10,6 +10,10 @@
 | `vector-secrets.sh user@host` | С рабочей машины: кладёт доступы Grafana Cloud из `~/.secrets-tank/grafana-cloud.env` в `/etc/default/vector` |
 | `grafana-dashboard.sh` | С рабочей машины: собирает и загружает дашборд в Grafana Cloud |
 | `tanks.service` | systemd: `node packages/server/dist/main.js`, `127.0.0.1:8080`, статика из `packages/client/dist`, APK из `/opt/tanks-files/tanks.apk`, журналы игр в `/opt/tanks-logs`, автоперезапуск. `deploy-local.sh` переустанавливает юнит при каждой выкладке |
+
+## Серверные тумблеры
+
+Правила движка включаются переменными окружения сервиса в `deploy/tanks.service` рядом с `LOG_DIR` ([round-rules.md](../backend/round-rules.md)). Скольжение вдоль стен — `WALL_SLIDE=1`; в юните строка лежит закомментированной. Включить на бою: раскомментировать `Environment=WALL_SLIDE=1` в `deploy/tanks.service`, закоммитить, запушить в `main` и выложить `deploy/deploy.sh root@172.232.212.157` — `deploy-local.sh` переустановит юнит и перезапустит сервис. Проверить: `ssh … 'systemctl show tanks -p Environment'` и строка `game start … rules=1` в новом файле `/opt/tanks-logs/<gameId>.log`. Выключить — закомментировать обратно и выложить снова. Протокол при этом не меняется: клиенты узнают правило из `RoundStart`.
 | `vector/` | Конфиг Vector и drop-in с лимитами — [monitoring.md](monitoring.md) |
 | `tanks-logs-cleanup` | Ежедневный cron (`/etc/cron.daily`): удаляет журналы игр старше 7 дней |
 | `Caddyfile` | HTTPS на `TANKS_HOST`, сжатие; `/metrics` → 404, `/telemetry` → Vector, остальное (включая WebSocket) → 8080 |

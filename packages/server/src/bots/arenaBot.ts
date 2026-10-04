@@ -58,10 +58,14 @@ export class ArenaBot implements Connection {
   }
 
   private startRound(message: RoundStartMessage): void {
-    this.round = createRound(message.mapIndex, [
-      { name: message.tanks[0].nickname, stats: message.tanks[0].stats },
-      { name: message.tanks[1].nickname, stats: message.tanks[1].stats },
-    ]);
+    this.round = createRound(
+      message.mapIndex,
+      [
+        { name: message.tanks[0].nickname, stats: message.tanks[0].stats },
+        { name: message.tanks[1].nickname, stats: message.tanks[1].stats },
+      ],
+      message.rules,
+    );
     this.recent = [];
     this.brain.init?.(botView(this.round, this.side));
   }

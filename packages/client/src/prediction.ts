@@ -6,6 +6,7 @@ import {
   stepRound,
   type Action,
   type Round,
+  type RoundRules,
   type Side,
   type Stats,
 } from '@tanks/shared/engine';
@@ -80,17 +81,23 @@ export class Prediction {
 
   // Номер команды сквозной на всё соединение: сервер отбрасывает номера не больше уже принятого,
   // поэтому новый раунд продолжает счёт, а не начинает с единицы.
+  // rules — правила раунда от сервера: с другими правилами предсказание расходилось бы с ним у стен.
   constructor(
     private readonly side: Side,
     mapIndex: number,
     tanks: [{ nickname: string; stats: Stats }, { nickname: string; stats: Stats }],
     lastSeq: number,
+    rules: Readonly<RoundRules>,
   ) {
     this.seq = lastSeq;
-    this.round = createRound(mapIndex, [
-      { name: tanks[0].nickname, stats: tanks[0].stats },
-      { name: tanks[1].nickname, stats: tanks[1].stats },
-    ]);
+    this.round = createRound(
+      mapIndex,
+      [
+        { name: tanks[0].nickname, stats: tanks[0].stats },
+        { name: tanks[1].nickname, stats: tanks[1].stats },
+      ],
+      rules,
+    );
   }
 
   get me(): Round['tanks'][number] {

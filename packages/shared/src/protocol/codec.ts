@@ -1,9 +1,10 @@
-import { STAT_KEYS, type Action, type EndReason, type Side, type Stats } from '../engine/index.js';
+import { STAT_KEYS, type Action, type EndReason, type RoundRules, type Side, type Stats } from '../engine/index.js';
 import { ByteReader, ByteWriter } from './bytes.js';
 import {
   ErrorCode,
   MESSAGE_TYPE_NAMES,
   MessageType,
+  RuleFlag,
   type BulletSnapshot,
   type ClientMessage,
   type KitSnapshot,
@@ -52,6 +53,15 @@ export function quantizeAction(action: Action): Action {
     turretTurn: dequantizeAxis(quantizeAxis(action.turretTurn)),
     isFiring: action.isFiring,
   };
+}
+
+// Правила раунда как байт флагов: один и тот же вид в RoundStart и в строке журнала `game start`.
+export function rulesToFlags(rules: Readonly<RoundRules>): number {
+  return rules.hasWallSlide ? RuleFlag.WallSlide : 0;
+}
+
+export function rulesFromFlags(flags: number): RoundRules {
+  return { hasWallSlide: (flags & RuleFlag.WallSlide) !== 0 };
 }
 
 function writeSide(writer: ByteWriter, side: Side | null): void {
@@ -220,7 +230,7 @@ export function encode(message: Message): Uint8Array {
     case MessageType.RoundStart:
       writer.string(message.gameId);
       writer.u16(message.roundIndex).u8(message.mapIndex).u16(message.countdownTicks);
-      writer.u16(message.score[0]).u16(message.score[1]);
+      writer.u16(message.score[0]).u16(message.score[1]).u8(rulesToFlags(message.rules));
       writeTankInfo(writer, message.tanks[0]);
       writeTankInfo(writer, message.tanks[1]);
       break;
@@ -342,6 +352,7 @@ export function decode(data: Uint8Array): Message {
         mapIndex: reader.u8(),
         countdownTicks: reader.u16(),
         score: [reader.u16(), reader.u16()],
+        rules: rulesFromFlags(reader.u8()),
         tanks: [readTankInfo(reader), readTankInfo(reader)],
       };
     case MessageType.Snapshot:

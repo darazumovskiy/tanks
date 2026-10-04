@@ -10,6 +10,7 @@
 | [backend/duel-server.md](backend/duel-server.md) | Сервер дуэли: комнаты, фазы, тик, тесты |
 | [backend/bot-ladder.md](backend/bot-ladder.md) | Лестница ботов: десять уровней — тело Охотника с профилями стрельбы и движения, бот Астры; код комнаты `bot<уровень>…`, бот как подключение с зеркалом раунда и задержкой восприятия, стенд «бот против бота» |
 | [backend/game-log.md](backend/game-log.md) | Журнал игры: идентификатор и таймкод дуэли, файлы на сервере, строки сервера и клиента, приёмщик `/log` |
+| [backend/round-rules.md](backend/round-rules.md) | Правила раунда как механизм движка; скольжение вдоль стен под серверным тумблером `WALL_SLIDE`, `RoundStart.rules`, протокол v4 |
 | [backend/log-analysis.md](backend/log-analysis.md) | Анализ журналов: прослеживание снарядов, метрики стрельбы, наведения, движения и самопопаданий, сводка «устройство × уровень», CLI `analyze-logs` |
 | [frontend/duel-client.md](frontend/duel-client.md) | Клиент дуэли: предсказание, интерполяция, ввод, рендер, HUD |
 | [frontend/touch-controls.md](frontend/touch-controls.md) | Сенсорное управление: два плавающих стика, перевод в действие, план тестирования |

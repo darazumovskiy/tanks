@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createRound, stepRound, type Round } from '../../src/engine/index.js';
-import { MAX_TICKS, SCENARIOS, buildSchedule, digest } from './scenario.mjs';
+import { createRound, stepRound, type Round, type RoundRules } from '../../src/engine/index.js';
+import { MAX_TICKS, SCENARIOS, buildSchedule, digest, type Scenario } from './scenario.mjs';
 
 interface Fixture {
   mapIndex: number;
@@ -40,6 +40,34 @@ function snapshot(round: Round): unknown {
   };
 }
 
+function runDigests(scenario: Scenario, rules: RoundRules): string[] {
+  const round = createRound(
+    scenario.mapIndex,
+    [
+      { name: 'T0', stats: scenario.stats[0] },
+      { name: 'T1', stats: scenario.stats[1] },
+    ],
+    rules,
+  );
+  const digests: string[] = [];
+  for (const [a, b] of buildSchedule(scenario.seed, MAX_TICKS, scenario.fireChance)) {
+    const events = stepRound(round, [
+      { throttle: a.throttle, turn: a.turn, turretTurn: a.turretTurn, isFiring: a.fire },
+      { throttle: b.throttle, turn: b.turn, turretTurn: b.turretTurn, isFiring: b.fire },
+    ]);
+    digests.push(
+      digest(
+        snapshot(round),
+        events.map((event) => event.type),
+      ),
+    );
+    if (round.isOver) {
+      break;
+    }
+  }
+  return digests;
+}
+
 describe('движок повторяет оригинал tank-arena тик в тик', () => {
   it.each(SCENARIOS.map((scenario, index) => [index, scenario] as const))('сценарий %i', (index, scenario) => {
     const fixture = fixtures[index];
@@ -76,5 +104,23 @@ describe('движок повторяет оригинал tank-arena тик в 
     expect(tick).toBe(fixture.ticks);
     expect(round.endReason).toBe(fixture.endReason);
     expect(round.winner).toBe(fixture.winner);
+  });
+});
+
+describe('скольжение вдоль стен детерминировано', () => {
+  // Сценарий без стрельбы: раунд идёт всё время, танки много ездят и трутся о стены.
+  const scenario = SCENARIOS[4];
+  const fixture = fixtures[4];
+
+  it('два прогона с одинаковым вводом совпадают побитово и отличаются от эталона без правила', () => {
+    expect(scenario).toBeDefined();
+    expect(fixture).toBeDefined();
+    if (scenario === undefined || fixture === undefined) {
+      return;
+    }
+    const first = runDigests(scenario, { hasWallSlide: true });
+    const second = runDigests(scenario, { hasWallSlide: true });
+    expect(second).toEqual(first);
+    expect(first.join('')).not.toBe(fixture.digests);
   });
 });
