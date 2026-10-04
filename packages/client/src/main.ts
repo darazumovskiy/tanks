@@ -18,6 +18,7 @@ const SETTINGS_KEY_CODE = 'KeyO';
 const AUTOFIRE_ACTIVE_CLASS = 'is-active';
 const LEVEL_SELECTED_CLASS = 'is-selected';
 const LEVEL_INFO_OPEN_CLASS = 'is-open';
+const LEVEL_LIST_OPEN_CLASS = 'is-open';
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 
 function randomCode(): string {
@@ -55,60 +56,87 @@ interface LevelCard {
   card: HTMLElement;
 }
 
-// Карточка — номер и имя; описание выбранного уровня показывается под сеткой, чтобы десять карточек уместились
-// на экране телефона.
-function buildLevelCard(level: BotLevel): LevelCard {
-  const card = document.createElement('div');
-  card.className = 'level';
-  card.dataset.level = String(level);
-  card.setAttribute('role', 'radio');
-  card.tabIndex = 0;
-
+// Номер, имя и короткое описание уровня — одинаково в строке списка и на кнопке выбранного.
+function levelContent(level: BotLevel): HTMLElement[] {
+  const info = BOT_LEVEL_INFO[level];
   const badge = document.createElement('span');
   badge.className = 'level-badge';
   badge.textContent = String(level);
+  const body = document.createElement('span');
+  body.className = 'level-body';
   const name = document.createElement('span');
   name.className = 'level-name';
-  name.textContent = BOT_LEVEL_INFO[level].name;
-  card.append(badge, name);
+  name.textContent = info.name;
+  const tagline = document.createElement('span');
+  tagline.className = 'level-tagline';
+  tagline.textContent = info.tagline;
+  body.append(name, tagline);
+  return [badge, body];
+}
+
+function buildLevelCard(level: BotLevel): LevelCard {
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'level';
+  card.dataset.level = String(level);
+  card.setAttribute('role', 'option');
+  card.append(...levelContent(level));
   return { level, card };
 }
 
 interface LevelPickerElements {
-  grid: HTMLElement;
-  tagline: HTMLElement;
+  toggle: HTMLButtonElement;
+  list: HTMLElement;
   hint: HTMLElement;
   info: HTMLButtonElement;
 }
 
-// Карточки уровней — из общего с сервером контракта; выбранный уровень запоминается на устройстве.
+// Выпадающий список уровней своего оформления: кнопка показывает выбранный уровень, панель — все десять.
+// Список — из общего с сервером контракта; выбранный уровень запоминается на устройстве.
 function mountLevelPicker(elements: LevelPickerElements): { selected: () => BotLevel } {
   const cards = BOT_LEVELS.map(buildLevelCard);
   let selected = parseBotLevel(localStorage.getItem(BOT_LEVEL_KEY));
+  const setOpen = (isOpen: boolean): void => {
+    elements.list.hidden = !isOpen;
+    elements.toggle.setAttribute('aria-expanded', String(isOpen));
+    elements.toggle.classList.toggle(LEVEL_LIST_OPEN_CLASS, isOpen);
+  };
   const render = (): void => {
     for (const { level, card } of cards) {
       const isSelected = level === selected;
       card.classList.toggle(LEVEL_SELECTED_CLASS, isSelected);
-      card.setAttribute('aria-checked', String(isSelected));
+      card.setAttribute('aria-selected', String(isSelected));
     }
-    elements.tagline.textContent = BOT_LEVEL_INFO[selected].tagline;
+    const chevron = document.createElement('span');
+    chevron.className = 'dropdown-chevron';
+    chevron.textContent = '▾';
+    elements.toggle.replaceChildren(...levelContent(selected), chevron);
     elements.hint.textContent = BOT_LEVEL_INFO[selected].summary;
   };
   for (const { level, card } of cards) {
-    const select = (): void => {
+    card.addEventListener('click', () => {
       selected = level;
       localStorage.setItem(BOT_LEVEL_KEY, String(level));
       render();
-    };
-    card.addEventListener('click', select);
-    card.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        select();
-      }
+      setOpen(false);
+      elements.toggle.focus();
     });
-    elements.grid.append(card);
+    elements.list.append(card);
   }
+  elements.toggle.addEventListener('click', () => {
+    setOpen(elements.list.hidden);
+  });
+  document.addEventListener('pointerdown', (event) => {
+    const isInside = event.target instanceof Node && elements.list.parentElement?.contains(event.target) === true;
+    if (!isInside) {
+      setOpen(false);
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      setOpen(false);
+    }
+  });
   elements.info.addEventListener('click', () => {
     elements.hint.hidden = !elements.hint.hidden;
     elements.info.classList.toggle(LEVEL_INFO_OPEN_CLASS, !elements.hint.hidden);
@@ -126,8 +154,8 @@ function showHome(): void {
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
   statsInput.value = localStorage.getItem(STATS_KEY) ?? '3322';
   const picker = mountLevelPicker({
-    grid: byId('bot-levels', HTMLElement),
-    tagline: byId('level-tagline', HTMLElement),
+    toggle: byId('bot-level-toggle', HTMLButtonElement),
+    list: byId('bot-levels', HTMLElement),
     hint: byId('level-hint', HTMLElement),
     info: byId('level-info', HTMLButtonElement),
   });

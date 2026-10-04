@@ -40,12 +40,19 @@
       <button id="create" class="action">Создать дуэль</button>
       <section class="levels">
         <h2 class="levels-title">Против бота</h2>
-        <div id="bot-levels" class="levels-grid" role="radiogroup" aria-label="Уровень бота"></div>
-        <div class="level-detail">
-          <span id="level-tagline" class="level-tagline"></span>
+        <div class="levels-row">
+          <button
+            id="bot-level-toggle"
+            class="dropdown-toggle"
+            type="button"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-label="Уровень бота"
+          ></button>
           <button id="level-info" class="level-info" type="button" aria-label="Подробнее" aria-expanded="false">
             i
           </button>
+          <div id="bot-levels" class="dropdown-list" role="listbox" aria-label="Уровни бота" hidden></div>
         </div>
         <p id="level-hint" class="level-hint" hidden></p>
         <button id="create-bot" class="action secondary">В бой</button>

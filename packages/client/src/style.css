@@ -363,50 +363,92 @@ input {
   opacity: 0.85;
 }
 
-.levels-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-/* Последний уровень — босс: ему вся ширина, длинное имя не режется. */
-.levels-grid .level:last-child {
-  grid-column: 1 / -1;
-}
-
-/* Карточка уровня: выбранная подсвечена акцентом игры, остальные приглушены. */
-.level {
+.levels-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* Кнопка выбранного уровня и строки списка выглядят одинаково: номер, имя, описание. */
+.dropdown-toggle,
+.level {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
   min-width: 0;
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 10px 12px;
+  text-align: left;
+  font-family: inherit;
+  color: #f4f1e8;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 12px;
   cursor: pointer;
   transition:
     border-color 0.15s ease,
-    background-color 0.15s ease,
-    transform 0.1s ease;
+    background-color 0.15s ease;
 }
 
-.level:hover {
-  background: rgba(255, 255, 255, 0.08);
+.dropdown-toggle {
+  flex: 1;
 }
 
-.level:active {
-  transform: scale(0.98);
+.dropdown-toggle:hover,
+.dropdown-toggle.is-open {
+  border-color: rgba(232, 130, 90, 0.8);
 }
 
+.dropdown-toggle:focus-visible,
 .level:focus-visible {
   outline: 2px solid #e8825a;
   outline-offset: 2px;
 }
 
+.dropdown-chevron {
+  flex: none;
+  font-size: 14px;
+  opacity: 0.6;
+  transition: transform 0.15s ease;
+}
+
+.dropdown-toggle.is-open .dropdown-chevron {
+  transform: rotate(180deg);
+}
+
+/* Панель списка накрывает форму ниже, не раздвигая её. */
+.dropdown-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(60vh, 440px);
+  padding: 6px;
+  overflow-y: auto;
+  background: #141917;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+.level {
+  padding: 8px 10px;
+  background: transparent;
+  border-color: transparent;
+}
+
+.level:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
 .level.is-selected {
   background: rgba(232, 130, 90, 0.14);
-  border-color: #e8825a;
+  border-color: rgba(232, 130, 90, 0.6);
 }
 
 .level-badge {
@@ -418,9 +460,14 @@ input {
   place-items: center;
   font-family: 'Russo One', 'Arial Black', sans-serif;
   font-size: 16px;
+  color: #0b0f0d;
+  background: #e8825a;
+  border-radius: 9px;
+}
+
+.level .level-badge {
   color: #f4f1e8;
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 9px;
 }
 
 .level.is-selected .level-badge {
@@ -428,36 +475,32 @@ input {
   background: #e8825a;
 }
 
-.level-name {
+.level-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.level-name {
   font-family: 'Russo One', 'Arial Black', sans-serif;
-  font-size: 14px;
+  font-size: 15px;
   letter-spacing: 0.01em;
 }
 
-.level-detail {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 32px;
-  padding: 0 4px;
-}
-
 .level-tagline {
-  flex: 1;
-  font-size: 15px;
-  opacity: 0.85;
+  font-size: 13px;
+  line-height: 1.3;
+  opacity: 0.75;
 }
 
 .level-hint {
-  margin: -4px 4px 0;
+  margin: -6px 4px 0;
   padding-top: 8px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: rgba(244, 241, 232, 0.55);
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(244, 241, 232, 0.6);
   border-top: 1px dashed rgba(255, 255, 255, 0.12);
 }
 
