@@ -64,7 +64,7 @@ export function defaultSettings(isTouchDevice: boolean): Settings {
     fireRing: 0.89,
     hasAutoAim: isTouchDevice,
     hasRicochetGuard: false,
-    hasAimLine: false,
+    hasAimLine: true,
     hasLeadHint: false,
     hasZoneFire: false,
     cameraMode: 'follow',

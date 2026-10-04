@@ -161,10 +161,10 @@ describe('SettingsPanel', () => {
     expect(labels).not.toContain(ZONE_FIRE_LABEL);
     expect(root.querySelector('.settings-group-title')).toBeNull();
     const aimLine = checkFor(AIM_LINE_LABEL);
-    expect(aimLine.checked).toBe(false);
-    aimLine.checked = true;
+    expect(aimLine.checked).toBe(true);
+    aimLine.checked = false;
     aimLine.dispatchEvent(new Event('change'));
-    expect(store.value.hasAimLine).toBe(true);
+    expect(store.value.hasAimLine).toBe(false);
   });
 
   it('в админ-режиме: группа «Для настройки» внизу с флажком упреждения, отметка уходит в хранилище', () => {

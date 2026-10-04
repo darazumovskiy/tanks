@@ -20,10 +20,10 @@ describe('defaultSettings', () => {
     expect(parseSettings(JSON.stringify({ pivotThrottle: 0.2 }), PHONE_DEFAULTS, PLAYER).pivotThrottle).toBe(0.2);
   });
 
-  it('предохранитель, линия выстрела, подсказка упреждения и огонь по цели выключены на обоих устройствах', () => {
+  it('линия выстрела включена, предохранитель, подсказка упреждения и огонь по цели выключены на обоих устройствах', () => {
     for (const defaults of [PHONE_DEFAULTS, DESKTOP_DEFAULTS]) {
+      expect(defaults.hasAimLine).toBe(true);
       expect(defaults.hasRicochetGuard).toBe(false);
-      expect(defaults.hasAimLine).toBe(false);
       expect(defaults.hasLeadHint).toBe(false);
       expect(defaults.hasZoneFire).toBe(false);
     }

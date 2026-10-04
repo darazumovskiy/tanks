@@ -388,7 +388,9 @@ test('линия выстрела: автоведение держит прот�
   const shooter = await Player.open(browser, server.baseUrl, code, 'Алиса', DEFAULT_STATS, {
     settings: { hasAimLine: true, hasAutoAim: true },
   });
-  const target = await Player.open(browser, server.baseUrl, code, 'Боб', DEFAULT_STATS);
+  const target = await Player.open(browser, server.baseUrl, code, 'Боб', DEFAULT_STATS, {
+    settings: { hasAimLine: false },
+  });
   await shooter.waitForFight();
   await target.waitForFight();
   await Promise.all([shooter.driveTo(SHOOTER_POST, ARRIVE_DISTANCE), target.driveTo(TARGET_POST, ARRIVE_DISTANCE)]);
