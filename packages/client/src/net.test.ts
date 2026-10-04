@@ -1,5 +1,5 @@
 import { DEFAULT_STATS } from '@tanks/shared/engine';
-import { AGENT_NOTICE, decode, encode, ErrorCode, MessageType, type ClientMessage } from '@tanks/shared/protocol';
+import { decode, encode, ErrorCode, MessageType, type ClientMessage } from '@tanks/shared/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { NetClient, RECONNECT_BASE_MS, RECONNECT_MAX_MS, type NetHandlers, type SocketLike } from './net.js';
 
@@ -7,7 +7,7 @@ class FakeSocket implements SocketLike {
   binaryType: BinaryType = 'blob';
   readyState = 0;
   onopen: ((event: Event) => void) | null = null;
-  onmessage: ((event: MessageEvent<ArrayBuffer | string>) => void) | null = null;
+  onmessage: ((event: MessageEvent<ArrayBuffer>) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
   readonly sent: ClientMessage[] = [];
   isClosedByClient = false;
@@ -29,10 +29,6 @@ class FakeSocket implements SocketLike {
   receive(bytes: Uint8Array): void {
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     this.onmessage?.(new MessageEvent('message', { data: buffer }));
-  }
-
-  receiveText(text: string): void {
-    this.onmessage?.(new MessageEvent('message', { data: text }));
   }
 
   drop(): void {
@@ -171,16 +167,5 @@ describe('NetClient', () => {
     expect(client.serverTick).toBe(77);
     client.sendInput(5, { throttle: 1, turn: 0, turretTurn: 0, isFiring: false });
     expect(latest().sent.at(-1)).toMatchObject({ type: MessageType.Input, seq: 5 });
-  });
-
-  it('текстовое сообщение сервера пропускается: обработчики молчат, следующий Welcome разобран', () => {
-    latest().open();
-    expect(() => {
-      latest().receiveText(AGENT_NOTICE);
-    }).not.toThrow();
-    expect(onWelcome).not.toHaveBeenCalled();
-    expect(onError).not.toHaveBeenCalled();
-    latest().receive(encode({ type: MessageType.Welcome, side: 0, roomCode: 'abc' }));
-    expect(onWelcome).toHaveBeenCalledWith(expect.objectContaining({ side: 0 }));
   });
 });

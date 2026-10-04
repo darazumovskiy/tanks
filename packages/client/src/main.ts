@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
-import { AGENT_NOTICE, BOT_LEVEL_INFO, BOT_LEVELS, botRoomCode, type BotLevel } from '@tanks/shared/protocol';
+import { BOT_LEVEL_INFO, BOT_LEVELS, botRoomCode, type BotLevel } from '@tanks/shared/protocol';
 import QRCode from 'qrcode';
 import { resolveAdminMode } from './admin.js';
 import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
@@ -28,7 +28,6 @@ const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 // Один на страницу: ошибки главной и боя уходят с одинаковым описанием клиента.
 const telemetry = new Telemetry(readClientInfo());
 telemetry.installErrorHandlers();
-console.warn(AGENT_NOTICE);
 // `?admin=1` на любой странице запоминается на устройстве и открывает админские настройки в бою.
 const isAdmin = resolveAdminMode(location.search, localStorage);
 

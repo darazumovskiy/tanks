@@ -26,7 +26,7 @@ export interface SocketLike {
   binaryType: BinaryType;
   readyState: number;
   onopen: ((event: Event) => void) | null;
-  onmessage: ((event: MessageEvent<ArrayBuffer | string>) => void) | null;
+  onmessage: ((event: MessageEvent<ArrayBuffer>) => void) | null;
   onclose: ((event: CloseEvent) => void) | null;
   send(data: Uint8Array): void;
   close(): void;
@@ -113,10 +113,7 @@ export class NetClient {
         this.send(encode({ type: MessageType.Ping, clientTime: this.now() }));
       }, PING_INTERVAL_MS);
     };
-    socket.onmessage = (event: MessageEvent<ArrayBuffer | string>): void => {
-      if (typeof event.data === 'string') {
-        return;
-      }
+    socket.onmessage = (event: MessageEvent<ArrayBuffer>): void => {
       this.dispatch(decode(new Uint8Array(event.data)) as ServerMessage, this.now());
     };
     socket.onclose = (): void => {
