@@ -117,10 +117,9 @@ describe('Охотник на крафтовых видах', () => {
   it('шум прицела уводит башню от цели и меняется со временем', () => {
     const view = duelView(300);
     const noisy = brainOf({ ...HUNTER, aimNoiseRad: 0.3 });
-    const first = noisy.tick(view).turretTurn;
-    const later = ticks(noisy, view, TICK_RATE)[TICK_RATE - 1]?.turretTurn;
-    expect(Math.abs(first)).toBeGreaterThan(0.05);
-    expect(later).not.toBe(first);
+    const turns = ticks(noisy, view, TICK_RATE * 2).map((action) => action.turretTurn);
+    expect(Math.max(...turns.map(Math.abs))).toBeGreaterThan(0.05);
+    expect(new Set(turns).size).toBeGreaterThan(1);
   });
 
   it('вероятность выстрела: готовый и наведённый бот с шансом 0 не стреляет, с шансом 1 — стреляет', () => {
@@ -206,13 +205,23 @@ describe('Охотник на крафтовых видах', () => {
     expect(second.turn).toBe(first.turn);
   });
 
-  it('от собственной вернувшейся пули уходит любой уровень', () => {
-    const view = duelView(400);
+  it('от собственной вернувшейся пули уходит любой небеспечный уровень; беспечный — стоит под ней', () => {
+    const view = duelView(500);
     view.bullets = [
       { id: 3, x: 200, y: 450, vx: 500, vy: 0, isMine: true, bouncesLeft: 0, damage: 23, canHitOwner: true },
     ];
-    const rookie = brainOf({ ...PROFILES[3], aimNoiseRad: 0 }).tick(view);
-    expect(Math.abs(rookie.turn)).toBeGreaterThan(0.5);
+    const careful = brainOf({ ...PROFILES[3], aimNoiseRad: 0, carelessness: 0 }).tick(view);
+    const careless = brainOf({ ...PROFILES[3], aimNoiseRad: 0, carelessness: 1 }).tick(view);
+    expect(Math.abs(careful.turn)).toBeGreaterThan(0.5);
+    expect(Math.abs(careless.turn)).toBeLessThan(0.1);
+  });
+
+  it('беспечный выстрел не проверяет, вернётся ли пуля', () => {
+    const view = duelView(300);
+    view.enemy.y = 450 - 120;
+    view.arena.walls = [{ x: 760, y: 300, w: 40, h: 300 }];
+    const careless = brainOf({ ...HUNTER, fireWindowRad: Math.PI, carelessness: 1 });
+    expect(careless.tick(view).isFiring).toBe(true);
   });
 
   it('память решений по пулям ограничена: после многих пуль старые забываются без ошибок', () => {

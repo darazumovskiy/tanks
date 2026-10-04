@@ -249,6 +249,7 @@ export class HunterBrain implements BotBrain {
   private aimNoise = 0;
   private aimNoiseTicksLeft = 0;
   private isLeadingShot = false;
+  private isCarelessShot = false;
   private wasReloading = false;
   private fireRetryTicksLeft = 0;
   private patrolTarget: Point | null = null;
@@ -271,6 +272,7 @@ export class HunterBrain implements BotBrain {
     this.pathTick = -Infinity;
     this.aimNoiseTicksLeft = 0;
     this.isLeadingShot = this.random() < this.profile.leadChance;
+    this.isCarelessShot = this.random() < this.profile.carelessness;
     this.wasReloading = false;
     this.fireRetryTicksLeft = 0;
     this.patrolTarget = null;
@@ -303,10 +305,11 @@ export class HunterBrain implements BotBrain {
       this.aimNoiseTicksLeft = AIM_NOISE_PERIOD_TICKS;
     }
     this.aimNoiseTicksLeft--;
-    // Монетка упреждения бросается на каждый новый выстрел — в момент, когда перезарядка закончилась.
+    // Монетки упреждения и беспечности бросаются на каждый новый выстрел — в момент, когда перезарядка закончилась.
     const isReady = me.reloadLeft <= 0;
     if (isReady && this.wasReloading) {
       this.isLeadingShot = this.random() < this.profile.leadChance;
+      this.isCarelessShot = this.random() < this.profile.carelessness;
     }
     this.wasReloading = !isReady;
 
@@ -319,7 +322,8 @@ export class HunterBrain implements BotBrain {
     const isAimed = Math.abs(turretDiff) < this.profile.fireWindowRad;
     const muzzle = { x: muzzleX, y: muzzleY };
     const isLineClear = isClear(arena.walls, muzzleX, muzzleY, target.x, target.y, SHOT_PAD);
-    const isSafe = !isReturningShot(arena.walls, me, muzzle, me.turret, me.stats.bulletSpeed, enemy);
+    const isSafe =
+      this.isCarelessShot || !isReturningShot(arena.walls, me, muzzle, me.turret, me.stats.bulletSpeed, enemy);
     if (!isReady || !isAimed || !isLineClear || !isSafe) {
       return { turretTurn, isFiring: false };
     }
@@ -340,10 +344,13 @@ export class HunterBrain implements BotBrain {
     if (this.isPausing()) {
       return HOLD;
     }
-    // От своей вернувшейся пули уходят все уровни: её видно заранее, стоять под ней — глупость, а не слабость.
+    // От своей вернувшейся пули уходит любой уровень, кроме беспечного; от чужой — только режим dodge.
     const threat = nearestThreat(me, view.bullets);
-    if (threat !== null && (threat.bullet.isMine || this.shouldDodge(threat.bullet.id))) {
-      return sidestep(me, threat.bullet.vx, threat.bullet.vy, this.offsetSide(threat));
+    if (threat !== null) {
+      const chance = threat.bullet.isMine ? 1 - this.profile.carelessness : this.profile.dodgeChance;
+      if (this.shouldDodge(threat.bullet.id, chance)) {
+        return sidestep(me, threat.bullet.vx, threat.bullet.vy, this.offsetSide(threat));
+      }
     }
     if (this.profile.hasReadyPose && this.isEnemyAboutToFire(view)) {
       const side = view.tick % READY_POSE_PERIOD_TICKS < READY_POSE_PERIOD_TICKS / 2 ? 1 : -1;
@@ -384,7 +391,7 @@ export class HunterBrain implements BotBrain {
   }
 
   // Решение по каждой пуле принимается один раз: иначе монетка бросалась бы каждый тик и уход был бы почти всегда.
-  private shouldDodge(bulletId: number): boolean {
+  private shouldDodge(bulletId: number, chance: number): boolean {
     const isKnownDodge = this.dodgeDecisions.get(bulletId);
     if (isKnownDodge !== undefined) {
       return isKnownDodge;
@@ -392,7 +399,7 @@ export class HunterBrain implements BotBrain {
     if (this.dodgeDecisions.size >= DODGE_MEMORY) {
       this.dodgeDecisions.clear();
     }
-    const shouldDodge = this.random() < this.profile.dodgeChance;
+    const shouldDodge = this.random() < chance;
     this.dodgeDecisions.set(bulletId, shouldDodge);
     return shouldDodge;
   }

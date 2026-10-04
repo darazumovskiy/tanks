@@ -28,6 +28,8 @@ export interface BotProfile {
   pauseEverySec: number | null;
   // Шаг вбок, когда противник наведён и его перезарядка на исходе.
   hasReadyPose: boolean;
+  // Вероятность на выстрел не проверить, вернётся ли пуля рикошетом, и не уйти от своей вернувшейся пули.
+  carelessness: number;
 }
 
 export type LadderLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -50,6 +52,7 @@ const HUNTER_PROFILE: BotProfile = {
   throttleCap: 1,
   pauseEverySec: null,
   hasReadyPose: false,
+  carelessness: 0,
 };
 
 export const PROFILES: Readonly<Record<LadderLevel, BotProfile>> = {
@@ -67,6 +70,7 @@ export const PROFILES: Readonly<Record<LadderLevel, BotProfile>> = {
     throttleCap: 0.6,
     pauseEverySec: 4,
     hasReadyPose: false,
+    carelessness: 0.7,
   },
   2: {
     stats: SLOW_GUN,
@@ -82,6 +86,7 @@ export const PROFILES: Readonly<Record<LadderLevel, BotProfile>> = {
     throttleCap: 0.7,
     pauseEverySec: 6,
     hasReadyPose: false,
+    carelessness: 0.5,
   },
   3: {
     stats: SLOW_GUN,
@@ -97,6 +102,7 @@ export const PROFILES: Readonly<Record<LadderLevel, BotProfile>> = {
     throttleCap: 0.85,
     pauseEverySec: null,
     hasReadyPose: false,
+    carelessness: 0.3,
   },
   4: {
     stats: HUNTER,
@@ -112,6 +118,7 @@ export const PROFILES: Readonly<Record<LadderLevel, BotProfile>> = {
     throttleCap: 1,
     pauseEverySec: null,
     hasReadyPose: false,
+    carelessness: 0,
   },
   5: {
     stats: HUNTER,
@@ -127,6 +134,7 @@ export const PROFILES: Readonly<Record<LadderLevel, BotProfile>> = {
     throttleCap: 1,
     pauseEverySec: null,
     hasReadyPose: false,
+    carelessness: 0,
   },
   6: {
     stats: HUNTER,
@@ -142,6 +150,7 @@ export const PROFILES: Readonly<Record<LadderLevel, BotProfile>> = {
     throttleCap: 1,
     pauseEverySec: null,
     hasReadyPose: false,
+    carelessness: 0,
   },
   7: {
     stats: HUNTER,
@@ -157,6 +166,7 @@ export const PROFILES: Readonly<Record<LadderLevel, BotProfile>> = {
     throttleCap: 1,
     pauseEverySec: null,
     hasReadyPose: false,
+    carelessness: 0,
   },
   8: HUNTER_PROFILE,
   9: { ...HUNTER_PROFILE, stats: ACE, fireWindowRad: 0.05, hasReadyPose: true },
