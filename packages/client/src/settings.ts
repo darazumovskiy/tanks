@@ -55,13 +55,13 @@ export interface NumericSettingField {
   requiresFlag?: BooleanSettingKey;
 }
 
-// Умолчания — настройки Димы из боевых игр 2026-10-04 (журнал 4SFJ): стик 54 px, разворот 0,6, предохранитель включён,
+// Умолчания — настройки Димы из боевых игр 2026-10-04 (журнал 4SFJ): стик 54 px, разворот 0,8, предохранитель включён,
 // прицел «Точки», обзор 85 %, упреждение камеры 0,4, догон 410 мс. Одинаковы для телефона и компьютера.
 export function defaultSettings(): Settings {
   return {
     stickRadiusPx: 54,
     deadZone: 0.07,
-    pivotThrottle: 0.6,
+    pivotThrottle: 0.8,
     hasFireRing: false,
     fireRing: 0.89,
     hasRicochetGuard: true,
