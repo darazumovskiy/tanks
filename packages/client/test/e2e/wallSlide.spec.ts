@@ -12,11 +12,13 @@ const SLIDE_HEADING = -Math.PI / 7;
 const TOUCH_TIMEOUT_MS = 10_000;
 const SAMPLES = 5;
 const SAMPLE_GAP_MS = 200;
-const MIN_SLIDE_SPEED = 150;
+// Равновесие при 50 % под ≈ 26° к краю — около 115; без скольжения — около 21.
+const SLIDE_PERCENT = 50;
+const MIN_SLIDE_SPEED = 100;
 const MAX_CORRECTION_PX = 2;
 const MIN_WITNESSED_DISTANCE = 50;
 
-const server = new GameServer({ WALL_SLIDE: '1' });
+const server = new GameServer({ WALL_SLIDE: String(SLIDE_PERCENT) });
 
 test.beforeAll(async () => {
   await server.start();
@@ -35,7 +37,7 @@ function isTouchingTopEdge(state: DebugState): boolean {
   return Math.abs(state.me.y - TANK_RADIUS) < 1;
 }
 
-test('сервер с WALL_SLIDE=1: танк под углом к краю скользит без залипания, предсказание согласно с сервером', async ({
+test('сервер с WALL_SLIDE=50: танк под углом к краю скользит без залипания, предсказание согласно с сервером', async ({
   browser,
 }) => {
   const code = roomCode();
@@ -43,8 +45,8 @@ test('сервер с WALL_SLIDE=1: танк под углом к краю ск�
   const witness = await Player.open(browser, server.baseUrl, code, 'Боб', DEFAULT_STATS);
   const start = await driver.waitForFight();
   await witness.waitForFight();
-  expect(start.rules.hasWallSlide).toBe(true);
-  expect((await witness.waitForBattle()).rules.hasWallSlide).toBe(true);
+  expect(start.rules.wallSlidePercent).toBe(SLIDE_PERCENT);
+  expect((await witness.waitForBattle()).rules.wallSlidePercent).toBe(SLIDE_PERCENT);
 
   await driver.driveTo(LANE_POST, ARRIVE_DISTANCE);
   await driver.driveOnHeading(SLIDE_HEADING);

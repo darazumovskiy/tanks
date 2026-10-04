@@ -1,4 +1,19 @@
+import { WALL_SLIDE_MAX_PERCENT } from '@tanks/shared/engine';
 import { createApp } from './app.js';
+
+const DEFAULT_WALL_SLIDE_PERCENT = 50;
+
+function wallSlidePercentFromEnv(raw: string | undefined): number {
+  if (raw === undefined) {
+    return DEFAULT_WALL_SLIDE_PERCENT;
+  }
+  const percent = Number(raw);
+  const isValid = Number.isInteger(percent) && percent >= 0 && percent <= WALL_SLIDE_MAX_PERCENT;
+  if (!isValid) {
+    throw new Error(`WALL_SLIDE должен быть целым 0–${String(WALL_SLIDE_MAX_PERCENT)}, получено «${raw}»`);
+  }
+  return percent;
+}
 
 const port = Number(process.env.PORT ?? 8080);
 // На бою HOST=127.0.0.1: снаружи только Caddy.
@@ -6,12 +21,12 @@ const host = process.env.HOST ?? '0.0.0.0';
 const staticRoot = process.env.STATIC_ROOT;
 const apkPath = process.env.APK_PATH;
 const logDir = process.env.LOG_DIR;
-const hasWallSlide = process.env.WALL_SLIDE === '1';
+const wallSlidePercent = wallSlidePercentFromEnv(process.env.WALL_SLIDE);
 const app = createApp({
   ...(staticRoot === undefined ? {} : { staticRoot }),
   ...(apkPath === undefined ? {} : { apkPath }),
   ...(logDir === undefined ? {} : { logDir }),
-  rules: { hasWallSlide },
+  rules: { wallSlidePercent },
 });
 
 const boundPort = await app.listen(port, host);

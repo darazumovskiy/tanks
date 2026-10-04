@@ -10,7 +10,7 @@
 | `bots/` | Лестница ботов: бот как `Connection` внутри процесса, мозги уровней, загрузка файла бота Астры — [bot-ladder.md](bot-ladder.md) |
 | `static.ts` | Раздача собранного клиента; `/` и `/d/<код>` отдают `index.html`; путь запроса для всех HTTP-веток |
 | `gameLog.ts` | Журнал игры в файлы `LOG_DIR/<gameId>.log` с буфером и сбросом по таймеру; приёмщик строк клиента `POST /log` — [game-log.md](game-log.md) |
-| `main.ts` | Запуск: `PORT`, `STATIC_ROOT`, `APK_PATH`, `LOG_DIR`, `WALL_SLIDE` (`1` — скольжение вдоль стен для всех комнат, [round-rules.md](round-rules.md)) |
+| `main.ts` | Запуск: `PORT`, `STATIC_ROOT`, `APK_PATH`, `LOG_DIR`, `WALL_SLIDE` (процент скольжения вдоль стен 0–100 для всех комнат, без переменной — 50, [round-rules.md](round-rules.md)) |
 
 ## Комната
 
@@ -45,7 +45,7 @@
 | Битый кадр WebSocket (без маски) | сервер закрывает соединение, `/healthz` живой |
 | `createApp()` без параметров, `close()` без `listen()` | работает с умолчаниями, закрывается без ошибки |
 | Два игрока входят | стороны 0 и 1, `RoomState`, `RoundStart` с правилами по умолчанию, одна комната |
-| `createApp({ rules: { hasWallSlide: true } })` | `RoundStart.rules` с правилом, в журнале `game start … rules=1` |
+| `createApp({ rules: { wallSlidePercent: 50 } })` | `RoundStart.rules.wallSlidePercent = 50`, в журнале `game start … rules=50` |
 | Повторный `Join` из комнаты | игнорируется: ни ошибки, ни второго `Welcome` |
 | Третий в комнату, чужая версия протокола, неверный код, мусор, серверное сообщение от клиента | `Error` с кодом и закрытие |
 | Пустой ник, неверные характеристики | «Игрок», 3/3/2/2 |

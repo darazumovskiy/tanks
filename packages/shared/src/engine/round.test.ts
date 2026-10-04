@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { ACCEL, DT, TANK_RADIUS, WALL_SLIDE_PENALTY } from './constants.js';
+import { ACCEL, DT, TANK_RADIUS, WALL_HIT_SPEED_FACTOR, WALL_SLIDE_MAX_PERCENT } from './constants.js';
 import { createRound, IDLE_ACTION, stepRound, type Round, type RoundEvent, type RoundRules } from './round.js';
 
 const POLYGON = 0;
 const LABYRINTH = 1;
 const STATS = { armor: 3, engine: 3, gun: 2, reload: 2 };
+const MAX_SPEED = 176;
 const FULL_THROTTLE = { ...IDLE_ACTION, throttle: 1 };
-const SLIDE: RoundRules = { hasWallSlide: true };
-const NO_SLIDE: RoundRules = { hasWallSlide: false };
+const NO_SLIDE: RoundRules = { wallSlidePercent: 0 };
+const HALF_SLIDE: RoundRules = { wallSlidePercent: 50 };
+const FULL_SLIDE: RoundRules = { wallSlidePercent: WALL_SLIDE_MAX_PERCENT };
 const DEG_45 = Math.PI / 4;
 const DEG_30 = Math.PI / 6;
 const TOP_EDGE_Y = TANK_RADIUS;
@@ -75,62 +77,94 @@ describe('правила раунда', () => {
       { name: 'A', stats: STATS },
       { name: 'B', stats: STATS },
     ]);
-    expect(round.rules).toEqual({ hasWallSlide: false });
+    expect(round.rules).toEqual({ wallSlidePercent: 0 });
   });
 
   it('правила копируются в раунд', () => {
-    const rules: RoundRules = { hasWallSlide: true };
+    const rules: RoundRules = { wallSlidePercent: 50 };
     const round = roundWith(POLYGON, rules, { x: 800, y: 450, heading: 0 });
-    rules.hasWallSlide = false;
-    expect(round.rules.hasWallSlide).toBe(true);
+    rules.wallSlidePercent = 0;
+    expect(round.rules.wallSlidePercent).toBe(50);
   });
 });
 
+// Множитель скорости за тик касания — та же формула, что в движке, для проверки выбора контакта.
+function contactFactor(rules: RoundRules, facing: number): number {
+  const slide = rules.wallSlidePercent / WALL_SLIDE_MAX_PERCENT;
+  const headOn = 1 - slide + slide * facing ** 3;
+  return 1 - (1 - WALL_HIT_SPEED_FACTOR) * (1 - slide) * headOn;
+}
+
 describe('скольжение вдоль стен', () => {
-  it('45° в верхний край: без правила танк залипает, с правилом едет вдоль края без дроби ударов', () => {
+  it('45° в верхний край: при 0 % танк залипает, при 50 % едет вдоль края без дроби ударов, при 100 % — на полной', () => {
     const pose: Pose = { x: 400, y: 80, heading: -DEG_45 };
     const sticky = roundWith(POLYGON, NO_SLIDE, pose);
-    const sliding = roundWith(POLYGON, SLIDE, pose);
+    const half = roundWith(POLYGON, HALF_SLIDE, pose);
+    const free = roundWith(POLYGON, FULL_SLIDE, pose);
     drive(sticky, 60);
-    const lateBumps = bumpsAfterSettling(sliding, 60, 10);
+    const halfLateBumps = bumpsAfterSettling(half, 60, 10);
+    const freeBumps = bumps(drive(free, 60));
 
-    expect(sticky.tanks[0].y).toBe(TOP_EDGE_Y);
-    expect(sliding.tanks[0].y).toBe(TOP_EDGE_Y);
+    for (const round of [sticky, half, free]) {
+      expect(round.tanks[0].y).toBe(TOP_EDGE_Y);
+    }
     expect(sticky.tanks[0].speed).toBeLessThanOrEqual(40);
-    expect(sliding.tanks[0].speed).toBeGreaterThanOrEqual(120);
-    expect(sliding.tanks[0].x).toBeGreaterThan(sticky.tanks[0].x + 50);
-    expect(lateBumps).toBe(0);
+    expect(half.tanks[0].speed).toBeGreaterThanOrEqual(80);
+    expect(half.tanks[0].speed).toBeLessThanOrEqual(100);
+    expect(free.tanks[0].speed).toBe(MAX_SPEED);
+    expect(half.tanks[0].x).toBeGreaterThan(sticky.tanks[0].x + 50);
+    expect(free.tanks[0].x).toBeGreaterThan(half.tanks[0].x + 50);
+    expect(halfLateBumps).toBe(0);
+    expect(freeBumps).toBe(0);
   });
 
-  it('лоб в левый край поля: удар слышен в обоих режимах, с правилом — не больше четырёх', () => {
-    const pose: Pose = { x: 120, y: 450, heading: Math.PI };
+  it('равновесная скорость у края растёт с процентом скольжения', () => {
+    const pose: Pose = { x: 400, y: 80, heading: -DEG_45 };
+    const speeds = [0, 25, 50, 75, 100].map((wallSlidePercent) => {
+      const round = roundWith(POLYGON, { wallSlidePercent }, pose);
+      drive(round, 60);
+      return round.tanks[0].speed;
+    });
+    for (let i = 1; i < speeds.length; i++) {
+      expect(speeds[i]).toBeGreaterThan(speeds[i - 1] ?? NaN);
+    }
+  });
+
+  it('лоб в левый край поля: при 0 % и 50 % удар слышен, при 50 % — не больше четырёх; при 100 % трения нет', () => {
+    const pose: Pose = { x: 120, y: 450, heading: Math.PI, speed: MAX_SPEED };
     const sticky = roundWith(POLYGON, NO_SLIDE, pose);
-    const sliding = roundWith(POLYGON, SLIDE, pose);
+    const half = roundWith(POLYGON, HALF_SLIDE, pose);
+    const free = roundWith(POLYGON, FULL_SLIDE, pose);
     const stickyBumps = bumps(drive(sticky, 60));
-    const slidingBumps = bumps(drive(sliding, 60));
+    const halfBumps = bumps(drive(half, 60));
+    const freeBumps = bumps(drive(free, 60));
 
-    expect(sticky.tanks[0].x).toBe(TANK_RADIUS);
-    expect(sliding.tanks[0].x).toBe(TANK_RADIUS);
+    for (const round of [sticky, half, free]) {
+      expect(round.tanks[0].x).toBe(TANK_RADIUS);
+    }
     expect(stickyBumps).toBeGreaterThan(0);
-    expect(slidingBumps).toBeGreaterThan(0);
-    expect(slidingBumps).toBeLessThanOrEqual(4);
+    expect(halfBumps).toBeGreaterThan(0);
+    expect(halfBumps).toBeLessThanOrEqual(4);
+    expect(half.tanks[0].speed).toBeLessThan(sticky.tanks[0].speed * 3);
+    expect(freeBumps).toBe(0);
+    expect(free.tanks[0].speed).toBe(MAX_SPEED);
   });
 
-  it('30° к стене карты: скорость держится, танк остаётся у стены', () => {
+  it('30° к стене карты при 50 %: скорость держится, танк остаётся у стены', () => {
     // Курс вниз-вправо под 30° к вертикальной грани, старт на полной скорости чуть левее стены.
     const heading = Math.PI / 2 - (DEG_30 - 0.02);
-    const round = roundWith(LABYRINTH, SLIDE, { x: 200, y: 300, heading, speed: 176 });
+    const round = roundWith(LABYRINTH, HALF_SLIDE, { x: 200, y: 300, heading, speed: MAX_SPEED });
     drive(round, 45);
     expect(round.tanks[0].x).toBeCloseTo(LABYRINTH_WALL_LEFT_X, 6);
-    expect(round.tanks[0].speed).toBeGreaterThanOrEqual(150);
+    expect(round.tanks[0].speed).toBeGreaterThanOrEqual(100);
   });
 
-  it('30° к верхнему краю две секунды: ни одного удара', () => {
-    const round = roundWith(POLYGON, SLIDE, { x: 200, y: 60, heading: -DEG_30, speed: 176 });
+  it('30° к верхнему краю две секунды при 50 %: ни одного удара', () => {
+    const round = roundWith(POLYGON, HALF_SLIDE, { x: 200, y: 60, heading: -DEG_30, speed: MAX_SPEED });
     const events = drive(round, 60);
     expect(round.tanks[0].y).toBe(TOP_EDGE_Y);
     expect(bumps(events)).toBe(0);
-    expect(round.tanks[0].speed).toBeGreaterThanOrEqual(150);
+    expect(round.tanks[0].speed).toBeGreaterThanOrEqual(100);
   });
 
   it('два контакта за тик — штраф по самому лобовому', () => {
@@ -138,7 +172,7 @@ describe('скольжение вдоль стен', () => {
     const lean = 0.2;
     const heading = -Math.PI / 2 + lean;
     const speed = 100;
-    const round = roundWith(LABYRINTH, SLIDE, { x: LABYRINTH_TOP_WALL_LEFT_X, y: TOP_EDGE_Y, heading, speed });
+    const round = roundWith(LABYRINTH, HALF_SLIDE, { x: LABYRINTH_TOP_WALL_LEFT_X, y: TOP_EDGE_Y, heading, speed });
     stepRound(round, [IDLE_ACTION, IDLE_ACTION]);
 
     const coasting = speed - ACCEL * DT;
@@ -146,7 +180,7 @@ describe('скольжение вдоль стен', () => {
     const wallFacing = Math.sin(lean);
     expect(round.tanks[0].x).toBeCloseTo(LABYRINTH_TOP_WALL_LEFT_X, 6);
     expect(round.tanks[0].y).toBe(TOP_EDGE_Y);
-    expect(round.tanks[0].speed).toBeCloseTo(coasting * (1 - WALL_SLIDE_PENALTY * edgeFacing ** 3), 9);
-    expect(round.tanks[0].speed).not.toBeCloseTo(coasting * (1 - WALL_SLIDE_PENALTY * wallFacing ** 3), 1);
+    expect(round.tanks[0].speed).toBeCloseTo(coasting * contactFactor(HALF_SLIDE, edgeFacing), 9);
+    expect(round.tanks[0].speed).not.toBeCloseTo(coasting * contactFactor(HALF_SLIDE, wallFacing), 1);
   });
 });

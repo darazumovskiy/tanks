@@ -12,7 +12,7 @@ const START_TIMEOUT_MS = 10_000;
 const PORT_LINE = /tanks server on \S*:(\d+)/;
 
 // Собранный игровой сервер как отдельный процесс — тот же бинарник, что едет на боевую машину.
-// extraEnv — переменные окружения поверх обязательных (например, серверный тумблер `WALL_SLIDE`).
+// extraEnv — переменные окружения поверх обязательных (например, серверная ручка `WALL_SLIDE`).
 export class GameServer {
   private child: ChildProcess | null = null;
   private port = 0;

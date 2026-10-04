@@ -1,6 +1,6 @@
 import type { Action, EndReason, RoundRules, Side, Stats } from '../engine/index.js';
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export const MessageType = {
   Join: 1,
@@ -58,11 +58,6 @@ export interface RoundTankInfo {
   nickname: string;
   stats: Stats;
 }
-
-// Биты байта rules в RoundStart.
-export const RuleFlag = {
-  WallSlide: 1,
-} as const;
 
 // gameId — идентификатор дуэли для журнала; один на все раунды, пока оба игрока в комнате.
 // rules — правила движка этого раунда: клиент предсказывает по ним же, иначе разойдётся с сервером.

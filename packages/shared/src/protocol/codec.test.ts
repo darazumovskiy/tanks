@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_STATS } from '../engine/index.js';
-import { decode, encode, quantizeAction, rulesFromFlags, rulesToFlags } from './codec.js';
+import { decode, encode, quantizeAction, rulesFromByte, rulesToByte } from './codec.js';
 import {
   ErrorCode,
   MESSAGE_TYPE_NAMES,
   MessageType,
-  RuleFlag,
   type Message,
   type RoundStartMessage,
   type SnapshotMessage,
@@ -47,7 +46,7 @@ const roundStart: RoundStartMessage = {
   mapIndex: 3,
   countdownTicks: 90,
   score: [3, 4],
-  rules: { hasWallSlide: false },
+  rules: { wallSlidePercent: 0 },
   tanks: [
     { nickname: 'A', stats: { armor: 3, engine: 3, gun: 2, reload: 2 } },
     { nickname: 'B', stats: { armor: 5, engine: 5, gun: 0, reload: 0 } },
@@ -73,7 +72,8 @@ const samples: Message[] = [
     ],
   },
   roundStart,
-  { ...roundStart, rules: { hasWallSlide: true } },
+  { ...roundStart, rules: { wallSlidePercent: 50 } },
+  { ...roundStart, rules: { wallSlidePercent: 100 } },
   snapshot,
   { type: MessageType.Pong, clientTime: 12.5, serverTick: 999 },
   { type: MessageType.Error, code: ErrorCode.RoomFull, text: 'комната занята' },
@@ -107,12 +107,12 @@ describe('кодек протокола', () => {
     },
   );
 
-  it('правила раунда — бит 0 байта флагов, чужие биты не читаются', () => {
-    expect(rulesToFlags({ hasWallSlide: false })).toBe(0);
-    expect(rulesToFlags({ hasWallSlide: true })).toBe(RuleFlag.WallSlide);
-    expect(rulesFromFlags(0)).toEqual({ hasWallSlide: false });
-    expect(rulesFromFlags(RuleFlag.WallSlide)).toEqual({ hasWallSlide: true });
-    expect(rulesFromFlags(0xfe)).toEqual({ hasWallSlide: false });
+  it('правила раунда — байт процента скольжения, лишнее срезается до 100', () => {
+    expect(rulesToByte({ wallSlidePercent: 0 })).toBe(0);
+    expect(rulesToByte({ wallSlidePercent: 50 })).toBe(50);
+    expect(rulesFromByte(0)).toEqual({ wallSlidePercent: 0 });
+    expect(rulesFromByte(100)).toEqual({ wallSlidePercent: 100 });
+    expect(rulesFromByte(0xfe)).toEqual({ wallSlidePercent: 100 });
   });
 
   it('квантует оси в 1/127 и сохраняет знак', () => {

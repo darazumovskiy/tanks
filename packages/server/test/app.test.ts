@@ -216,7 +216,7 @@ describe('вход в комнату', () => {
     expect(start.tanks[1].nickname).toBe('Боб');
     expect(start.score).toEqual([0, 0]);
     expect(start.countdownTicks).toBe(FAST_ROOM.countdownTicks);
-    expect(start.rules).toEqual({ hasWallSlide: false });
+    expect(start.rules).toEqual({ wallSlidePercent: 0 });
     expect(app.stats().rooms).toBe(1);
   });
 
@@ -453,13 +453,13 @@ describe('журнал игры', () => {
 
   it('правила процесса уходят в RoundStart и в строку game start', async () => {
     await app.close();
-    app = createApp({ logDir, rules: { hasWallSlide: true }, room: FAST_ROOM, tickMs: TICK_MS });
+    app = createApp({ logDir, rules: { wallSlidePercent: 50 }, room: FAST_ROOM, tickMs: TICK_MS });
     port = await app.listen(0, '127.0.0.1');
     const [a] = await joinedPair('rules');
-    expect(lastRoundStart.rules).toEqual({ hasWallSlide: true });
+    expect(lastRoundStart.rules).toEqual({ wallSlidePercent: 50 });
     await snapshotAfterCountdown(a);
     await app.close();
-    expect(logLines(lastRoundStart.gameId).join('\n')).toContain('game start room=rules p0=Алиса p1=Боб rules=1');
+    expect(logLines(lastRoundStart.gameId).join('\n')).toContain('game start room=rules p0=Алиса p1=Боб rules=50');
   });
 
   it('отвергает недопустимый ключ или источник, слишком большое тело и не-POST', async () => {

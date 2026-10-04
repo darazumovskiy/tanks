@@ -19,7 +19,7 @@ export interface DebugState {
   gameId: string;
   roundIndex: number;
   score: [number, number];
-  rules: { hasWallSlide: boolean };
+  rules: { wallSlidePercent: number };
   nicknames: [string, string];
   isFighting: boolean;
   isAutoFiring: boolean;

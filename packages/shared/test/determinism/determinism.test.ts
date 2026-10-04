@@ -118,8 +118,8 @@ describe('скольжение вдоль стен детерминирован�
     if (scenario === undefined || fixture === undefined) {
       return;
     }
-    const first = runDigests(scenario, { hasWallSlide: true });
-    const second = runDigests(scenario, { hasWallSlide: true });
+    const first = runDigests(scenario, { wallSlidePercent: 50 });
+    const second = runDigests(scenario, { wallSlidePercent: 50 });
     expect(second).toEqual(first);
     expect(first.join('')).not.toBe(fixture.digests);
   });

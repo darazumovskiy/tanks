@@ -13,7 +13,7 @@ import {
   WALL_BUMP_MIN_DROP,
   WALL_BUMP_MIN_SPEED,
   WALL_HIT_SPEED_FACTOR,
-  WALL_SLIDE_PENALTY,
+  WALL_SLIDE_MAX_PERCENT,
   ZONE,
 } from './constants.js';
 import { boundsHit, circleRect, clamp, normalizeAngle } from './geometry.js';
@@ -87,12 +87,13 @@ export interface Zone {
 
 export type EndReason = 'kill' | 'time';
 
-// Включаемые правила движка; одинаковы на сервере, у бота и в предсказании клиента.
+// Настраиваемые правила движка; одинаковы на сервере, у бота и в предсказании клиента.
+// wallSlidePercent — скольжение вдоль стен, целое 0–100: 0 — оригинал tank-arena, 100 — стены без трения.
 export interface RoundRules {
-  hasWallSlide: boolean;
+  wallSlidePercent: number;
 }
 
-export const DEFAULT_RULES: Readonly<RoundRules> = { hasWallSlide: false };
+export const DEFAULT_RULES: Readonly<RoundRules> = { wallSlidePercent: 0 };
 
 export interface Round {
   tick: number;
@@ -213,7 +214,7 @@ export function createRound(
     time: 0,
     mapIndex: mapIndex % MAPS.length,
     map,
-    rules: { hasWallSlide: rules.hasWallSlide },
+    rules: { wallSlidePercent: rules.wallSlidePercent },
     nextBulletId: 1,
     tanks: [makeTank(setups[0], 0), makeTank(setups[1], 1)],
     bullets: [],
@@ -306,17 +307,21 @@ function resolveTankWalls(round: Round, tank: Tank, events: RoundEvent[]): void 
   if (facing < 0) {
     return;
   }
-  if (!round.rules.hasWallSlide) {
+  const slide = round.rules.wallSlidePercent / WALL_SLIDE_MAX_PERCENT;
+  if (slide === 0) {
     if (Math.abs(tank.speed) > WALL_BUMP_MIN_SPEED) {
       events.push({ type: 'bump', side: tank.side, x: tank.x, y: tank.y });
     }
     tank.speed *= WALL_HIT_SPEED_FACTOR;
     return;
   }
+  // headOn — насколько касание считается лобовым: при малом скольжении любое касание тормозит как лоб,
+  // с ростом скольжения тормозит только настоящий лоб (куб косинуса угла встречи).
   // Звук удара — по потере скорости за тик: в установившемся скольжении касание отнимает ровно разгон тика,
   // меньше порога, и под любым углом молчит.
+  const headOn = 1 - slide + slide * facing ** 3;
   const speedBefore = Math.abs(tank.speed);
-  tank.speed *= 1 - WALL_SLIDE_PENALTY * facing ** 3;
+  tank.speed *= 1 - (1 - WALL_HIT_SPEED_FACTOR) * (1 - slide) * headOn;
   if (speedBefore - Math.abs(tank.speed) > WALL_BUMP_MIN_DROP) {
     events.push({ type: 'bump', side: tank.side, x: tank.x, y: tank.y });
   }

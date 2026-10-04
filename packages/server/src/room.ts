@@ -16,7 +16,7 @@ import {
   encode,
   gameTimecode,
   MessageType,
-  rulesToFlags,
+  rulesToByte,
   type RoomStateMessage,
   type RoundStartMessage,
   type ServerMessage,
@@ -316,7 +316,7 @@ export class Room {
     };
     this.duel = duel;
     this.writeLog(
-      `game start room=${this.code} p0=${a.nickname} p1=${b.nickname} rules=${String(rulesToFlags(this.rules))}`,
+      `game start room=${this.code} p0=${a.nickname} p1=${b.nickname} rules=${String(rulesToByte(this.rules))}`,
     );
     this.startRound(duel);
   }
@@ -341,7 +341,7 @@ export class Room {
       mapIndex: plan.mapIndex,
       countdownTicks: this.options.countdownTicks,
       score: [this.score[0], this.score[1]],
-      rules: { hasWallSlide: this.rules.hasWallSlide },
+      rules: { wallSlidePercent: this.rules.wallSlidePercent },
       tanks: [
         { nickname: a.nickname, stats: a.stats },
         { nickname: b.nickname, stats: b.stats },

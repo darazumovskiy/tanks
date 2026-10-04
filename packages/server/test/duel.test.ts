@@ -36,7 +36,9 @@ const HUNTER: Stats = { armor: 0, engine: 3, gun: 4, reload: 3 };
 const SLIDE_HEADING = -Math.PI / 7;
 const SLIDE_HEADING_TOLERANCE = 0.05;
 const SLIDE_TICKS = 30;
-const SLIDE_MIN_SPEED = 150;
+// Равновесие при 50 % под ≈ 26° к краю — около 115; без скольжения — около 21.
+const SLIDE_PERCENT = 50;
+const SLIDE_MIN_SPEED = 100;
 
 let app: App;
 let port: number;
@@ -323,13 +325,18 @@ describe('полный раунд', () => {
 describe('скольжение вдоль стен', () => {
   beforeEach(async () => {
     await app.close();
-    app = createApp({ room: FAST_ROOM, tickMs: 1, random: seededRandom(42), rules: { hasWallSlide: true } });
+    app = createApp({
+      room: FAST_ROOM,
+      tickMs: 1,
+      random: seededRandom(42),
+      rules: { wallSlidePercent: SLIDE_PERCENT },
+    });
     port = await app.listen(0, '127.0.0.1');
   });
 
   it('танк под острым углом к краю поля держит скорость и не гремит ударами', async () => {
     const pair = await connectPair('slide', DEFAULT_STATS, DEFAULT_STATS);
-    expect(firstRoundStart.rules).toEqual({ hasWallSlide: true });
+    expect(firstRoundStart.rules).toEqual({ wallSlidePercent: SLIDE_PERCENT });
     const lanePost = { x: 140, y: 100 };
     let isPosted = false;
     let touchTick: number | null = null;
