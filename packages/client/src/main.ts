@@ -211,15 +211,15 @@ async function showAndroidDownload(): Promise<void> {
 }
 
 // Кнопка авто-огня — только на устройстве с касанием; реагирует на само касание, как шестерёнка, чтобы работать
-// вторым пальцем при зажатом стике.
-function bindAutoFire(button: HTMLButtonElement, game: Game, hasTouch: boolean): void {
+// вторым пальцем при зажатом стике. Подсветку кнопка берёт из игры: та же сбрасывает авто-огонь на старте раунда.
+function bindAutoFire(button: HTMLButtonElement, hasTouch: boolean): { reflect: (isOn: boolean) => void } {
   button.hidden = !hasTouch;
-  button.addEventListener('pointerdown', (event) => {
-    event.preventDefault();
-    const isOn = game.toggleAutoFire();
-    button.classList.toggle(AUTOFIRE_ACTIVE_CLASS, isOn);
-    button.setAttribute('aria-pressed', String(isOn));
-  });
+  return {
+    reflect: (isOn) => {
+      button.classList.toggle(AUTOFIRE_ACTIVE_CLASS, isOn);
+      button.setAttribute('aria-pressed', String(isOn));
+    },
+  };
 }
 
 // Подсказка «поверни телефон» — только на устройствах с касанием и только в портрете.
@@ -240,6 +240,8 @@ function startDuel(roomCode: string): void {
   document.body.classList.add('duel');
   const store = new SettingsStore(localStorage);
   const hasTouch = isTouchDevice();
+  const autoFireButton = byId('autofire', HTMLButtonElement);
+  const autoFire = bindAutoFire(autoFireButton, hasTouch);
   const game = new Game({
     roomCode,
     nickname,
@@ -247,6 +249,7 @@ function startDuel(roomCode: string): void {
     canvas,
     overlay: byId('overlay', HTMLElement),
     roundEnd: byId('round-end', HTMLElement),
+    onAutoFireChange: autoFire.reflect,
     settings: store.value,
     isTouchDevice: hasTouch,
     telemetry,
@@ -260,7 +263,10 @@ function startDuel(roomCode: string): void {
       panel.toggle();
     }
   });
-  bindAutoFire(byId('autofire', HTMLButtonElement), game, hasTouch);
+  autoFireButton.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    game.toggleAutoFire();
+  });
   bindRotateHint(byId('rotate', HTMLElement));
   if (isAndroidBrowser(navigator.userAgent, Capacitor.isNativePlatform())) {
     const apkUrl = new URL(APK_ROUTE, location.href).href;

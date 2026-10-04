@@ -27,6 +27,7 @@ export interface GameOptions {
   canvas: HTMLCanvasElement;
   overlay: HTMLElement;
   roundEnd: HTMLElement;
+  onAutoFireChange: (isOn: boolean) => void;
   settings: Readonly<Settings>;
   isTouchDevice: boolean;
   telemetry: Telemetry;
@@ -121,6 +122,8 @@ export class Game {
           this.roundStartedAt = performance.now();
           this.countdownBeeped = 0;
           hideRoundEnd(this.options.roundEnd);
+          // Забытый авто-огонь на старте раунда расстреливает стену перед собой и ловит рикошеты.
+          this.setAutoFire(false);
           this.prediction = new Prediction(this.side, message.mapIndex, message.tanks, this.lastInputSeq);
           this.effects.reset();
           this.renderer.resetCamera();
@@ -178,9 +181,17 @@ export class Game {
 
   toggleAutoFire(): boolean {
     const isOn = !this.input.isAutoFiring;
-    this.input.setAutoFire(isOn);
-    this.diag.write(`autofire on=${isOn ? '1' : '0'}`);
+    this.setAutoFire(isOn);
     return isOn;
+  }
+
+  private setAutoFire(isOn: boolean): void {
+    if (this.input.isAutoFiring === isOn) {
+      return;
+    }
+    this.input.setAutoFire(isOn);
+    this.options.onAutoFireChange(isOn);
+    this.diag.write(`autofire on=${isOn ? '1' : '0'}`);
   }
 
   private logSnapshot(prediction: Prediction, message: SnapshotMessage, receivedAt: number): void {

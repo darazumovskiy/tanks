@@ -262,6 +262,14 @@ export class Player {
     await this.page.mouse.up();
   }
 
+  // Как с клавиатуры кнопки нет, авто-огонь включается через точку доступа игры.
+  async toggleAutoFire(): Promise<boolean> {
+    return this.page.evaluate(() => {
+      const game = (window as unknown as { tanksGame: { toggleAutoFire(): boolean } }).tanksGame;
+      return game.toggleAutoFire();
+    });
+  }
+
   async tapAutoFire(): Promise<boolean> {
     await this.page.tap(AUTOFIRE_BUTTON);
     return (await this.waitForBattle()).isAutoFiring;

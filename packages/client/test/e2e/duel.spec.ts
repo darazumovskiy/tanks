@@ -100,19 +100,16 @@ test('два раунда подряд: стрелок убивает мишен
   await target.waitForFight();
   await Promise.all([shooter.driveTo(SHOOTER_POST, ARRIVE_DISTANCE), target.driveTo(TARGET_POST, ARRIVE_DISTANCE)]);
 
+  // Стрелок стреляет авто-огнём: к началу второго раунда игра обязана его выключить.
+  expect(await shooter.toggleAutoFire()).toBe(true);
   const deadline = Date.now() + KILL_TIMEOUT_MS;
-  await shooter.setFiring(true);
-  try {
-    while (Date.now() < deadline) {
-      const state = await shooter.waitForBattle();
-      if (!state.enemy.isAlive || state.roundIndex === 1) {
-        break;
-      }
-      await shooter.aimAt(state.enemy);
-      await sleep(200);
+  while (Date.now() < deadline) {
+    const state = await shooter.waitForBattle();
+    if (!state.enemy.isAlive || state.roundIndex === 1) {
+      break;
     }
-  } finally {
-    await shooter.setFiring(false);
+    await shooter.aimAt(state.enemy);
+    await sleep(200);
   }
 
   // Пауза между раундами короче отсчёта: попап надо поймать сразу после гибели мишени.
@@ -122,6 +119,7 @@ test('два раунда подряд: стрелок убивает мишен
 
   const next = await shooter.waitForRound(1, 10_000);
   expect(next.score).toEqual([1, 0]);
+  expect(next.isAutoFiring).toBe(false);
   await target.waitForRound(1, 10_000);
   await expect(shooter.roundEndTitle()).toBeHidden();
   expect(await shooter.driveForward(DRIVE_MS)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
