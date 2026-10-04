@@ -1,4 +1,4 @@
-import { DEFAULT_STATS, DT, type Action, type Side, type Stats } from '@tanks/shared/engine';
+import { DEFAULT_STATS, DT, isShotReturning, type Action, type Side, type Stats } from '@tanks/shared/engine';
 import {
   botLevelOf,
   EventFlag,
@@ -50,6 +50,18 @@ function formatPoint(point: { x: number; y: number }): string {
   return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
 }
 
+function formatFlag(isOn: boolean): string {
+  return isOn ? '1' : '0';
+}
+
+// Анализатор журналов группирует серию по настройкам: одна строка на все флажки.
+function formatFlags(settings: Readonly<Settings>): string {
+  const autoaim = formatFlag(settings.hasAutoAim);
+  const guard = formatFlag(settings.hasRicochetGuard);
+  const quickReverse = formatFlag(settings.hasQuickReverse);
+  return `flags autoaim=${autoaim} guard=${guard} quickreverse=${quickReverse}`;
+}
+
 // Связывает сеть, предсказание, ввод, эффекты, звук и рендер; держит цикл кадров и фиксированный шаг ввода.
 export class Game {
   private readonly effects: Effects;
@@ -79,7 +91,7 @@ export class Game {
   private inputsThisSecond = 0;
   private summaryAt = performance.now();
   private loggedCamera: { mode: string; height: number } | null = null;
-  private loggedAutoAim: { isOn: boolean } | null = null;
+  private loggedFlags: string | null = null;
 
   constructor(private readonly options: GameOptions) {
     this.diag = new DiagLog(options.roomCode);
@@ -88,7 +100,11 @@ export class Game {
     );
     this.effects = new Effects(() => this.names());
     this.renderer = new Renderer(options.canvas, this.effects, options.settings, options.isTouchDevice);
-    this.input = new InputReader(options.canvas, this.renderer, options.settings);
+    this.input = new InputReader(options.canvas, this.renderer, options.settings, {
+      onGuard: (event): void => {
+        this.diag.write(`guard ${event}`);
+      },
+    });
     this.bindAudioUnlock();
     this.net = new NetClient(
       websocketUrl(),
@@ -128,7 +144,7 @@ export class Game {
           hideRoundEnd(this.options.roundEnd);
           // Забытый авто-огонь на старте раунда расстреливает стену перед собой и ловит рикошеты.
           this.setAutoFire(false);
-          this.logAutoAim(true);
+          this.logFlags(true);
           this.prediction = new Prediction(this.side, message.mapIndex, message.tanks, this.lastInputSeq);
           this.effects.reset();
           this.renderer.resetCamera();
@@ -199,14 +215,14 @@ export class Game {
     this.diag.write(`autofire on=${isOn ? '1' : '0'}`);
   }
 
-  // Анализатор журналов группирует серию по настройке: строка на каждом старте раунда и при смене флажка.
-  private logAutoAim(isRoundStart: boolean): void {
-    const isOn = this.options.settings.hasAutoAim;
-    if (!isRoundStart && this.loggedAutoAim?.isOn === isOn) {
+  // Строка на каждом старте раунда и при любой смене флажков.
+  private logFlags(isRoundStart: boolean): void {
+    const line = formatFlags(this.options.settings);
+    if (!isRoundStart && this.loggedFlags === line) {
       return;
     }
-    this.loggedAutoAim = { isOn };
-    this.diag.write(`autoaim on=${isOn ? '1' : '0'}`);
+    this.loggedFlags = line;
+    this.diag.write(line);
   }
 
   // Помощник не добывает информацию: цель — только живой противник в кадре камеры и только во время боя.
@@ -263,6 +279,7 @@ export class Game {
     isFighting: boolean;
     isAutoFiring: boolean;
     isAutoAiming: boolean;
+    isShotGuarded: boolean;
     rttMs: number;
     serverTick: number;
     me: unknown;
@@ -289,6 +306,7 @@ export class Game {
       isFighting: this.prediction.isFighting,
       isAutoFiring: this.input.isAutoFiring,
       isAutoAiming: this.input.isAutoAiming,
+      isShotGuarded: this.input.isShotGuarded,
       rttMs: this.net.rttMs,
       serverTick: this.net.serverTick,
       me: { ...this.prediction.me, tally: undefined, stats: undefined },
@@ -387,12 +405,16 @@ export class Game {
       return;
     }
 
-    this.logAutoAim(false);
+    this.logFlags(false);
     this.accumulator += elapsed;
-    const aimTarget = this.autoAimTarget(prediction, prediction.view(now), side);
+    const frameView = prediction.view(now);
+    const aimTarget = this.autoAimTarget(prediction, frameView, side);
+    const walls = frameView.round.map.walls;
     while (this.accumulator >= TICK_MS) {
       this.accumulator -= TICK_MS;
-      const action = quantizeAction(this.input.read(prediction.me, aimTarget));
+      const me = prediction.me;
+      const isShotRisky = isShotReturning(walls, me, me.turret, me.stats.bulletSpeed);
+      const action = quantizeAction(this.input.read(me, aimTarget, isShotRisky));
       const bulletsBefore = prediction.myBulletCount;
       const seq = prediction.predict(action);
       this.lastInputSeq = seq;
@@ -445,6 +467,7 @@ export class Game {
         isMuted: this.sfx.isMuted,
         sticks: this.input.stickStates,
         isAutoAiming: this.input.isAutoAiming,
+        isShotGuarded: this.input.isShotGuarded,
         frameMs: elapsed,
         frameTimes: this.frameTimes,
       },

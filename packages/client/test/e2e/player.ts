@@ -22,6 +22,7 @@ export interface DebugState {
   isFighting: boolean;
   isAutoFiring: boolean;
   isAutoAiming: boolean;
+  isShotGuarded: boolean;
   me: TankState;
   enemy: Point & { heading: number; isAlive: boolean };
   bullets: number;
@@ -30,6 +31,7 @@ export interface DebugState {
 
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
+const SETTINGS_KEY = 'tanks.settings';
 const AUTOFIRE_BUTTON = '#autofire';
 const CREATE_BOT_BUTTON = '#create-bot';
 const BOT_LEVEL_TOGGLE = '#bot-level-toggle';
@@ -73,7 +75,7 @@ export async function until<T>(read: () => Promise<T | null | undefined>, timeou
 }
 
 // Игрок в настоящем браузере: отдельный контекст (свои cookie и localStorage), управление клавишами и мышью;
-// с `isTouch` — экран телефона с эмуляцией касаний.
+// с `isTouch` — экран телефона с эмуляцией касаний; `settings` — часть `tanks.settings`, записанная до загрузки.
 export class Player {
   private readonly held = new Set<string>();
 
@@ -89,20 +91,21 @@ export class Player {
     roomCode: string,
     name: string,
     stats: string,
-    options: { isTouch?: boolean; userAgent?: string } = {},
+    options: { isTouch?: boolean; userAgent?: string; settings?: Record<string, unknown> } = {},
   ): Promise<Player> {
     const touchOptions = options.isTouch === true ? { hasTouch: true, isMobile: true, viewport: PHONE_VIEWPORT } : {};
     const agentOptions = options.userAgent === undefined ? {} : { userAgent: options.userAgent };
     const context = await browser.newContext({ ...touchOptions, ...agentOptions });
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-    await context.addInitScript(
-      (entries: Record<string, string>) => {
-        for (const [key, value] of Object.entries(entries)) {
-          localStorage.setItem(key, value);
-        }
-      },
-      { [NICKNAME_KEY]: name, [STATS_KEY]: stats },
-    );
+    const entries: Record<string, string> = { [NICKNAME_KEY]: name, [STATS_KEY]: stats };
+    if (options.settings !== undefined) {
+      entries[SETTINGS_KEY] = JSON.stringify(options.settings);
+    }
+    await context.addInitScript((stored: Record<string, string>) => {
+      for (const [key, value] of Object.entries(stored)) {
+        localStorage.setItem(key, value);
+      }
+    }, entries);
     const page = await context.newPage();
     await page.goto(`${baseUrl}/d/${roomCode}`);
     return new Player(context, page, name);

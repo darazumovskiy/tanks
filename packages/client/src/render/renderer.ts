@@ -1,4 +1,4 @@
-import { ARENA, KIT, ROUND_SECONDS, ZONE, type Side } from '@tanks/shared/engine';
+import { ARENA, KIT, MUZZLE_OFFSET, ROUND_SECONDS, ZONE, type Side } from '@tanks/shared/engine';
 import { gameTimecode } from '@tanks/shared/protocol';
 import type { WorldView } from '../prediction.js';
 import type { Settings } from '../settings.js';
@@ -26,6 +26,7 @@ export interface HudInfo {
   isMuted: boolean;
   sticks: readonly StickState[];
   isAutoAiming: boolean;
+  isShotGuarded: boolean;
   frameMs: number;
   frameTimes: readonly number[];
 }
@@ -84,6 +85,14 @@ const AUTO_AIM_LINE_WIDTH = 2.5;
 const AUTO_AIM_ALPHA = 0.9;
 const AUTO_AIM_SPREAD = 0.35;
 
+// Штрих предохранителя поперёк ствола сразу за дулом своего танка: выстрел сдерживается.
+const GUARD_COLOR = '#ff5a6a';
+const GUARD_FADE_MS = 120;
+const GUARD_OFFSET = MUZZLE_OFFSET + 7;
+const GUARD_HALF_LENGTH = 9;
+const GUARD_LINE_WIDTH = 3;
+const GUARD_ALPHA = 0.95;
+
 interface Screen {
   width: number;
   height: number;
@@ -100,6 +109,7 @@ export class Renderer {
   private strategy: CameraStrategy;
   private strategyMode: CameraMode;
   private autoAimGlow = 0;
+  private guardGlow = 0;
 
   // На компьютере поле показывается целиком; на устройстве с касанием камеру ведёт стратегия из настроек.
   // `viewport` — размер холста в CSS-пикселях и плотность; по умолчанию окно браузера (лаборатория задаёт своё).
@@ -269,7 +279,30 @@ export class Renderer {
       }
     }
     this.drawAutoAimBrackets(view, hud);
+    this.drawGuardMark(view, hud);
     this.effects.drawPopups(ctx);
+    ctx.restore();
+  }
+
+  private drawGuardMark(view: WorldView, hud: HudInfo): void {
+    const step = hud.frameMs / GUARD_FADE_MS;
+    this.guardGlow = clamp(this.guardGlow + (hud.isShotGuarded ? step : -step), 0, 1);
+    const me = view.tanks[hud.mySide];
+    if (this.guardGlow <= 0 || !me.isAlive) {
+      return;
+    }
+    const { ctx } = this;
+    const eased = easeOut(this.guardGlow);
+    ctx.save();
+    ctx.translate(me.x, me.y);
+    ctx.rotate(me.turret);
+    ctx.strokeStyle = rgba(GUARD_COLOR, GUARD_ALPHA * eased);
+    ctx.lineWidth = GUARD_LINE_WIDTH;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(GUARD_OFFSET, -GUARD_HALF_LENGTH * eased);
+    ctx.lineTo(GUARD_OFFSET, GUARD_HALF_LENGTH * eased);
+    ctx.stroke();
     ctx.restore();
   }
 

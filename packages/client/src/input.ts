@@ -6,8 +6,17 @@ import { TouchSticks, type StickSettings, type StickState } from './touch.js';
 // После того как игрок отпустил стик башни, автоведение ждёт: осознанный выстрел в стену на рикошет не должен
 // перебиваться доворотом на противника.
 export const AUTO_AIM_RESUME_MS = 500;
+// Предохранитель задерживает опасный выстрел не дольше этого: башня не ушла — тап отменяется.
+export const RICOCHET_GUARD_HOLD_MS = 300;
 
-export type InputSettings = StickSettings & Pick<Settings, 'hasAutoAim'>;
+export type InputSettings = StickSettings & Pick<Settings, 'hasAutoAim' | 'hasRicochetGuard' | 'hasQuickReverse'>;
+
+export type GuardEvent = 'hold' | 'cancel';
+
+export interface InputHooks {
+  now?: () => number;
+  onGuard?: (event: GuardEvent) => void;
+}
 
 export interface Viewport {
   toWorld(clientX: number, clientY: number): { x: number; y: number };
@@ -33,22 +42,31 @@ function isTypingTarget(target: EventTarget | null): boolean {
 // Клавиатура — корпус, мышь — башня и выстрел; активный стик касания замещает свой источник.
 // Авто-огонь — выстрел в каждом тике независимо от остальных источников, пока включён.
 // Башня без ручного источника при включённом автоведении держит переданную цель.
+// Предохранитель сдерживает выстрел, пока он опасен (признак приходит снаружи), и не дольше задержки.
 export class InputReader {
   private readonly keys = new Set<string>();
   private readonly sticks: TouchSticks;
+  private readonly now: () => number;
+  private readonly onGuard: (event: GuardEvent) => void;
   private mouse: { x: number; y: number } | null = null;
   private isMouseDown = false;
   private isReversing = false;
   private isAutoFireOn = false;
   private isAutoAimingNow = false;
   private lastManualAimAt: number | null = null;
+  // Выстрел из защёлки стика, пойманный во время задержки: доживает до безопасного чтения или до таймаута.
+  private hasHeldFire = false;
+  private guardStartedAt: number | null = null;
+  private isShotGuardedNow = false;
 
   constructor(
     target: HTMLElement,
     private readonly viewport: Viewport,
     private readonly settings: Readonly<InputSettings>,
-    private readonly now: () => number = () => performance.now(),
+    hooks: InputHooks = {},
   ) {
+    this.now = hooks.now ?? ((): number => performance.now());
+    this.onGuard = hooks.onGuard ?? ((): void => undefined);
     this.sticks = new TouchSticks(target, settings);
     window.addEventListener('keydown', (event) => {
       if (event.repeat || isTypingTarget(event.target)) {
@@ -98,16 +116,49 @@ export class InputReader {
     return this.isAutoAimingNow;
   }
 
+  get isShotGuarded(): boolean {
+    return this.isShotGuardedNow;
+  }
+
   setAutoFire(isOn: boolean): void {
     this.isAutoFireOn = isOn;
   }
 
-  read(me: SteeredTank, target: AimTarget | null): Action {
+  // `isShotReturning` — расчётный путь снаряда с текущего угла башни вернётся в свой корпус.
+  read(me: SteeredTank, target: AimTarget | null, isShotReturning: boolean): Action {
     const hull = this.readHull(me);
+    const turretTurn = this.readTurretTurn(me, target);
+    const isFiring = this.readFire(isShotReturning);
+    return { throttle: hull.throttle, turn: hull.turn, turretTurn, isFiring };
+  }
+
+  private readFire(isShotReturning: boolean): boolean {
+    const isHoldingFire = this.isMouseDown || this.keys.has('Space') || this.sticks.isFiringByStick;
     const hasPendingFire = this.sticks.takePendingFire();
-    const isFiringByHand = this.isMouseDown || this.keys.has('Space') || this.sticks.isFiringByStick || hasPendingFire;
-    const isFiring = this.isAutoFireOn || isFiringByHand;
-    return { throttle: hull.throttle, turn: hull.turn, turretTurn: this.readTurretTurn(me, target), isFiring };
+    // Защёлка нужна только выстрелу, который к чтению уже отпущен; при зажатом огне она ничего не добавляет.
+    if (hasPendingFire && !isHoldingFire) {
+      this.hasHeldFire = true;
+    }
+    const isWantingFire = this.isAutoFireOn || isHoldingFire || this.hasHeldFire;
+    const isDangerous = this.settings.hasRicochetGuard && isShotReturning;
+    if (!isDangerous || !isWantingFire) {
+      this.guardStartedAt = null;
+      this.isShotGuardedNow = false;
+      this.hasHeldFire = false;
+      return isWantingFire;
+    }
+    const now = this.now();
+    if (this.guardStartedAt === null) {
+      this.guardStartedAt = now;
+      this.onGuard('hold');
+    }
+    const isExpired = now - this.guardStartedAt >= RICOCHET_GUARD_HOLD_MS;
+    if (isExpired && this.hasHeldFire) {
+      this.hasHeldFire = false;
+      this.onGuard('cancel');
+    }
+    this.isShotGuardedNow = this.isAutoFireOn || isHoldingFire || this.hasHeldFire;
+    return false;
   }
 
   private readHull(me: SteeredTank): { throttle: number; turn: number } {
@@ -116,7 +167,7 @@ export class InputReader {
       if (!stick.isActive) {
         return { throttle: 0, turn: 0 };
       }
-      const steering = steerHull(stick, me.heading, me.stats.turnRate, this.isReversing);
+      const steering = steerHull(stick, me.heading, me.stats.turnRate, this.isReversing, this.settings.hasQuickReverse);
       this.isReversing = steering.isReversing;
       return steering;
     }

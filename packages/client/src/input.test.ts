@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { AUTO_AIM_RESUME_MS, InputReader, type InputSettings, type SteeredTank } from './input.js';
+import {
+  AUTO_AIM_RESUME_MS,
+  InputReader,
+  RICOCHET_GUARD_HOLD_MS,
+  type GuardEvent,
+  type InputSettings,
+  type SteeredTank,
+} from './input.js';
 
 const LEFT_X = 200;
 const RIGHT_X = 800;
@@ -30,17 +37,34 @@ describe('InputReader', () => {
   let input: InputReader;
   let settings: InputSettings;
   let time = 0;
+  let guardEvents: GuardEvent[] = [];
 
-  const read = (aimTarget: { x: number; y: number } | null = null): ReturnType<InputReader['read']> =>
-    input.read(me, aimTarget);
+  const read = (
+    aimTarget: { x: number; y: number } | null = null,
+    isShotReturning = false,
+  ): ReturnType<InputReader['read']> => input.read(me, aimTarget, isShotReturning);
 
   beforeEach(() => {
     document.body.innerHTML = '';
     target = document.createElement('div');
     document.body.append(target);
     time = 0;
-    settings = { stickRadiusPx: 64, deadZone: 0.15, hasFireRing: true, fireRing: 0.85, hasAutoAim: false };
-    input = new InputReader(target, { toWorld: (x, y) => ({ x, y }) }, settings, () => time);
+    guardEvents = [];
+    settings = {
+      stickRadiusPx: 64,
+      deadZone: 0.15,
+      hasFireRing: true,
+      fireRing: 0.85,
+      hasAutoAim: false,
+      hasRicochetGuard: false,
+      hasQuickReverse: false,
+    };
+    input = new InputReader(target, { toWorld: (x, y) => ({ x, y }) }, settings, {
+      now: () => time,
+      onGuard: (event) => {
+        guardEvents.push(event);
+      },
+    });
   });
 
   it('без ввода — пустое действие', () => {
@@ -265,9 +289,13 @@ describe('InputReader', () => {
       const clocked = new InputReader(target, { toWorld: (x, y) => ({ x, y }) }, settings);
       target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
       target.dispatchEvent(pointer('pointermove', 2, RIGHT_X, Y - 64));
-      expect(clocked.read(me, FAR_TARGET).turretTurn).toBe(-1);
+      expect(clocked.read(me, FAR_TARGET, false).turretTurn).toBe(-1);
       target.dispatchEvent(pointer('pointerup', 2, RIGHT_X, Y - 64));
-      expect(clocked.read(me, FAR_TARGET).turretTurn).toBe(0);
+      expect(clocked.read(me, FAR_TARGET, false).turretTurn).toBe(0);
+      settings.hasRicochetGuard = true;
+      window.dispatchEvent(key('keydown', 'Space'));
+      expect(clocked.read(me, FAR_TARGET, true).isFiring).toBe(false);
+      expect(clocked.isShotGuarded).toBe(true);
     });
 
     it('мышь — ручной источник: пока есть её позиция, автоведение не включается', () => {
@@ -279,5 +307,128 @@ describe('InputReader', () => {
       expect(read(FAR_TARGET).turretTurn).toBe(0);
       expect(input.isAutoAiming).toBe(false);
     });
+  });
+
+  describe('предохранитель от своего рикошета', () => {
+    const isReturning = true;
+    const isSafe = false;
+
+    beforeEach(() => {
+      settings.hasRicochetGuard = true;
+    });
+
+    it('выключенный флаг — опасный выстрел уходит как раньше', () => {
+      settings.hasRicochetGuard = false;
+      window.dispatchEvent(key('keydown', 'Space'));
+      expect(read(null, isReturning).isFiring).toBe(true);
+      expect(input.isShotGuarded).toBe(false);
+      expect(guardEvents).toEqual([]);
+    });
+
+    it('зажатый пробел при опасности сдерживается', () => {
+      window.dispatchEvent(key('keydown', 'Space'));
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(true);
+      expect(guardEvents).toEqual(['hold']);
+    });
+
+    it('тап при опасности ждёт; башня ушла до таймаута — выстрел уходит один раз', () => {
+      target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
+      target.dispatchEvent(pointer('pointerup', 2, RIGHT_X, Y));
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(true);
+      time = 200;
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(read(null, isSafe).isFiring).toBe(true);
+      expect(input.isShotGuarded).toBe(false);
+      expect(read(null, isSafe).isFiring).toBe(false);
+      expect(guardEvents).toEqual(['hold']);
+    });
+
+    it('тап при опасности дольше таймаута отменяется', () => {
+      target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
+      target.dispatchEvent(pointer('pointerup', 2, RIGHT_X, Y));
+      expect(read(null, isReturning).isFiring).toBe(false);
+      time = RICOCHET_GUARD_HOLD_MS - 1;
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(true);
+      time = RICOCHET_GUARD_HOLD_MS;
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(false);
+      expect(guardEvents).toEqual(['hold', 'cancel']);
+      expect(read(null, isSafe).isFiring).toBe(false);
+    });
+
+    it('зажатая мышь при опасности не стреляет и после таймаута, стреляет сразу после ухода опасности', () => {
+      target.dispatchEvent(pointer('pointerdown', 5, 0, 0, 'mouse'));
+      expect(read(null, isReturning).isFiring).toBe(false);
+      time = RICOCHET_GUARD_HOLD_MS + 500;
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(true);
+      expect(read(null, isSafe).isFiring).toBe(true);
+      expect(input.isShotGuarded).toBe(false);
+      expect(guardEvents).toEqual(['hold']);
+    });
+
+    it('опасность пропала и вернулась — счётчик стартует заново', () => {
+      target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
+      target.dispatchEvent(pointer('pointerup', 2, RIGHT_X, Y));
+      expect(read(null, isReturning).isFiring).toBe(false);
+      time = 200;
+      expect(read(null, isSafe).isFiring).toBe(true);
+      target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
+      target.dispatchEvent(pointer('pointerup', 2, RIGHT_X, Y));
+      time = 250;
+      expect(read(null, isReturning).isFiring).toBe(false);
+      time = 250 + RICOCHET_GUARD_HOLD_MS - 1;
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(true);
+      expect(guardEvents).toEqual(['hold', 'hold']);
+      time = 250 + RICOCHET_GUARD_HOLD_MS;
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(false);
+      expect(guardEvents).toEqual(['hold', 'hold', 'cancel']);
+    });
+
+    it('палец на правой половине при опасности: сдерживается без отмены защёлки, после отпускания выстрела нет', () => {
+      settings.hasFireRing = false;
+      target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
+      target.dispatchEvent(pointer('pointermove', 2, RIGHT_X + 40, Y));
+      expect(read(null, isReturning).isFiring).toBe(false);
+      time = RICOCHET_GUARD_HOLD_MS + 100;
+      target.dispatchEvent(pointer('pointermove', 2, RIGHT_X + 41, Y));
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(true);
+      expect(guardEvents).toEqual(['hold']);
+      target.dispatchEvent(pointer('pointerup', 2, RIGHT_X + 41, Y));
+      expect(read(null, isSafe).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(false);
+    });
+
+    it('авто-огонь под предохранителем', () => {
+      input.setAutoFire(true);
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(true);
+      expect(read(null, isSafe).isFiring).toBe(true);
+      expect(input.isShotGuarded).toBe(false);
+    });
+
+    it('опасно, но стрелять никто не хочет — ничего не сдерживается', () => {
+      expect(read(null, isReturning).isFiring).toBe(false);
+      expect(input.isShotGuarded).toBe(false);
+      expect(guardEvents).toEqual([]);
+    });
+  });
+
+  it('быстрый задний ход: стик под 100° с флагом едет назад, без флага — разворачивается', () => {
+    target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
+    target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 11, Y + 63));
+    expect(read().throttle).toBeCloseTo(0, 6);
+    settings.hasQuickReverse = true;
+    target.dispatchEvent(pointer('pointerup', 1, LEFT_X - 11, Y + 63));
+    read();
+    target.dispatchEvent(pointer('pointerdown', 1, LEFT_X, Y));
+    target.dispatchEvent(pointer('pointermove', 1, LEFT_X - 11, Y + 63));
+    expect(read().throttle).toBeLessThan(0);
   });
 });

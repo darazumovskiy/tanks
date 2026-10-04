@@ -4,6 +4,8 @@ import { SettingsPanel } from './settingsPanel.js';
 
 const DEFAULT_SETTINGS = defaultSettings(true);
 const AUTO_AIM_LABEL = 'Башня сама держит противника';
+const GUARD_LABEL = 'Предохранитель';
+const QUICK_REVERSE_LABEL = 'Быстрый задний ход';
 
 describe('SettingsPanel', () => {
   let root: HTMLElement;
@@ -97,6 +99,16 @@ describe('SettingsPanel', () => {
     expect(checkFor(AUTO_AIM_LABEL).checked).toBe(true);
   });
 
+  const desktopCheckLabels = (): (string | null)[] => {
+    const desktopRoot = document.createElement('aside');
+    document.body.append(desktopRoot);
+    const desktopStore = new SettingsStore(localStorage, defaultSettings(false));
+    new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, false);
+    return Array.from(desktopRoot.querySelectorAll<HTMLLabelElement>('label.settings-check')).map(
+      (row) => row.querySelector('.settings-head span')?.textContent ?? null,
+    );
+  };
+
   it('на компьютере флажок автоведения есть и снят по умолчанию', () => {
     const desktopRoot = document.createElement('aside');
     document.body.append(desktopRoot);
@@ -106,6 +118,26 @@ describe('SettingsPanel', () => {
       .find((row) => row.querySelector('.settings-head span')?.textContent === AUTO_AIM_LABEL)
       ?.querySelector<HTMLInputElement>('input[type=checkbox]');
     expect(checkbox?.checked).toBe(false);
+  });
+
+  it('флажок предохранителя снят по умолчанию, отметка уходит в хранилище', () => {
+    const checkbox = checkFor(GUARD_LABEL);
+    expect(checkbox.checked).toBe(false);
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+    expect(store.value.hasRicochetGuard).toBe(true);
+    expect(localStorage.getItem('tanks.settings')).toContain('"hasRicochetGuard":true');
+  });
+
+  it('флажок быстрого заднего хода есть на телефоне и пишет флаг; на компьютере его нет, предохранитель есть', () => {
+    const checkbox = checkFor(QUICK_REVERSE_LABEL);
+    expect(checkbox.checked).toBe(false);
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+    expect(store.value.hasQuickReverse).toBe(true);
+    const labels = desktopCheckLabels();
+    expect(labels).toContain(GUARD_LABEL);
+    expect(labels).not.toContain(QUICK_REVERSE_LABEL);
   });
 
   it('флажок кольца огня стоит перед ползунком радиуса и показывает его только включённым', () => {

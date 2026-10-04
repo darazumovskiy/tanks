@@ -8,6 +8,8 @@ export interface Settings {
   hasFireRing: boolean;
   fireRing: number;
   hasAutoAim: boolean;
+  hasRicochetGuard: boolean;
+  hasQuickReverse: boolean;
   cameraMode: PhoneCameraMode;
   minViewPercent: number;
   followLookAhead: number;
@@ -18,13 +20,16 @@ export interface Settings {
   showFrameGraph: boolean;
 }
 
-export type BooleanSettingKey = 'hasFireRing' | 'hasAutoAim' | 'showFrameGraph';
+export type BooleanSettingKey =
+  'hasFireRing' | 'hasAutoAim' | 'hasRicochetGuard' | 'hasQuickReverse' | 'showFrameGraph';
 export type NumericSettingKey = Exclude<keyof Settings, BooleanSettingKey | 'cameraMode'>;
 
+// Флажок с `isTouchOnly` показывается только на устройстве с касанием: настройка касается стиков.
 export interface BooleanSettingField {
   key: BooleanSettingKey;
   label: string;
   hint: string;
+  isTouchOnly?: boolean;
 }
 
 // Поле с `modes` — настройка камеры: показывается только на устройстве с касанием и только для перечисленных
@@ -48,6 +53,8 @@ export function defaultSettings(isTouchDevice: boolean): Settings {
     hasFireRing: false,
     fireRing: 0.89,
     hasAutoAim: isTouchDevice,
+    hasRicochetGuard: false,
+    hasQuickReverse: false,
     cameraMode: 'follow',
     minViewPercent: 75,
     followLookAhead: 0.35,
@@ -69,6 +76,17 @@ export const BOOLEAN_FIELDS: readonly BooleanSettingField[] = [
     key: 'hasAutoAim',
     label: 'Башня сама держит противника',
     hint: 'пока не тянешь правый стик, башня смотрит на противника; потянул — рулишь сам',
+  },
+  {
+    key: 'hasRicochetGuard',
+    label: 'Предохранитель',
+    hint: 'не стреляет, если снаряд отскочит в тебя же; доверни башню — выстрелит',
+  },
+  {
+    key: 'hasQuickReverse',
+    label: 'Быстрый задний ход',
+    hint: 'стик за спину — сразу едем назад, а не разворачиваемся',
+    isTouchOnly: true,
   },
   { key: 'showFrameGraph', label: 'График кадров', hint: 'длительность последних кадров внизу слева' },
 ];

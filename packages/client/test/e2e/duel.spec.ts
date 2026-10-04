@@ -44,6 +44,11 @@ const TURRET_DOWN = Math.PI / 2;
 const AUTO_AIM_HOLD_CHECK_MS = 250;
 const AUTO_AIM_HOLD_TOLERANCE = 0.1;
 const MIN_TURRET_CHANGE = 0.1;
+// Точка появления стороны 0 на «Полигоне» — у левого края: башня в край перпендикулярно — снаряд вернётся в танк;
+// по диагонали вверх-вправо снаряд отскакивает от стены (330, 160, 44, 200) в левый край мимо корпуса.
+const EDGE_AIM_OFFSET = { x: 20, y: 0 };
+const DIAGONAL_AIM_OFFSET = { x: 400, y: -300 };
+const GUARD_SHOT_TIMEOUT_MS = 5_000;
 const ANDROID_PACKAGE = 'io.github.darazumovskiy.tanks';
 const ANDROID_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 15; 24129PN74G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
@@ -250,6 +255,44 @@ test('телефон: башня сама держит противника в �
 
   await phone.close();
   await desktop.close();
+});
+
+test('предохранитель: выстрел в край поля перпендикулярно сдерживается, по диагонали — уходит', async ({ browser }) => {
+  const code = roomCode();
+  const shooter = await Player.open(browser, server.baseUrl, code, 'Алиса', DEFAULT_STATS, {
+    settings: { hasRicochetGuard: true },
+  });
+  const witness = await Player.open(browser, server.baseUrl, code, 'Боб', DEFAULT_STATS);
+  const start = await shooter.waitForFight();
+  await witness.waitForFight();
+  expect(start.side).toBe(0);
+  expect(start.isShotGuarded).toBe(false);
+
+  await shooter.aimAt({ x: EDGE_AIM_OFFSET.x, y: start.me.y + EDGE_AIM_OFFSET.y });
+  await shooter.setFiring(true);
+  await sleep(NO_FIRE_CHECK_MS);
+  const guarded = await shooter.waitForBattle();
+  expect(guarded.bullets).toBe(0);
+  expect(guarded.isShotGuarded).toBe(true);
+  expect((await witness.waitForBattle()).bullets).toBe(0);
+
+  const diagonal = { x: start.me.x + DIAGONAL_AIM_OFFSET.x, y: start.me.y + DIAGONAL_AIM_OFFSET.y };
+  await shooter.aimAt(diagonal);
+  await until(
+    async () => {
+      const state = await shooter.state();
+      return state !== null && state.bullets > 0 ? state : null;
+    },
+    GUARD_SHOT_TIMEOUT_MS,
+    'снаряд не вылетел после ухода с опасного направления',
+  );
+  expect((await shooter.waitForTurretAt(diagonal, GUARD_SHOT_TIMEOUT_MS, 'башня ушла с диагонали')).isShotGuarded).toBe(
+    false,
+  );
+  await shooter.setFiring(false);
+
+  await shooter.close();
+  await witness.close();
 });
 
 async function expectEnemyMoves(human: Player, start: DebugState, what: string): Promise<void> {

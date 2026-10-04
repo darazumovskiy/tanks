@@ -155,6 +155,7 @@ export function showCameraLab(root: HTMLElement): void {
       isMuted: true,
       sticks: thumbSticks(screen.width, screen.height, settings),
       isAutoAiming: false,
+      isShotGuarded: false,
       frameMs: SETTLE_MS,
       frameTimes: [],
     };

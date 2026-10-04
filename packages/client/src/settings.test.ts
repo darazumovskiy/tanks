@@ -10,6 +10,13 @@ describe('defaultSettings', () => {
     expect(DESKTOP_DEFAULTS.hasAutoAim).toBe(false);
     expect({ ...PHONE_DEFAULTS, hasAutoAim: false }).toEqual(DESKTOP_DEFAULTS);
   });
+
+  it('предохранитель и быстрый задний ход выключены на обоих устройствах', () => {
+    expect(PHONE_DEFAULTS.hasRicochetGuard).toBe(false);
+    expect(PHONE_DEFAULTS.hasQuickReverse).toBe(false);
+    expect(DESKTOP_DEFAULTS.hasRicochetGuard).toBe(false);
+    expect(DESKTOP_DEFAULTS.hasQuickReverse).toBe(false);
+  });
 });
 
 describe('parseSettings', () => {
@@ -45,6 +52,15 @@ describe('parseSettings', () => {
     expect(parseSettings(legacy, PHONE_DEFAULTS).hasAutoAim).toBe(true);
     expect(parseSettings(legacy, DESKTOP_DEFAULTS).hasAutoAim).toBe(false);
     expect(parseSettings(JSON.stringify({ hasAutoAim: false }), PHONE_DEFAULTS).hasAutoAim).toBe(false);
+  });
+
+  it('флаги предохранителя и быстрого заднего хода: без записи — false, с записью — читаются', () => {
+    const legacy = parseSettings(JSON.stringify({ stickRadiusPx: 60 }), PHONE_DEFAULTS);
+    expect(legacy.hasRicochetGuard).toBe(false);
+    expect(legacy.hasQuickReverse).toBe(false);
+    const enabled = parseSettings(JSON.stringify({ hasRicochetGuard: true, hasQuickReverse: true }), DESKTOP_DEFAULTS);
+    expect(enabled.hasRicochetGuard).toBe(true);
+    expect(enabled.hasQuickReverse).toBe(true);
   });
 });
 

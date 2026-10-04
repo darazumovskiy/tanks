@@ -11,8 +11,9 @@ import {
 const MODE_ACTIVE_CLASS = 'is-active';
 
 // Панель настроек в бою: ползунки меняют хранилище сразу, игра читает его каждый тик — результат виден не выходя
-// из боя. Поля камеры показываются только на устройстве с касанием и только для выбранной стратегии.
-// Флажок, от которого зависит ползунок, стоит прямо перед ним; остальные флажки — после всех ползунков.
+// из боя. Поля камеры и флажки `isTouchOnly` показываются только на устройстве с касанием, поля камеры — только
+// для выбранной стратегии. Флажок, от которого зависит ползунок, стоит прямо перед ним; остальные флажки — после
+// всех ползунков.
 export class SettingsPanel {
   private readonly rows = new Map<
     NumericSettingField['key'],
@@ -25,7 +26,7 @@ export class SettingsPanel {
     private readonly root: HTMLElement,
     toggle: HTMLElement,
     private readonly store: SettingsStore,
-    hasCamera: boolean,
+    isTouchDevice: boolean,
   ) {
     root.innerHTML = '';
     const title = document.createElement('div');
@@ -40,14 +41,15 @@ export class SettingsPanel {
       this.appendFlagBefore(field);
       root.append(this.buildRow(field));
     }
-    if (hasCamera) {
+    if (isTouchDevice) {
       root.append(this.buildModeRow());
       for (const field of cameraFields) {
         root.append(this.buildRow(field));
       }
     }
     for (const field of BOOLEAN_FIELDS) {
-      if (!this.checks.has(field.key)) {
+      const isHidden = field.isTouchOnly === true && !isTouchDevice;
+      if (!isHidden && !this.checks.has(field.key)) {
         root.append(this.buildCheck(field));
       }
     }
