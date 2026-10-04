@@ -67,6 +67,7 @@
 | `packages/client/src/labShared.ts` | Общее с лабораторией камеры: выпадающий список, пустой HUD |
 | `packages/client/src/main.ts` | Маршрут `?lab=fx` |
 | `packages/client/test/e2e/visual/` | Эталонные снимки сцен после фиксации |
+| `packages/client/test/visual/sheets.mjs` | Съёмка контактных листов раунда: `ROUND=<id> npm run fx-sheets` при запущенном Vite → `lab-shots/round-<id>/` (листы, ячейки, серые копии; папка в `.gitignore`) |
 
 ## План тестирования
 

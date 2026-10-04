@@ -8,3 +8,5 @@ dist-types/
 coverage/
 test-results/
 playwright-report/
+# Черновики визуала: контактные листы лаборатории эффектов
+lab-shots/
