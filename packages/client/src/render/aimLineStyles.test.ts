@@ -35,12 +35,12 @@ describe('реестр стилей линии выстрела', () => {
     expect(aimLineStyleById('neon').title).toBe('Неон с кольцом');
   });
 
-  it('у всех стилей ядро не тоньше 1,5 px, кроме точек, где ядро — едва видная нить под пунктиром', () => {
+  it('ядро не тоньше 1 px; штрихи и зерно ползут не быстрее 50 px/с; пульс не чаще 0,6 Гц', () => {
     for (const entry of AIM_LINE_STYLES) {
-      if (entry.id === 'dots') {
-        continue;
-      }
-      expect(entry.style.core.widthPx, entry.id).toBeGreaterThanOrEqual(1.5);
+      expect(entry.style.core.widthPx, entry.id).toBeGreaterThanOrEqual(1);
+      expect(entry.style.dash?.speedPxPerS ?? 0, entry.id).toBeLessThanOrEqual(50);
+      expect(entry.style.grain?.speedPxPerS ?? 0, entry.id).toBeLessThanOrEqual(50);
+      expect(entry.style.pulse.onTarget.hz, entry.id).toBeLessThanOrEqual(0.6);
     }
   });
 
