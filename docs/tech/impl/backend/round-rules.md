@@ -40,7 +40,7 @@
 
 ## Ручка на бою
 
-`WALL_SLIDE=<0–100>` в окружении сервиса `tanks.service` рядом с `LOG_DIR`; на бою стоит 50. Как поменять — [deploy-proto.md](../infra/deploy-proto.md).
+`WALL_SLIDE=<0–100>` в окружении сервиса `tanks.service` рядом с `LOG_DIR`; на бою стоит 30. Как поменять — [deploy-proto.md](../infra/deploy-proto.md).
 
 ## Файлы
 
@@ -53,7 +53,7 @@
 | `server/src/bots/arenaBot.ts` | зеркало раунда бота с правилами из `RoundStart` |
 | `client/src/prediction.ts`, `game.ts` | раунд предсказания с правилами из `RoundStart`; `debugState().rules` |
 | `client/test/e2e/server.ts`, `wallSlide.spec.ts` | сервер стенда с дополнительным окружением; сценарий скольжения |
-| `deploy/tanks.service` | `WALL_SLIDE=50` |
+| `deploy/tanks.service` | `WALL_SLIDE=30` |
 
 ## План тестирования
 

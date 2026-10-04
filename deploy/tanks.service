@@ -13,7 +13,7 @@ Environment=STATIC_ROOT=/opt/tanks/packages/client/dist
 Environment=APK_PATH=/opt/tanks-files/tanks.apk
 Environment=LOG_DIR=/opt/tanks-logs
 # Скольжение вдоль стен для всех комнат, 0–100: 0 — залипание как в tank-arena, 100 — стены без трения.
-Environment=WALL_SLIDE=50
+Environment=WALL_SLIDE=30
 ExecStart=/usr/bin/node /opt/tanks/packages/server/dist/main.js
 Restart=always
 RestartSec=2
