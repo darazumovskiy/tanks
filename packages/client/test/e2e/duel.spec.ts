@@ -49,6 +49,10 @@ const MIN_TURRET_CHANGE = 0.1;
 const EDGE_AIM_OFFSET = { x: 20, y: 0 };
 const DIAGONAL_AIM_OFFSET = { x: 400, y: -300 };
 const GUARD_SHOT_TIMEOUT_MS = 5_000;
+// С верхней полосы путь к этой точке упирается в стену (330, 160, 44, 200) при любом разбросе прибытия.
+const BEHIND_WALL_POST = { x: 1350, y: 700 };
+const AIM_LINE_TIMEOUT_MS = 8_000;
+const LEAD_HINT_LABEL = 'Подсказка упреждения';
 const ANDROID_PACKAGE = 'io.github.darazumovskiy.tanks';
 const ANDROID_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 15; 24129PN74G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
@@ -293,6 +297,54 @@ test('предохранитель: выстрел в край поля перп
 
   await shooter.close();
   await witness.close();
+});
+
+function waitForAimLineState(player: Player, state: 'none' | 'onTarget' | 'lead', what: string): Promise<DebugState> {
+  return until(
+    async () => {
+      const current = await player.state();
+      return current?.aimLine?.state === state ? current : null;
+    },
+    AIM_LINE_TIMEOUT_MS,
+    what,
+  );
+}
+
+test('линия выстрела: автоведение держит противника на полосе — «на нём»; он уехал за стену — линия без цели', async ({
+  browser,
+}) => {
+  const code = roomCode();
+  const shooter = await Player.open(browser, server.baseUrl, code, 'Алиса', DEFAULT_STATS, {
+    settings: { hasAimLine: true, hasAutoAim: true },
+  });
+  const target = await Player.open(browser, server.baseUrl, code, 'Боб', DEFAULT_STATS);
+  await shooter.waitForFight();
+  await target.waitForFight();
+  await Promise.all([shooter.driveTo(SHOOTER_POST, ARRIVE_DISTANCE), target.driveTo(TARGET_POST, ARRIVE_DISTANCE)]);
+
+  const onTarget = await waitForAimLineState(shooter, 'onTarget', 'линия не поймала противника на полосе');
+  expect(onTarget.isAutoAiming).toBe(true);
+  expect(onTarget.aimLine?.isReturning).toBe(false);
+
+  await target.driveTo(BEHIND_WALL_POST, ARRIVE_DISTANCE);
+  const hidden = await waitForAimLineState(shooter, 'none', 'линия не отпустила противника за стеной');
+  expect(hidden.aimLine).not.toBeNull();
+  expect((await target.waitForBattle()).aimLine).toBeNull();
+
+  await shooter.close();
+  await target.close();
+});
+
+test('админ-режим: страница с ?admin=1 показывает флажок упреждения, без него — нет', async ({ browser }) => {
+  const code = roomCode();
+  const admin = await Player.open(browser, server.baseUrl, code, 'Алиса', DEFAULT_STATS, { query: '?admin=1' });
+  const player = await Player.open(browser, server.baseUrl, code, 'Боб', DEFAULT_STATS);
+  await admin.waitForBattle();
+  await player.waitForBattle();
+  expect(await admin.settingsCheckLabels()).toContain(LEAD_HINT_LABEL);
+  expect(await player.settingsCheckLabels()).not.toContain(LEAD_HINT_LABEL);
+  await admin.close();
+  await player.close();
 });
 
 async function expectEnemyMoves(human: Player, start: DebugState, what: string): Promise<void> {

@@ -3,7 +3,7 @@ import { BULLET_LIFETIME, BULLET_RADIUS, DT, MUZZLE_OFFSET, TANK_RADIUS } from '
 import type { Wall } from './geometry.js';
 import { MAPS, type Point } from './maps.js';
 import { createRound, IDLE_ACTION, stepRound, type RoundEvent } from './round.js';
-import { isSegmentWithin, isShotReturning, traceShot, type ShotSegment } from './trajectory.js';
+import { isSegmentWithin, isShotReturning, isTraceReturning, traceShot, type ShotSegment } from './trajectory.js';
 
 const POLYGON = 0;
 const LABYRINTH = 1;
@@ -28,7 +28,7 @@ describe('traceShot', () => {
     expect(segments[1]?.x1).toBe(BULLET_RADIUS);
     expect(segments[1]?.x2).toBeGreaterThan(shooter.x);
     expect(segments[1]?.y2).toBeCloseTo(450, 6);
-    expect(isShotReturning(polygonWalls(), shooter, Math.PI, DEFAULT_SPEED)).toBe(true);
+    expect(isShotReturning(polygonWalls(), shooter, Math.PI, DEFAULT_SPEED, null)).toBe(true);
   });
 
   it('под 30° к краю снаряд уходит мимо корпуса', () => {
@@ -39,20 +39,20 @@ describe('traceShot', () => {
     expect(segments[0]?.x2).toBe(BULLET_RADIUS);
     expect(segments[1]?.x2).toBeGreaterThan(segments[1]?.x1 ?? 0);
     expect(segments[1]?.y2).toBeLessThan(segments[1]?.y1 ?? 0);
-    expect(isShotReturning(polygonWalls(), shooter, turret, DEFAULT_SPEED)).toBe(false);
+    expect(isShotReturning(polygonWalls(), shooter, turret, DEFAULT_SPEED, null)).toBe(false);
   });
 
   it('выстрел в упор в стену «Полигона» возвращается', () => {
     const shooter = { x: 260, y: 260 };
     const { segments } = traceShot(polygonWalls(), shooter, 0, DEFAULT_SPEED);
     expect(segments[0]?.x2).toBe(330 - BULLET_RADIUS);
-    expect(isShotReturning(polygonWalls(), shooter, 0, DEFAULT_SPEED)).toBe(true);
+    expect(isShotReturning(polygonWalls(), shooter, 0, DEFAULT_SPEED, null)).toBe(true);
   });
 
   it('дуло внутри стены — снаряда нет, опасности нет', () => {
     const shooter = { x: 300, y: 260 };
     expect(traceShot(polygonWalls(), shooter, 0, DEFAULT_SPEED).segments).toHaveLength(0);
-    expect(isShotReturning(polygonWalls(), shooter, 0, DEFAULT_SPEED)).toBe(false);
+    expect(isShotReturning(polygonWalls(), shooter, 0, DEFAULT_SPEED, null)).toBe(false);
   });
 
   it('дуло за краем поля — снаряда нет', () => {
@@ -67,15 +67,15 @@ describe('traceShot', () => {
       length(slow.segments[0] ?? { x1: 0, y1: 0, x2: 0, y2: 0 }) +
       length(slow.segments[1] ?? { x1: 0, y1: 0, x2: 0, y2: 0 });
     expect(total).toBeCloseTo(300 * BULLET_LIFETIME, 6);
-    expect(isShotReturning(polygonWalls(), shooter, Math.PI, 300)).toBe(false);
-    expect(isShotReturning(polygonWalls(), shooter, Math.PI, DEFAULT_SPEED)).toBe(true);
+    expect(isShotReturning(polygonWalls(), shooter, Math.PI, 300, null)).toBe(false);
+    expect(isShotReturning(polygonWalls(), shooter, Math.PI, DEFAULT_SPEED, null)).toBe(true);
   });
 
   it('дальность кончается раньше первой преграды — один отрезок', () => {
     const { segments } = traceShot(polygonWalls(), { x: 140, y: 450 }, Math.PI, 5);
     expect(segments).toHaveLength(1);
     expect(length(segments[0] ?? { x1: 0, y1: 0, x2: 0, y2: 0 })).toBeCloseTo(5 * BULLET_LIFETIME, 6);
-    expect(isShotReturning(polygonWalls(), { x: 140, y: 450 }, Math.PI, 5)).toBe(false);
+    expect(isShotReturning(polygonWalls(), { x: 140, y: 450 }, Math.PI, 5, null)).toBe(false);
   });
 
   it('угол стены скруглён на радиус снаряда: нормаль радиальная', () => {
@@ -95,6 +95,39 @@ describe('traceShot', () => {
     const { segments } = traceShot([wall], { x: 350, y: 200 }, Math.PI / 2, DEFAULT_SPEED);
     expect(segments[0]?.y2).toBeCloseTo(300 - BULLET_RADIUS, 6);
     expect(segments[1]?.y2).toBeLessThan(200);
+  });
+});
+
+describe('isShotReturning с противником', () => {
+  const shooter = { x: 260, y: 260 };
+
+  it('противник между дулом и стеной принимает снаряд — выстрел безопасен', () => {
+    expect(isShotReturning(polygonWalls(), shooter, 0, DEFAULT_SPEED, { x: 300, y: 260 })).toBe(false);
+    expect(isShotReturning(polygonWalls(), shooter, 0, DEFAULT_SPEED, null)).toBe(true);
+  });
+
+  it('противник в стороне от первого отрезка опасности не снимает', () => {
+    expect(isShotReturning(polygonWalls(), shooter, 0, DEFAULT_SPEED, { x: 260, y: 400 })).toBe(true);
+  });
+
+  it('противник на втором отрезке не учитывается', () => {
+    // Почти перпендикулярно в край: обратный путь задевает корпус и уходит дальше, не совпадая с первым отрезком.
+    const edgeShooter = { x: 140, y: 450 };
+    const turret = Math.PI - 0.02;
+    const { segments } = traceShot(polygonWalls(), edgeShooter, turret, DEFAULT_SPEED);
+    const [first, returning] = segments;
+    const back = returning ?? { x1: 0, y1: 0, x2: 0, y2: 0 };
+    const along = Math.atan2(back.y2 - back.y1, back.x2 - back.x1);
+    const onReturnPath = { x: back.x1 + Math.cos(along) * 500, y: back.y1 + Math.sin(along) * 500 };
+    expect(isSegmentWithin(back, onReturnPath, 1)).toBe(true);
+    expect(isSegmentWithin(first ?? back, onReturnPath, SELF_HIT_RADIUS)).toBe(false);
+    expect(isShotReturning(polygonWalls(), edgeShooter, turret, DEFAULT_SPEED, null)).toBe(true);
+    expect(isShotReturning(polygonWalls(), edgeShooter, turret, DEFAULT_SPEED, onReturnPath)).toBe(true);
+  });
+
+  it('пустой путь и один отрезок — не возвращается', () => {
+    expect(isTraceReturning([], shooter, null)).toBe(false);
+    expect(isTraceReturning([{ x1: 0, y1: 0, x2: 10, y2: 0 }], shooter, null)).toBe(false);
   });
 });
 
@@ -211,7 +244,7 @@ describe('согласованность с движком', () => {
             borderline++;
             continue;
           }
-          const isExpectedReturning = isShotReturning(walls, spot, turret, bulletSpeed);
+          const isExpectedReturning = isShotReturning(walls, spot, turret, bulletSpeed, null);
           const isSelfHitInEngine = simulateSelfHit(mapIndex, stats, spot, turret, enemy);
           expect(
             isSelfHitInEngine,

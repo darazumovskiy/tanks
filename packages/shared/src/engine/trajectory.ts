@@ -153,11 +153,28 @@ export function isSegmentWithin(segment: ShotSegment, point: Point, radius: numb
   return Math.hypot(point.x - (segment.x1 + dx * t), point.y - (segment.y1 + dy * t)) < radius;
 }
 
-// Свой снаряд до отскока владельца не ранит — опасен только второй отрезок.
-export function isShotReturning(walls: readonly Wall[], shooter: Point, turret: number, bulletSpeed: number): boolean {
-  const returning = traceShot(walls, shooter, turret, bulletSpeed).segments[1];
-  if (returning === undefined) {
+// Путь проходит ближе этого к центру танка — снаряд его задевает.
+export const TANK_HIT_RADIUS = TANK_RADIUS + BULLET_RADIUS;
+
+// Свой снаряд до отскока владельца не ранит — опасен только второй отрезок. Противник на первом отрезке
+// принимает снаряд на себя — до отскока дело не дойдёт.
+export function isTraceReturning(segments: readonly ShotSegment[], shooter: Point, target: Point | null): boolean {
+  const [first, returning] = segments;
+  if (first === undefined || returning === undefined) {
     return false;
   }
-  return isSegmentWithin(returning, shooter, TANK_RADIUS + BULLET_RADIUS);
+  if (target !== null && isSegmentWithin(first, target, TANK_HIT_RADIUS)) {
+    return false;
+  }
+  return isSegmentWithin(returning, shooter, TANK_HIT_RADIUS);
+}
+
+export function isShotReturning(
+  walls: readonly Wall[],
+  shooter: Point,
+  turret: number,
+  bulletSpeed: number,
+  target: Point | null,
+): boolean {
+  return isTraceReturning(traceShot(walls, shooter, turret, bulletSpeed).segments, shooter, target);
 }

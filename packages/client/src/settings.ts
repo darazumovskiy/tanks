@@ -10,6 +10,8 @@ export interface Settings {
   hasAutoAim: boolean;
   hasRicochetGuard: boolean;
   hasQuickReverse: boolean;
+  hasAimLine: boolean;
+  hasLeadHint: boolean;
   cameraMode: PhoneCameraMode;
   minViewPercent: number;
   followLookAhead: number;
@@ -21,15 +23,27 @@ export interface Settings {
 }
 
 export type BooleanSettingKey =
-  'hasFireRing' | 'hasAutoAim' | 'hasRicochetGuard' | 'hasQuickReverse' | 'showFrameGraph';
+  | 'hasFireRing'
+  | 'hasAutoAim'
+  | 'hasRicochetGuard'
+  | 'hasQuickReverse'
+  | 'hasAimLine'
+  | 'hasLeadHint'
+  | 'showFrameGraph';
 export type NumericSettingKey = Exclude<keyof Settings, BooleanSettingKey | 'cameraMode'>;
 
 // Флажок с `isTouchOnly` показывается только на устройстве с касанием: настройка касается стиков.
+// Флажок с `isAdminOnly` — только в админ-режиме; без права его значение читается как выключенное.
 export interface BooleanSettingField {
   key: BooleanSettingKey;
   label: string;
   hint: string;
   isTouchOnly?: boolean;
+  isAdminOnly?: boolean;
+}
+
+export interface SettingsAccess {
+  isAdmin: boolean;
 }
 
 // Поле с `modes` — настройка камеры: показывается только на устройстве с касанием и только для перечисленных
@@ -55,6 +69,8 @@ export function defaultSettings(isTouchDevice: boolean): Settings {
     hasAutoAim: isTouchDevice,
     hasRicochetGuard: false,
     hasQuickReverse: false,
+    hasAimLine: false,
+    hasLeadHint: false,
     cameraMode: 'follow',
     minViewPercent: 75,
     followLookAhead: 0.35,
@@ -88,7 +104,18 @@ export const BOOLEAN_FIELDS: readonly BooleanSettingField[] = [
     hint: 'стик за спину — сразу едем назад, а не разворачиваемся',
     isTouchOnly: true,
   },
+  {
+    key: 'hasAimLine',
+    label: 'Линия выстрела',
+    hint: 'куда полетит снаряд и куда отскочит; ловит противника — подсвечивается',
+  },
   { key: 'showFrameGraph', label: 'График кадров', hint: 'длительность последних кадров внизу слева' },
+  {
+    key: 'hasLeadHint',
+    label: 'Подсказка упреждения',
+    hint: 'линия подсвечивается и там, где противник окажется к прилёту снаряда',
+    isAdminOnly: true,
+  },
 ];
 
 export const NUMERIC_FIELDS: readonly NumericSettingField[] = [
@@ -173,7 +200,21 @@ function parseCameraMode(value: unknown, fallback: PhoneCameraMode): PhoneCamera
   return known === undefined ? fallback : known.mode;
 }
 
-export function parseSettings(raw: string | null, defaults: Readonly<Settings>): Settings {
+// Без права админские флаги читаются выключенными: запись в хранилище без админ-режима не включает фичу.
+export function parseSettings(raw: string | null, defaults: Readonly<Settings>, access: SettingsAccess): Settings {
+  const settings = parseStored(raw, defaults);
+  if (access.isAdmin) {
+    return settings;
+  }
+  for (const field of BOOLEAN_FIELDS) {
+    if (field.isAdminOnly === true) {
+      settings[field.key] = false;
+    }
+  }
+  return settings;
+}
+
+function parseStored(raw: string | null, defaults: Readonly<Settings>): Settings {
   const settings: Settings = { ...defaults };
   if (raw === null) {
     return settings;
@@ -203,12 +244,15 @@ export function parseSettings(raw: string | null, defaults: Readonly<Settings>):
 
 export class SettingsStore {
   readonly value: Settings;
+  readonly isAdmin: boolean;
 
   constructor(
     private readonly storage: Storage,
     private readonly defaults: Readonly<Settings>,
+    access: SettingsAccess,
   ) {
-    this.value = parseSettings(storage.getItem(SETTINGS_STORAGE_KEY), defaults);
+    this.isAdmin = access.isAdmin;
+    this.value = parseSettings(storage.getItem(SETTINGS_STORAGE_KEY), defaults, access);
   }
 
   setNumber(key: NumericSettingKey, value: number): void {

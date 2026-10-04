@@ -9,11 +9,12 @@ import {
 } from './settings.js';
 
 const MODE_ACTIVE_CLASS = 'is-active';
+const ADMIN_GROUP_TITLE = 'Для настройки';
 
 // Панель настроек в бою: ползунки меняют хранилище сразу, игра читает его каждый тик — результат виден не выходя
 // из боя. Поля камеры и флажки `isTouchOnly` показываются только на устройстве с касанием, поля камеры — только
 // для выбранной стратегии. Флажок, от которого зависит ползунок, стоит прямо перед ним; остальные флажки — после
-// всех ползунков.
+// всех ползунков. Админские флажки — отдельной группой внизу, только когда у хранилища есть право.
 export class SettingsPanel {
   private readonly rows = new Map<
     NumericSettingField['key'],
@@ -49,9 +50,13 @@ export class SettingsPanel {
     }
     for (const field of BOOLEAN_FIELDS) {
       const isHidden = field.isTouchOnly === true && !isTouchDevice;
-      if (!isHidden && !this.checks.has(field.key)) {
+      const isAdminField = field.isAdminOnly === true;
+      if (!isHidden && !isAdminField && !this.checks.has(field.key)) {
         root.append(this.buildCheck(field));
       }
+    }
+    if (store.isAdmin) {
+      this.appendAdminGroup();
     }
     const reset = document.createElement('button');
     reset.type = 'button';
@@ -80,6 +85,18 @@ export class SettingsPanel {
     this.root.hidden = !this.root.hidden;
     if (!this.root.hidden) {
       this.refresh();
+    }
+  }
+
+  private appendAdminGroup(): void {
+    const title = document.createElement('div');
+    title.className = 'settings-group-title';
+    title.textContent = ADMIN_GROUP_TITLE;
+    this.root.append(title);
+    for (const field of BOOLEAN_FIELDS) {
+      if (field.isAdminOnly === true) {
+        this.root.append(this.buildCheck(field));
+      }
     }
   }
 

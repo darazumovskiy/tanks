@@ -1,5 +1,6 @@
 import { ARENA, KIT, MUZZLE_OFFSET, ROUND_SECONDS, ZONE, type Side } from '@tanks/shared/engine';
 import { gameTimecode } from '@tanks/shared/protocol';
+import type { AimLine, AimLineState } from '../aimLine.js';
 import type { WorldView } from '../prediction.js';
 import type { Settings } from '../settings.js';
 import type { StickState } from '../touch.js';
@@ -27,6 +28,7 @@ export interface HudInfo {
   sticks: readonly StickState[];
   isAutoAiming: boolean;
   isShotGuarded: boolean;
+  aimLine: AimLine | null;
   frameMs: number;
   frameTimes: readonly number[];
 }
@@ -85,6 +87,20 @@ const AUTO_AIM_LINE_WIDTH = 2.5;
 const AUTO_AIM_ALPHA = 0.9;
 const AUTO_AIM_SPREAD = 0.35;
 
+// Линия выстрела в единицах поля: первый отрезок светлый, хвост бледнее; «на нём» — акцент, «упреждаю» —
+// зеленоватый; хвост, который вернётся в свой корпус, — опасного цвета. Засечка — короткий штрих поперёк пути.
+const AIM_LINE_FADE_MS = 160;
+const AIM_LINE_WIDTH = 2;
+const AIM_TAIL_WIDTH = 1.5;
+const AIM_LINE_COLOR = '#f4f1e8';
+const AIM_LINE_ALPHA = 0.34;
+const AIM_TAIL_ALPHA = 0.18;
+const AIM_RETURN_ALPHA = 0.6;
+const AIM_STATE_COLORS: Record<AimLineState, string> = { none: AIM_LINE_COLOR, onTarget: '#e8825a', lead: '#5dffa0' };
+const AIM_STATE_ALPHA = 0.85;
+const AIM_MARK_HALF_LENGTH = 9;
+const AIM_MARK_WIDTH = 2.5;
+
 // Штрих предохранителя поперёк ствола сразу за дулом своего танка: выстрел сдерживается.
 const GUARD_COLOR = '#ff5a6a';
 const GUARD_FADE_MS = 120;
@@ -110,6 +126,9 @@ export class Renderer {
   private strategyMode: CameraMode;
   private autoAimGlow = 0;
   private guardGlow = 0;
+  private aimLineGlow = 0;
+  // Последняя линия остаётся на время угасания после выключения или гибели.
+  private lastAimLine: AimLine | null = null;
 
   // На компьютере поле показывается целиком; на устройстве с касанием камеру ведёт стратегия из настроек.
   // `viewport` — размер холста в CSS-пикселях и плотность; по умолчанию окно браузера (лаборатория задаёт своё).
@@ -271,6 +290,7 @@ export class Renderer {
         this.drawTank(view, side);
       }
     }
+    this.drawAimLine(hud);
     this.effects.drawBullets(ctx, view.bullets);
     this.effects.drawParticles(ctx);
     for (const side of [0, 1] as const) {
@@ -282,6 +302,63 @@ export class Renderer {
     this.drawGuardMark(view, hud);
     this.effects.drawPopups(ctx);
     ctx.restore();
+  }
+
+  private drawAimLine(hud: HudInfo): void {
+    const step = hud.frameMs / AIM_LINE_FADE_MS;
+    this.aimLineGlow = clamp(this.aimLineGlow + (hud.aimLine === null ? -step : step), 0, 1);
+    if (hud.aimLine !== null) {
+      this.lastAimLine = hud.aimLine;
+    }
+    const line = this.lastAimLine;
+    if (this.aimLineGlow <= 0 || line === null) {
+      return;
+    }
+    const { ctx } = this;
+    const eased = easeOut(this.aimLineGlow);
+    const [first, tail] = line.segments;
+    if (first === undefined) {
+      return;
+    }
+    const isHighlighted = line.state !== 'none';
+    const stateColor = AIM_STATE_COLORS[line.state];
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineWidth = AIM_LINE_WIDTH;
+    ctx.strokeStyle = rgba(stateColor, (isHighlighted ? AIM_STATE_ALPHA : AIM_LINE_ALPHA) * eased);
+    ctx.beginPath();
+    ctx.moveTo(first.x1, first.y1);
+    ctx.lineTo(first.x2, first.y2);
+    ctx.stroke();
+    if (tail !== undefined) {
+      ctx.lineWidth = line.isReturning ? AIM_LINE_WIDTH : AIM_TAIL_WIDTH;
+      ctx.strokeStyle = this.aimTailStyle(line, eased);
+      ctx.beginPath();
+      ctx.moveTo(tail.x1, tail.y1);
+      ctx.lineTo(tail.x2, tail.y2);
+      ctx.stroke();
+    }
+    if (line.mark !== null) {
+      ctx.translate(line.mark.x, line.mark.y);
+      ctx.rotate(line.mark.angle);
+      ctx.lineWidth = AIM_MARK_WIDTH;
+      ctx.strokeStyle = rgba(stateColor, AIM_STATE_ALPHA * eased);
+      ctx.beginPath();
+      ctx.moveTo(0, -AIM_MARK_HALF_LENGTH * eased);
+      ctx.lineTo(0, AIM_MARK_HALF_LENGTH * eased);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private aimTailStyle(line: AimLine, eased: number): string {
+    if (line.isReturning) {
+      return rgba(GUARD_COLOR, AIM_RETURN_ALPHA * eased);
+    }
+    if (line.state === 'onTarget') {
+      return rgba(AIM_STATE_COLORS.onTarget, AIM_STATE_ALPHA * eased);
+    }
+    return rgba(AIM_LINE_COLOR, AIM_TAIL_ALPHA * eased);
   }
 
   private drawGuardMark(view: WorldView, hud: HudInfo): void {

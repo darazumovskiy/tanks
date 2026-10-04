@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
 import { BOT_LEVEL_INFO, BOT_LEVELS, botRoomCode, type BotLevel } from '@tanks/shared/protocol';
 import QRCode from 'qrcode';
+import { resolveAdminMode } from './admin.js';
 import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
 import { readClientInfo } from './clientInfo.js';
 import { Game } from './game.js';
@@ -26,6 +27,8 @@ const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 // Один на страницу: ошибки главной и боя уходят с одинаковым описанием клиента.
 const telemetry = new Telemetry(readClientInfo());
 telemetry.installErrorHandlers();
+// `?admin=1` на любой странице запоминается на устройстве и открывает админские настройки в бою.
+const isAdmin = resolveAdminMode(location.search, localStorage);
 
 function randomCode(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
@@ -239,7 +242,7 @@ function startDuel(roomCode: string): void {
   canvas.hidden = false;
   document.body.classList.add('duel');
   const hasTouch = isTouchDevice();
-  const store = new SettingsStore(localStorage, defaultSettings(hasTouch));
+  const store = new SettingsStore(localStorage, defaultSettings(hasTouch), { isAdmin });
   const autoFireButton = byId('autofire', HTMLButtonElement);
   const autoFire = bindAutoFire(autoFireButton, hasTouch);
   const game = new Game({

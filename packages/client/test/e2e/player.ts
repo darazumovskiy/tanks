@@ -23,6 +23,7 @@ export interface DebugState {
   isAutoFiring: boolean;
   isAutoAiming: boolean;
   isShotGuarded: boolean;
+  aimLine: { state: 'none' | 'onTarget' | 'lead'; isReturning: boolean } | null;
   me: TankState;
   enemy: Point & { heading: number; isAlive: boolean };
   bullets: number;
@@ -38,6 +39,9 @@ const BOT_LEVEL_TOGGLE = '#bot-level-toggle';
 const MENU_BUTTON = '#menu';
 const ROUND_END_TITLE = '#round-end .round-end-title';
 const ROUND_END_MENU = '#round-end .round-end-menu';
+const SETTINGS_PANEL = '#settings';
+const SETTINGS_CHECK_LABEL = '#settings label.settings-check .settings-head span';
+const SETTINGS_KEY_CODE = 'KeyO';
 const levelCardSelector = (level: number): string => `#bot-levels .level[data-level="${String(level)}"]`;
 const COPY_BUTTON = '#overlay .overlay-copy';
 const OPEN_APP_BANNER = '#open-app';
@@ -75,7 +79,8 @@ export async function until<T>(read: () => Promise<T | null | undefined>, timeou
 }
 
 // Игрок в настоящем браузере: отдельный контекст (свои cookie и localStorage), управление клавишами и мышью;
-// с `isTouch` — экран телефона с эмуляцией касаний; `settings` — часть `tanks.settings`, записанная до загрузки.
+// с `isTouch` — экран телефона с эмуляцией касаний; `settings` — часть `tanks.settings`, записанная до загрузки;
+// `query` — строка запроса ссылки на дуэль (например, `?admin=1`).
 export class Player {
   private readonly held = new Set<string>();
 
@@ -91,7 +96,7 @@ export class Player {
     roomCode: string,
     name: string,
     stats: string,
-    options: { isTouch?: boolean; userAgent?: string; settings?: Record<string, unknown> } = {},
+    options: { isTouch?: boolean; userAgent?: string; settings?: Record<string, unknown>; query?: string } = {},
   ): Promise<Player> {
     const touchOptions = options.isTouch === true ? { hasTouch: true, isMobile: true, viewport: PHONE_VIEWPORT } : {};
     const agentOptions = options.userAgent === undefined ? {} : { userAgent: options.userAgent };
@@ -107,7 +112,7 @@ export class Player {
       }
     }, entries);
     const page = await context.newPage();
-    await page.goto(`${baseUrl}/d/${roomCode}`);
+    await page.goto(`${baseUrl}/d/${roomCode}${options.query ?? ''}`);
     return new Player(context, page, name);
   }
 
@@ -189,6 +194,13 @@ export class Player {
 
   async clickMenu(): Promise<void> {
     await this.page.locator(MENU_BUTTON).click();
+  }
+
+  // Открывает панель настроек клавишей и возвращает подписи флажков.
+  async settingsCheckLabels(): Promise<string[]> {
+    await this.page.keyboard.press(SETTINGS_KEY_CODE);
+    await expect(this.page.locator(SETTINGS_PANEL)).toBeVisible();
+    return this.page.locator(SETTINGS_CHECK_LABEL).allTextContents();
   }
 
   clipboardText(): Promise<string> {

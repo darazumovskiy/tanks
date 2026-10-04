@@ -24,9 +24,12 @@ export default defineConfig({
         'packages/server/src/**/*.ts',
         'packages/shared/src/protocol/**/*.ts',
         'packages/shared/src/engine/trajectory.ts',
+        'packages/shared/src/engine/lead.ts',
         'packages/client/src/steering.ts',
         'packages/client/src/touch.ts',
         'packages/client/src/input.ts',
+        'packages/client/src/aimLine.ts',
+        'packages/client/src/admin.ts',
         'packages/client/src/clientInfo.ts',
         'packages/client/src/telemetry.ts',
         'packages/analysis/src/**/*.ts',
@@ -41,8 +44,8 @@ export default defineConfig({
         'packages/server/src/**': { statements: 100, branches: 100, functions: 100, lines: 100 },
         'packages/analysis/src/**': { statements: 90, branches: 90, functions: 90, lines: 90 },
         'packages/shared/src/protocol/**': { statements: 95, branches: 85, functions: 95, lines: 95 },
-        'packages/shared/src/engine/trajectory.ts': { statements: 95, branches: 90, functions: 95, lines: 95 },
-        'packages/client/src/{steering,touch,input,clientInfo,telemetry}.ts': {
+        'packages/shared/src/engine/{trajectory,lead}.ts': { statements: 95, branches: 90, functions: 95, lines: 95 },
+        'packages/client/src/{steering,touch,input,clientInfo,telemetry,aimLine,admin}.ts': {
           statements: 95,
           branches: 90,
           functions: 95,

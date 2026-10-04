@@ -16,6 +16,7 @@ export interface InterpolatedTank {
   y: number;
   heading: number;
   turret: number;
+  speed: number;
   hp: number;
   maxHp: number;
   isAlive: boolean;
@@ -174,6 +175,7 @@ export class Prediction {
       y: this.me.y,
       heading: this.me.heading,
       turret: this.me.turret,
+      speed: this.me.speed,
       hp: this.me.hp,
       maxHp: this.me.stats.maxHp,
       isAlive: this.me.isAlive,
@@ -216,6 +218,7 @@ export class Prediction {
         y: fallback.y,
         heading: fallback.heading,
         turret: fallback.turret,
+        speed: fallback.speed,
         hp: fallback.hp,
         maxHp: fallback.stats.maxHp,
         isAlive: fallback.isAlive,
@@ -228,6 +231,7 @@ export class Prediction {
       y: lerp(a.y, b.y, t),
       heading: lerpAngle(a.heading, b.heading, t),
       turret: lerpAngle(a.turret, b.turret, t),
+      speed: lerp(a.speed, b.speed, t),
       hp: b.hp,
       maxHp: fallback.stats.maxHp,
       isAlive: b.isAlive,

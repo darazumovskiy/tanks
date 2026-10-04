@@ -3,9 +3,14 @@ import { defaultSettings, NUMERIC_FIELDS, SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
 
 const DEFAULT_SETTINGS = defaultSettings(true);
+const PLAYER = { isAdmin: false };
+const ADMIN = { isAdmin: true };
 const AUTO_AIM_LABEL = 'Башня сама держит противника';
 const GUARD_LABEL = 'Предохранитель';
 const QUICK_REVERSE_LABEL = 'Быстрый задний ход';
+const AIM_LINE_LABEL = 'Линия выстрела';
+const LEAD_HINT_LABEL = 'Подсказка упреждения';
+const ADMIN_GROUP_TITLE = 'Для настройки';
 
 describe('SettingsPanel', () => {
   let root: HTMLElement;
@@ -19,7 +24,7 @@ describe('SettingsPanel', () => {
     root.hidden = true;
     toggle = document.createElement('button');
     document.body.append(root, toggle);
-    store = new SettingsStore(localStorage, DEFAULT_SETTINGS);
+    store = new SettingsStore(localStorage, DEFAULT_SETTINGS, PLAYER);
     new SettingsPanel(root, toggle, store, true);
   });
 
@@ -78,7 +83,7 @@ describe('SettingsPanel', () => {
     radius.value = '90';
     radius.dispatchEvent(new Event('input'));
     expect(store.value.stickRadiusPx).toBe(90);
-    expect(new SettingsStore(localStorage, DEFAULT_SETTINGS).value.stickRadiusPx).toBe(90);
+    expect(new SettingsStore(localStorage, DEFAULT_SETTINGS, PLAYER).value.stickRadiusPx).toBe(90);
   });
 
   it('флажок графика кадров', () => {
@@ -102,7 +107,7 @@ describe('SettingsPanel', () => {
   const desktopCheckLabels = (): (string | null)[] => {
     const desktopRoot = document.createElement('aside');
     document.body.append(desktopRoot);
-    const desktopStore = new SettingsStore(localStorage, defaultSettings(false));
+    const desktopStore = new SettingsStore(localStorage, defaultSettings(false), PLAYER);
     new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, false);
     return Array.from(desktopRoot.querySelectorAll<HTMLLabelElement>('label.settings-check')).map(
       (row) => row.querySelector('.settings-head span')?.textContent ?? null,
@@ -112,7 +117,7 @@ describe('SettingsPanel', () => {
   it('на компьютере флажок автоведения есть и снят по умолчанию', () => {
     const desktopRoot = document.createElement('aside');
     document.body.append(desktopRoot);
-    const desktopStore = new SettingsStore(localStorage, defaultSettings(false));
+    const desktopStore = new SettingsStore(localStorage, defaultSettings(false), PLAYER);
     new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, false);
     const checkbox = Array.from(desktopRoot.querySelectorAll<HTMLLabelElement>('label.settings-check'))
       .find((row) => row.querySelector('.settings-head span')?.textContent === AUTO_AIM_LABEL)
@@ -137,7 +142,53 @@ describe('SettingsPanel', () => {
     expect(store.value.hasQuickReverse).toBe(true);
     const labels = desktopCheckLabels();
     expect(labels).toContain(GUARD_LABEL);
+    expect(labels).toContain(AIM_LINE_LABEL);
     expect(labels).not.toContain(QUICK_REVERSE_LABEL);
+  });
+
+  const checkLabels = (panelRoot: HTMLElement): (string | null)[] =>
+    Array.from(panelRoot.querySelectorAll<HTMLLabelElement>('label.settings-check')).map(
+      (row) => row.querySelector('.settings-head span')?.textContent ?? null,
+    );
+
+  it('без админ-режима: линия выстрела есть, подсказки упреждения и группы «Для настройки» нет', () => {
+    const labels = checkLabels(root);
+    expect(labels).toContain(AIM_LINE_LABEL);
+    expect(labels).not.toContain(LEAD_HINT_LABEL);
+    expect(root.querySelector('.settings-group-title')).toBeNull();
+    const aimLine = checkFor(AIM_LINE_LABEL);
+    expect(aimLine.checked).toBe(false);
+    aimLine.checked = true;
+    aimLine.dispatchEvent(new Event('change'));
+    expect(store.value.hasAimLine).toBe(true);
+  });
+
+  it('в админ-режиме: группа «Для настройки» внизу с флажком упреждения, отметка уходит в хранилище', () => {
+    const adminRoot = document.createElement('aside');
+    document.body.append(adminRoot);
+    const adminStore = new SettingsStore(localStorage, DEFAULT_SETTINGS, ADMIN);
+    new SettingsPanel(adminRoot, document.createElement('button'), adminStore, true);
+    const title = adminRoot.querySelector('.settings-group-title');
+    expect(title?.textContent).toBe(ADMIN_GROUP_TITLE);
+    const labels = checkLabels(adminRoot);
+    expect(labels.at(-1)).toBe(LEAD_HINT_LABEL);
+    const order = Array.from(adminRoot.querySelectorAll('.settings-check, .settings-group-title'));
+    const leadRow = Array.from(adminRoot.querySelectorAll<HTMLLabelElement>('label.settings-check')).find(
+      (row) => row.querySelector('.settings-head span')?.textContent === LEAD_HINT_LABEL,
+    );
+    expect(title).not.toBeNull();
+    expect(leadRow).toBeDefined();
+    if (title !== null && leadRow !== undefined) {
+      expect(order.indexOf(title)).toBe(order.indexOf(leadRow) - 1);
+      const checkbox = leadRow.querySelector<HTMLInputElement>('input[type=checkbox]');
+      expect(checkbox?.checked).toBe(false);
+      if (checkbox !== null) {
+        checkbox.checked = true;
+        checkbox.dispatchEvent(new Event('change'));
+      }
+      expect(adminStore.value.hasLeadHint).toBe(true);
+      expect(localStorage.getItem('tanks.settings')).toContain('"hasLeadHint":true');
+    }
   });
 
   it('флажок кольца огня стоит перед ползунком радиуса и показывает его только включённым', () => {

@@ -13,6 +13,7 @@
 | [backend/log-analysis.md](backend/log-analysis.md) | Анализ журналов: прослеживание снарядов, метрики стрельбы, наведения, движения и самопопаданий, сводка «устройство × уровень», CLI `analyze-logs` |
 | [frontend/duel-client.md](frontend/duel-client.md) | Клиент дуэли: предсказание, интерполяция, ввод, рендер, HUD |
 | [frontend/touch-controls.md](frontend/touch-controls.md) | Сенсорное управление: два плавающих стика, перевод в действие, план тестирования |
+| [frontend/aim-line.md](frontend/aim-line.md) | Линия выстрела: путь снаряда с хвостом после отскока, состояния «на нём» и «упреждаю», предохранитель с учётом противника, админ-режим `?admin=1` |
 | [frontend/mobile-screen.md](frontend/mobile-screen.md) | Экран боя под телефон: панели в экранных координатах, стрелка на противника, резкость |
 | [frontend/duel-camera.md](frontend/duel-camera.md) | Камера дуэли: стратегии «за своим», «за своим + отдаление», «оба в кадре», разрешённая область танка, кромка, инварианты и лаборатория |
 | [frontend/invite-link.md](frontend/invite-link.md) | Приглашение по ссылке: «Копировать» и «Поделиться», открытие ссылки Android-приложением (App Links, `assetlinks.json`), плашка «Открыть в приложении» |
