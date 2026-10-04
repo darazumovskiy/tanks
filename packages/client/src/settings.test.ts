@@ -13,9 +13,9 @@ describe('defaultSettings', () => {
     expect(PHONE_DEFAULTS.minViewPercent).toBe(85);
   });
 
-  it('порог газа на повороте — 0,8 на обоих устройствах, зажимается в 0–1', () => {
-    expect(PHONE_DEFAULTS.pivotThrottle).toBe(0.8);
-    expect(DESKTOP_DEFAULTS.pivotThrottle).toBe(0.8);
+  it('порог газа на повороте — 0,6 на обоих устройствах, зажимается в 0–1', () => {
+    expect(PHONE_DEFAULTS.pivotThrottle).toBe(0.6);
+    expect(DESKTOP_DEFAULTS.pivotThrottle).toBe(0.6);
     expect(parseSettings(JSON.stringify({ pivotThrottle: 3 }), PHONE_DEFAULTS, PLAYER).pivotThrottle).toBe(1);
     expect(parseSettings(JSON.stringify({ pivotThrottle: 0.2 }), PHONE_DEFAULTS, PLAYER).pivotThrottle).toBe(0.2);
   });

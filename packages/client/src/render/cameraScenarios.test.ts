@@ -21,8 +21,9 @@ import {
 } from './cameraScenarios.js';
 import { createCameraStrategy, PHONE_CAMERA_MODES, type PhoneCameraMode } from './cameraStrategy.js';
 
-// Матрица сценариев и ожидаемые числа откалиброваны на обзоре 75 % (окно 675); умолчание игрока от этого не зависит.
-const DEFAULT_SETTINGS = { ...defaultSettings(), minViewPercent: 75 };
+// Матрица сценариев и ожидаемые числа откалиброваны на обзоре 75 % (окно 675), упреждении 0,35 и догоне 120 мс;
+// умолчания игрока от этого не зависят.
+const DEFAULT_SETTINGS = { ...defaultSettings(), minViewPercent: 75, followLookAhead: 0.35, followLagMs: 120 };
 const GRID_X = [24, 140, 400, 800, 1200, 1460, 1576];
 const GRID_Y = [24, 140, 450, 760, 876];
 const GRID: Point[] = GRID_X.flatMap((x) => GRID_Y.map((y) => ({ x, y })));
