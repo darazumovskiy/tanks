@@ -67,6 +67,7 @@ function arenaView(view: BotView): ArenaView {
 
 export class ScriptBrain implements BotBrain {
   readonly stats: Stats;
+  readonly reactionTicks = 0;
   private rounds = 0;
 
   constructor(private readonly module: ArenaBotModule) {

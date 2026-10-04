@@ -9,7 +9,7 @@ const ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
 const SERVER_ENTRY = `${ROOT}/packages/server/dist/main.js`;
 const STATIC_ROOT = `${ROOT}/packages/client/dist`;
 const START_TIMEOUT_MS = 10_000;
-const PORT_LINE = /tanks server on :(\d+)/;
+const PORT_LINE = /tanks server on \S*:(\d+)/;
 
 // Собранный игровой сервер как отдельный процесс — тот же бинарник, что едет на боевую машину.
 export class GameServer {

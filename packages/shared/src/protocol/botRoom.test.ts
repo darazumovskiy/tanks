@@ -24,7 +24,8 @@ describe('код комнаты против бота', () => {
     expect(botLevelOf('e2eabc')).toBeNull();
     expect(botLevelOf('botabc')).toBeNull();
     expect(botLevelOf('bot1abc')).toBeNull();
-    expect(botLevelOf('bot07abc')).toBeNull();
+    expect(botLevelOf('bot00abc')).toBeNull();
+    expect(botLevelOf('bot11abc')).toBeNull();
     expect(botLevelOf('bot99abc')).toBeNull();
   });
 });

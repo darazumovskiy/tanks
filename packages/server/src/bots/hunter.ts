@@ -1,6 +1,7 @@
 import {
   clamp,
   normalizeAngle,
+  TICK_RATE,
   type Action,
   type BotView,
   type BulletView,
@@ -9,7 +10,8 @@ import {
   type TankView,
 } from '@tanks/shared/engine';
 import type { BotBrain } from './arenaBot.js';
-import { isClear } from './sight.js';
+import type { BotProfile } from './profile.js';
+import { isClear, isReturningShot } from './sight.js';
 
 const CELL = 25;
 // Радиус танка с запасом: клетка сетки и отрезок пути считаются свободными на таком удалении от стен.
@@ -23,7 +25,6 @@ const STEER_GAIN = 3;
 const CREEP_THROTTLE = 0.15;
 const LEAD_ITERATIONS = 4;
 const TURRET_GAIN = 8;
-const FIRE_WINDOW_RAD = 0.07;
 const SHOT_PAD = 6;
 const MUZZLE = 34;
 const THREAT_HORIZON_S = 0.9;
@@ -37,6 +38,21 @@ const STRAFE_ANGLE = 0.6;
 const STRAFE_NEAR = 250;
 const STRAFE_RADIUS_NEAR = 330;
 const STRAFE_RADIUS_FAR = 300;
+const HOLD_DISTANCE = 380;
+const RETREAT_DISTANCE = 260;
+const DRIFT_PERIOD_TICKS = 60;
+const DRIFT_THROTTLE = 0.8;
+const AIM_NOISE_PERIOD_TICKS = TICK_RATE / 2;
+const FIRE_RETRY_TICKS = TICK_RATE / 2;
+const PAUSE_TICKS = TICK_RATE / 2;
+const PATROL_REACHED = 40;
+const PATROL_REPLAN_TICKS = TICK_RATE * 6;
+const PATROL_ZONE_MARGIN = 100;
+const DODGE_MEMORY = 64;
+const READY_POSE_DISTANCE = 500;
+const READY_POSE_AIM_RAD = 0.12;
+const READY_POSE_RELOAD_S = 0.15;
+const READY_POSE_PERIOD_TICKS = 60;
 const NEIGHBOURS: readonly [number, number][] = [
   [1, 0],
   [-1, 0],
@@ -52,6 +68,7 @@ interface Grid {
   cols: number;
   rows: number;
   free: Uint8Array;
+  freeCells: Point[];
 }
 
 interface Threat {
@@ -61,11 +78,19 @@ interface Threat {
 }
 
 type Drive = Pick<Action, 'throttle' | 'turn'>;
+type Aim = Pick<Action, 'turretTurn' | 'isFiring'>;
+
+const HOLD: Drive = { throttle: 0, turn: 0 };
+
+function cellCenter(grid: Grid, index: number): Point {
+  return { x: (index % grid.cols) * CELL + CELL / 2, y: Math.floor(index / grid.cols) * CELL + CELL / 2 };
+}
 
 function buildGrid(arena: BotView['arena']): Grid {
   const cols = Math.ceil(arena.width / CELL);
   const rows = Math.ceil(arena.height / CELL);
   const free = new Uint8Array(cols * rows);
+  const grid: Grid = { cols, rows, free, freeCells: [] };
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       const x = col * CELL + CELL / 2;
@@ -74,10 +99,13 @@ function buildGrid(arena: BotView['arena']): Grid {
       const isInWall = arena.walls.some(
         (wall) => x > wall.x - PAD && x < wall.x + wall.w + PAD && y > wall.y - PAD && y < wall.y + wall.h + PAD,
       );
-      free[row * cols + col] = isInBounds && !isInWall ? 1 : 0;
+      if (isInBounds && !isInWall) {
+        free[row * cols + col] = 1;
+        grid.freeCells.push(cellCenter(grid, row * cols + col));
+      }
     }
   }
-  return { cols, rows, free };
+  return grid;
 }
 
 function isFree(grid: Grid, row: number, col: number): boolean {
@@ -139,7 +167,7 @@ function findPath(grid: Grid, from: number, to: number): Point[] {
   const path: Point[] = [];
   let node: number | undefined = to;
   while (node !== undefined && node !== from) {
-    path.push({ x: (node % grid.cols) * CELL + CELL / 2, y: Math.floor(node / grid.cols) * CELL + CELL / 2 });
+    path.push(cellCenter(grid, node));
     node = previous[node];
   }
   return path.reverse();
@@ -156,14 +184,15 @@ function driveTo(me: TankView, x: number, y: number): Drive {
   return { throttle: Math.cos(diff) > 0.5 ? 1 : CREEP_THROTTLE, turn: clamp(diff * STEER_GAIN, -1, 1) };
 }
 
-function leadPoint(me: TankView, enemy: TankView): Point {
+// quality — учитываемая доля скорости цели: 0 даёт текущее положение, 1 — полное упреждение.
+function leadPoint(me: TankView, enemy: TankView, quality: number): Point {
   const bulletSpeed = me.stats.bulletSpeed;
   let x = enemy.x;
   let y = enemy.y;
   for (let i = 0; i < LEAD_ITERATIONS; i++) {
     const flight = Math.hypot(x - me.x, y - me.y) / bulletSpeed;
-    x = enemy.x + enemy.vx * flight;
-    y = enemy.y + enemy.vy * flight;
+    x = enemy.x + enemy.vx * quality * flight;
+    y = enemy.y + enemy.vy * quality * flight;
   }
   return { x, y };
 }
@@ -192,33 +221,71 @@ function nearestThreat(me: TankView, bullets: BulletView[]): Threat | null {
   return worst;
 }
 
-// Уровень 3 — спарринг-бот «Охотник» из tank-arena: путь по сетке, упреждение, уход от пуль, аптечки, зона.
+// Шаг вбок от направления, по которому летит или полетит снаряд; side — в какую из двух сторон.
+function sidestep(me: TankView, alongX: number, alongY: number, side: number): Drive {
+  const perpendicular = Math.atan2(alongY, alongX) + Math.PI / 2;
+  return driveTo(
+    me,
+    me.x + Math.cos(perpendicular) * DODGE_DISTANCE * side,
+    me.y + Math.sin(perpendicular) * DODGE_DISTANCE * side,
+  );
+}
+
+// Один элемент по случайному индексу как список из нуля или одного: пустой список даёт пустой результат.
+function pickOne<T>(list: readonly T[], random: number): T[] {
+  const index = Math.floor(random * list.length);
+  return list.slice(index, index + 1);
+}
+
+// Тело спарринг-бота «Охотник» из tank-arena — путь по сетке, упреждение, уход от пуль, аптечки, зона —
+// с ручками профиля: уровни 1–9 отличаются только значениями ручек.
 export class HunterBrain implements BotBrain {
-  readonly stats: Stats = { armor: 3, engine: 3, gun: 2, reload: 2 };
+  readonly stats: Stats;
+  readonly reactionTicks: number;
   private grid: Grid | null = null;
   private gridMapName = '';
   private path: Point[] = [];
   private pathTick = -Infinity;
+  private aimNoise = 0;
+  private aimNoiseTicksLeft = 0;
+  private isLeadingShot = false;
+  private wasReloading = false;
+  private fireRetryTicksLeft = 0;
+  private patrolTarget: Point | null = null;
+  private patrolTick = -Infinity;
+  private pauseTicksLeft = 0;
+  private sincePauseTicks = 0;
+  private dodgeDecisions = new Map<number, boolean>();
+
+  constructor(
+    private readonly profile: BotProfile,
+    private readonly random: () => number,
+  ) {
+    this.stats = { ...profile.stats };
+    this.reactionTicks = profile.reactionTicks;
+  }
 
   init(): void {
     this.grid = null;
     this.path = [];
     this.pathTick = -Infinity;
+    this.aimNoiseTicksLeft = 0;
+    this.isLeadingShot = this.random() < this.profile.leadChance;
+    this.wasReloading = false;
+    this.fireRetryTicksLeft = 0;
+    this.patrolTarget = null;
+    this.patrolTick = -Infinity;
+    this.pauseTicksLeft = 0;
+    this.sincePauseTicks = 0;
+    this.dodgeDecisions = new Map();
   }
 
   tick(view: BotView): Action {
-    const { me, enemy, arena } = view;
-    const grid = this.gridFor(arena);
-
-    const aim = leadPoint(me, enemy);
-    const turretDiff = normalizeAngle(Math.atan2(aim.y - me.y, aim.x - me.x) - me.turret);
-    const muzzleX = me.x + Math.cos(me.turret) * MUZZLE;
-    const muzzleY = me.y + Math.sin(me.turret) * MUZZLE;
-    const isAimed = Math.abs(turretDiff) < FIRE_WINDOW_RAD;
-    const isFiring = enemy.isAlive && isAimed && isClear(arena.walls, muzzleX, muzzleY, aim.x, aim.y, SHOT_PAD);
-
+    const grid = this.gridFor(view.arena);
+    const aim = this.aim(view);
     const drive = this.drive(view, grid);
-    return { ...drive, turretTurn: clamp(turretDiff * TURRET_GAIN, -1, 1), isFiring };
+    const cap = this.profile.throttleCap;
+    return { throttle: clamp(drive.throttle, -cap, cap), turn: drive.turn, ...aim };
   }
 
   private gridFor(arena: BotView['arena']): Grid {
@@ -229,45 +296,168 @@ export class HunterBrain implements BotBrain {
     return this.grid;
   }
 
-  // Приоритеты корпуса: уход от пули > зона > аптечка > охота.
-  private drive(view: BotView, grid: Grid): Drive {
+  private aim(view: BotView): Aim {
     const { me, enemy, arena } = view;
+    if (this.aimNoiseTicksLeft <= 0) {
+      this.aimNoise = (this.random() * 2 - 1) * this.profile.aimNoiseRad;
+      this.aimNoiseTicksLeft = AIM_NOISE_PERIOD_TICKS;
+    }
+    this.aimNoiseTicksLeft--;
+    // Монетка упреждения бросается на каждый новый выстрел — в момент, когда перезарядка закончилась.
+    const isReady = me.reloadLeft <= 0;
+    if (isReady && this.wasReloading) {
+      this.isLeadingShot = this.random() < this.profile.leadChance;
+    }
+    this.wasReloading = !isReady;
+
+    const target = leadPoint(me, enemy, this.isLeadingShot ? this.profile.leadQuality : 0);
+    const wanted = Math.atan2(target.y - me.y, target.x - me.x) + this.aimNoise;
+    const turretDiff = normalizeAngle(wanted - me.turret);
+    const turretTurn = clamp(turretDiff * TURRET_GAIN, -1, 1);
+    const muzzleX = me.x + Math.cos(me.turret) * MUZZLE;
+    const muzzleY = me.y + Math.sin(me.turret) * MUZZLE;
+    const isAimed = Math.abs(turretDiff) < this.profile.fireWindowRad;
+    const muzzle = { x: muzzleX, y: muzzleY };
+    const isLineClear = isClear(arena.walls, muzzleX, muzzleY, target.x, target.y, SHOT_PAD);
+    const isSafe = !isReturningShot(arena.walls, me, muzzle, me.turret, me.stats.bulletSpeed, enemy);
+    if (!isReady || !isAimed || !isLineClear || !isSafe) {
+      return { turretTurn, isFiring: false };
+    }
+    if (this.fireRetryTicksLeft > 0) {
+      this.fireRetryTicksLeft--;
+      return { turretTurn, isFiring: false };
+    }
+    if (this.random() < this.profile.fireChance) {
+      return { turretTurn, isFiring: true };
+    }
+    this.fireRetryTicksLeft = FIRE_RETRY_TICKS;
+    return { turretTurn, isFiring: false };
+  }
+
+  // Приоритеты корпуса: пауза > уход от пули > поза готовности > зона > аптечка > режим движения.
+  private drive(view: BotView, grid: Grid): Drive {
+    const { me, enemy } = view;
+    if (this.isPausing()) {
+      return HOLD;
+    }
+    // От своей вернувшейся пули уходят все уровни: её видно заранее, стоять под ней — глупость, а не слабость.
     const threat = nearestThreat(me, view.bullets);
-    if (threat !== null) {
-      const perpendicular = Math.atan2(threat.bullet.vy, threat.bullet.vx) + Math.PI / 2;
-      const offset = threat.closestX * Math.cos(perpendicular) + threat.closestY * Math.sin(perpendicular);
-      const side = offset > 0 ? -1 : 1;
-      return driveTo(
-        me,
-        me.x + Math.cos(perpendicular) * DODGE_DISTANCE * side,
-        me.y + Math.sin(perpendicular) * DODGE_DISTANCE * side,
-      );
+    if (threat !== null && (threat.bullet.isMine || this.shouldDodge(threat.bullet.id))) {
+      return sidestep(me, threat.bullet.vx, threat.bullet.vy, this.offsetSide(threat));
+    }
+    if (this.profile.hasReadyPose && this.isEnemyAboutToFire(view)) {
+      const side = view.tick % READY_POSE_PERIOD_TICKS < READY_POSE_PERIOD_TICKS / 2 ? 1 : -1;
+      return sidestep(me, me.x - enemy.x, me.y - enemy.y, side);
     }
 
-    let goal: Point = { x: enemy.x, y: enemy.y };
-    let isHunting = true;
     const zoneDistance = Math.hypot(me.x - view.zone.x, me.y - view.zone.y);
+    if (zoneDistance > view.zone.radius - ZONE_MARGIN) {
+      return this.followPath(view, grid, view.zone);
+    }
     const kit = view.repairKits
       .filter((candidate) => candidate.isActive)
       .sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y))[0];
-    if (zoneDistance > view.zone.radius - ZONE_MARGIN) {
-      goal = { x: view.zone.x, y: view.zone.y };
-      isHunting = false;
-    } else if (kit !== undefined && me.hp < me.maxHp * KIT_HP_FRACTION) {
-      goal = { x: kit.x, y: kit.y };
-      isHunting = false;
+    if (this.profile.hasKits && kit !== undefined && me.hp < me.maxHp * KIT_HP_FRACTION) {
+      return this.followPath(view, grid, kit);
     }
+    if (this.profile.movement === 'patrol') {
+      return this.patrol(view, grid);
+    }
+    return this.hunt(view, grid);
+  }
 
+  private isPausing(): boolean {
+    const period = this.profile.pauseEverySec;
+    if (period === null) {
+      return false;
+    }
+    if (this.pauseTicksLeft > 0) {
+      this.pauseTicksLeft--;
+      return true;
+    }
+    this.sincePauseTicks++;
+    if (this.sincePauseTicks >= period * TICK_RATE) {
+      this.sincePauseTicks = 0;
+      this.pauseTicksLeft = PAUSE_TICKS;
+    }
+    return false;
+  }
+
+  // Решение по каждой пуле принимается один раз: иначе монетка бросалась бы каждый тик и уход был бы почти всегда.
+  private shouldDodge(bulletId: number): boolean {
+    const isKnownDodge = this.dodgeDecisions.get(bulletId);
+    if (isKnownDodge !== undefined) {
+      return isKnownDodge;
+    }
+    if (this.dodgeDecisions.size >= DODGE_MEMORY) {
+      this.dodgeDecisions.clear();
+    }
+    const shouldDodge = this.random() < this.profile.dodgeChance;
+    this.dodgeDecisions.set(bulletId, shouldDodge);
+    return shouldDodge;
+  }
+
+  private offsetSide(threat: Threat): number {
+    const perpendicular = Math.atan2(threat.bullet.vy, threat.bullet.vx) + Math.PI / 2;
+    const offset = threat.closestX * Math.cos(perpendicular) + threat.closestY * Math.sin(perpendicular);
+    return offset > 0 ? -1 : 1;
+  }
+
+  private isEnemyAboutToFire(view: BotView): boolean {
+    const { me, enemy } = view;
+    const distance = Math.hypot(me.x - enemy.x, me.y - enemy.y);
+    const aimError = Math.abs(normalizeAngle(Math.atan2(me.y - enemy.y, me.x - enemy.x) - enemy.turret));
+    const isAimedAtMe = aimError < READY_POSE_AIM_RAD;
+    return distance < READY_POSE_DISTANCE && isAimedAtMe && enemy.reloadLeft < READY_POSE_RELOAD_S;
+  }
+
+  // Случайная свободная точка внутри зоны; новая — когда доехал или по таймеру.
+  private patrol(view: BotView, grid: Grid): Drive {
+    const { me } = view;
+    const isReached =
+      this.patrolTarget !== null && Math.hypot(this.patrolTarget.x - me.x, this.patrolTarget.y - me.y) < PATROL_REACHED;
+    if (this.patrolTarget === null || isReached || view.tick - this.patrolTick > PATROL_REPLAN_TICKS) {
+      const limit = view.zone.radius - PATROL_ZONE_MARGIN;
+      const candidates = grid.freeCells.filter(
+        (cell) => Math.hypot(cell.x - view.zone.x, cell.y - view.zone.y) < limit,
+      );
+      for (const cell of pickOne(candidates, this.random())) {
+        this.patrolTarget = cell;
+      }
+      this.patrolTick = view.tick;
+    }
+    return this.followPath(view, grid, this.patrolTarget ?? view.zone);
+  }
+
+  // Сближение держит дистанцию без кружения; круг и уклонение в перестрелке ходят вокруг цели.
+  private hunt(view: BotView, grid: Grid): Drive {
+    const { me, enemy, arena } = view;
     const distance = Math.hypot(enemy.x - me.x, enemy.y - me.y);
     const hasLineOfSight = isClear(arena.walls, me.x, me.y, enemy.x, enemy.y, SHOT_PAD);
-    if (isHunting && hasLineOfSight && distance < FIGHT_DISTANCE) {
-      // В перестрелке кружить вокруг цели, а не лезть в упор.
-      const sway = view.tick % STRAFE_PERIOD_TICKS < STRAFE_PERIOD_TICKS / 2 ? STRAFE_ANGLE : -STRAFE_ANGLE;
-      const around = Math.atan2(me.y - enemy.y, me.x - enemy.x) + sway;
-      const radius = distance < STRAFE_NEAR ? STRAFE_RADIUS_NEAR : STRAFE_RADIUS_FAR;
-      return driveTo(me, enemy.x + Math.cos(around) * radius, enemy.y + Math.sin(around) * radius);
+    if (!hasLineOfSight || distance >= FIGHT_DISTANCE) {
+      return this.followPath(view, grid, enemy);
     }
+    if (this.profile.movement === 'approach') {
+      if (distance < RETREAT_DISTANCE) {
+        const away = Math.atan2(me.y - enemy.y, me.x - enemy.x);
+        return driveTo(me, enemy.x + Math.cos(away) * HOLD_DISTANCE, enemy.y + Math.sin(away) * HOLD_DISTANCE);
+      }
+      if (distance < HOLD_DISTANCE) {
+        // На дистанции не стоять столбом: медленно смещаться поперёк линии огня, меняя сторону.
+        const side = view.tick % DRIFT_PERIOD_TICKS < DRIFT_PERIOD_TICKS / 2 ? 1 : -1;
+        const drift = sidestep(me, me.x - enemy.x, me.y - enemy.y, side);
+        return { throttle: drift.throttle * DRIFT_THROTTLE, turn: drift.turn };
+      }
+      return driveTo(me, enemy.x, enemy.y);
+    }
+    const sway = view.tick % STRAFE_PERIOD_TICKS < STRAFE_PERIOD_TICKS / 2 ? STRAFE_ANGLE : -STRAFE_ANGLE;
+    const around = Math.atan2(me.y - enemy.y, me.x - enemy.x) + sway;
+    const radius = distance < STRAFE_NEAR ? STRAFE_RADIUS_NEAR : STRAFE_RADIUS_FAR;
+    return driveTo(me, enemy.x + Math.cos(around) * radius, enemy.y + Math.sin(around) * radius);
+  }
 
+  private followPath(view: BotView, grid: Grid, goal: Point): Drive {
+    const { me, arena } = view;
     if (view.tick - this.pathTick > REPLAN_TICKS || this.path.length === 0) {
       this.path = findPath(grid, nearestFree(grid, me.x, me.y), nearestFree(grid, goal.x, goal.y));
       this.pathTick = view.tick;

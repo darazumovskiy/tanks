@@ -17,8 +17,10 @@ import {
 } from '@tanks/shared/protocol';
 import type { Connection, Seat } from '../room.js';
 
+// reactionTicks — бот действует по снимку такой давности (модель времени реакции); 0 — по свежему.
 export interface BotBrain {
   readonly stats: Stats;
+  readonly reactionTicks: number;
   init?(view: BotView): void;
   tick(view: BotView): Action;
 }
@@ -31,6 +33,7 @@ export class ArenaBot implements Connection {
   private side: Side = 0;
   private seq = 0;
   private round: Round | null = null;
+  private recent: SnapshotMessage[] = [];
 
   constructor(
     private readonly brain: BotBrain,
@@ -50,9 +53,7 @@ export class ArenaBot implements Connection {
       return;
     }
     if (message.type === MessageType.Snapshot && this.round !== null && !message.isOver) {
-      mirrorSnapshot(this.round, message);
-      this.seq++;
-      this.seat.input(this.seq, this.brain.tick(botView(this.round, this.side)));
+      this.react(this.round, message);
     }
   }
 
@@ -61,7 +62,25 @@ export class ArenaBot implements Connection {
       { name: message.tanks[0].nickname, stats: message.tanks[0].stats },
       { name: message.tanks[1].nickname, stats: message.tanks[1].stats },
     ]);
+    this.recent = [];
     this.brain.init?.(botView(this.round, this.side));
+  }
+
+  // Задержка реакции — на восприятие противника и снарядов: их мозг видит снимком reactionTicks назад (пока
+  // истории меньше — самым старым из имеющихся). Свой танк, зону и аптечки — по свежему: где ты сам, ты знаешь.
+  private react(round: Round, message: SnapshotMessage): void {
+    this.recent.push(message);
+    if (this.recent.length > this.brain.reactionTicks + 1) {
+      this.recent.shift();
+    }
+    for (const seen of this.recent.slice(0, 1)) {
+      mirrorSnapshot(round, seen);
+      const delayed = botView(round, this.side);
+      mirrorSnapshot(round, message);
+      const view = { ...botView(round, this.side), enemy: delayed.enemy, bullets: delayed.bullets };
+      this.seq++;
+      this.seat.input(this.seq, this.brain.tick(view));
+    }
   }
 }
 

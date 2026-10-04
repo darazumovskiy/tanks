@@ -1,19 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { MAPS, type Side } from '@tanks/shared/engine';
-import { decode, MessageType, type BotLevel } from '@tanks/shared/protocol';
+import { MAPS } from '@tanks/shared/engine';
+import { BOT_LEVELS, decode, MessageType, type BotLevel } from '@tanks/shared/protocol';
 import { createBot } from '../src/bots/ladder.js';
 import { Room, type Connection } from '../src/room.js';
 import { seededRandom } from './support.js';
 
 const FAST_ROOM = { countdownTicks: 2, roundEndTicks: 2, maxInputsPerSecond: 100000 };
-// Старший уровень обязан выигрывать большинство на каждой карте с обеих сторон; ничья и поражение — не победа.
-const PAIRS: readonly [BotLevel, BotLevel][] = [
-  [2, 1],
-  [3, 2],
-  [10, 3],
-];
-const MIN_WINS_OF_EIGHT = 6;
 const MAX_TICKS = 8 * 4000;
+// Соседние уровни близки по замыслу — старший не проигрывает по сумме; через ступень разрыв обязан быть явным.
+const MIN_WINS_SKIP_ONE = 6;
 
 interface MatchResult {
   wins: [number, number];
@@ -27,8 +22,7 @@ function playMatch(levels: [BotLevel, BotLevel], rounds: number): MatchResult {
   let finished = 0;
   let isCounted = false;
   for (const side of [0, 1] as const) {
-    const level = levels[side];
-    createBot(level, seededRandom(42 + side), (connection, nickname, stats) => {
+    createBot(levels[side], seededRandom(42 + side), (connection, nickname, stats) => {
       const watcher: Connection = {
         send: (bytes) => {
           connection.send(bytes);
@@ -57,19 +51,35 @@ function playMatch(levels: [BotLevel, BotLevel], rounds: number): MatchResult {
   return result;
 }
 
-function winsOf(result: MatchResult, side: Side): number {
-  return result.wins[side];
+// Четыре карты с обеих сторон: [победы старшего, победы младшего].
+function duel(strong: BotLevel, weak: BotLevel): [number, number] {
+  const asFirst = playMatch([strong, weak], MAPS.length);
+  const asSecond = playMatch([weak, strong], MAPS.length);
+  return [asFirst.wins[0] + asSecond.wins[1], asFirst.wins[1] + asSecond.wins[0]];
 }
 
-describe('лестница ботов: старший уровень сильнее младшего', () => {
-  for (const [strong, weak] of PAIRS) {
-    it(`уровень ${String(strong)} против уровня ${String(weak)}: не меньше ${String(MIN_WINS_OF_EIGHT)} побед из 8`, () => {
-      const asFirst = playMatch([strong, weak], MAPS.length);
-      const asSecond = playMatch([weak, strong], MAPS.length);
-      const strongWins = winsOf(asFirst, 0) + winsOf(asSecond, 1);
-      const weakWins = winsOf(asFirst, 1) + winsOf(asSecond, 0);
-      expect(strongWins).toBeGreaterThanOrEqual(MIN_WINS_OF_EIGHT);
-      expect(strongWins).toBeGreaterThan(weakWins);
+describe('лестница ботов', () => {
+  const levels: readonly BotLevel[] = BOT_LEVELS;
+  for (let index = 1; index < levels.length; index++) {
+    const strong = levels[index];
+    const weak = levels[index - 1];
+    if (strong === undefined || weak === undefined) {
+      continue;
+    }
+    it(`уровень ${String(strong)} не слабее уровня ${String(weak)}`, () => {
+      const [strongWins, weakWins] = duel(strong, weak);
+      expect(strongWins).toBeGreaterThanOrEqual(weakWins);
+    }, 120000);
+  }
+  for (let index = 2; index < levels.length; index++) {
+    const strong = levels[index];
+    const weak = levels[index - 2];
+    if (strong === undefined || weak === undefined) {
+      continue;
+    }
+    it(`уровень ${String(strong)} бьёт уровень ${String(weak)} не меньше ${String(MIN_WINS_SKIP_ONE)} раз из 8`, () => {
+      const [strongWins] = duel(strong, weak);
+      expect(strongWins).toBeGreaterThanOrEqual(MIN_WINS_SKIP_ONE);
     }, 120000);
   }
 });

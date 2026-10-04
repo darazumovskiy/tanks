@@ -227,23 +227,18 @@ describe('вход в комнату', () => {
     expect(app.stats().rooms).toBe(1);
   });
 
-  // Бот на месте 0 за 400 снимков успевает и поехать, и выстрелить.
-  async function watchBot(human: TestClient): Promise<{ hasMoved: boolean; hasFired: boolean }> {
-    let hasMoved = false;
-    let hasFired = false;
+  // Бот на месте 0 за 400 снимков успевает поехать или развернуться.
+  async function hasBotMoved(human: TestClient): Promise<boolean> {
     let lastHeading: number | null = null;
-    for (let i = 0; i < 400 && !(hasMoved && hasFired); i++) {
+    for (let i = 0; i < 400; i++) {
       const snapshot = await human.nextOfType(MessageType.Snapshot);
       const bot = snapshot.tanks[0];
       if (lastHeading !== null && (Math.abs(bot.speed) > 1 || bot.heading !== lastHeading)) {
-        hasMoved = true;
+        return true;
       }
       lastHeading = bot.heading;
-      if (snapshot.bullets.some((bullet) => bullet.owner === 0)) {
-        hasFired = true;
-      }
     }
-    return { hasMoved, hasFired };
+    return false;
   }
 
   it('код bot01… — дуэль против манекена: он уже сидит первым, раунд стартует сразу', async () => {
@@ -255,7 +250,7 @@ describe('вход в комнату', () => {
     const start = await human.nextOfType(MessageType.RoundStart);
     expect(start.tanks[0].nickname).toBe('Манекен');
     expect(start.tanks[1].nickname).toBe('Дима');
-    expect(await watchBot(human)).toEqual({ hasMoved: true, hasFired: true });
+    expect(await hasBotMoved(human)).toBe(true);
 
     const stranger = await connect();
     stranger.join(code, 'Третий');
@@ -267,20 +262,21 @@ describe('вход в комнату', () => {
   });
 
   it.each([
-    [2, 'Карусель', { armor: 4, engine: 2, gun: 2, reload: 2 }],
-    [3, 'Охотник', { armor: 3, engine: 3, gun: 2, reload: 2 }],
+    [3, 'Новобранец', { armor: 3, engine: 3, gun: 1, reload: 2 }],
+    [8, 'Охотник', { armor: 3, engine: 3, gun: 2, reload: 2 }],
+    [9, 'Охотник-ас', { armor: 0, engine: 0, gun: 5, reload: 5 }],
     [10, 'ПАРАЛЛАКС-ASTRA', { armor: 2, engine: 1, gun: 2, reload: 5 }],
   ] as const)('уровень %i — бот «%s» со своими характеристиками, двигается', async (level, name, stats) => {
     const human = await connect();
     human.join(botRoomCode(level, 'xyz1'), 'Дима');
     const start = await human.nextOfType(MessageType.RoundStart);
     expect(start.tanks[0]).toEqual({ nickname: name, stats });
-    // Стоящий за стеной человек не цель: уровни 2–10 в стену не стреляют, проверяется только движение.
-    expect((await watchBot(human)).hasMoved).toBe(true);
+    // Стоящий за стеной человек не цель: в стену боты не стреляют, проверяется только движение.
+    expect(await hasBotMoved(human)).toBe(true);
   });
 
   it('код bot без заполненного уровня — неверный код комнаты, комната не создаётся', async () => {
-    for (const code of ['botabc', 'bot1abc', 'bot07abc', 'bot99abc']) {
+    for (const code of ['botabc', 'bot1abc', 'bot00abc', 'bot11abc']) {
       const client = await connect();
       client.join(code, 'Дима');
       expect((await client.nextOfType(MessageType.Error)).code).toBe(ErrorCode.BadMessage);

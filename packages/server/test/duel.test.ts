@@ -311,7 +311,7 @@ describe('против бота', () => {
   it('скриптовый человек против Охотника: раунд доигрывается до конца, начинается следующий', async () => {
     const human = await TestClient.connect(port);
     clients.push(human);
-    human.join(botRoomCode(3, 'duel'), 'Человек', HUNTER);
+    human.join(botRoomCode(8, 'duel'), 'Человек', HUNTER);
     await human.nextOfType(MessageType.Welcome);
     await human.nextOfType(MessageType.RoundStart);
 

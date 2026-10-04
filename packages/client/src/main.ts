@@ -55,9 +55,9 @@ interface LevelCard {
   card: HTMLElement;
 }
 
-// Карточка — радиокнопка с клавиатуры и касанием; внутри настоящая кнопка подсказки, поэтому сама карточка — не <button>.
+// Карточка — номер и имя; описание выбранного уровня показывается под сеткой, чтобы десять карточек уместились
+// на экране телефона.
 function buildLevelCard(level: BotLevel): LevelCard {
-  const info = BOT_LEVEL_INFO[level];
   const card = document.createElement('div');
   card.className = 'level';
   card.dataset.level = String(level);
@@ -67,39 +67,22 @@ function buildLevelCard(level: BotLevel): LevelCard {
   const badge = document.createElement('span');
   badge.className = 'level-badge';
   badge.textContent = String(level);
-
-  const body = document.createElement('span');
-  body.className = 'level-body';
   const name = document.createElement('span');
   name.className = 'level-name';
-  name.textContent = info.name;
-  const tagline = document.createElement('span');
-  tagline.className = 'level-tagline';
-  tagline.textContent = info.tagline;
-  const hint = document.createElement('span');
-  hint.className = 'level-hint';
-  hint.textContent = info.summary;
-  hint.hidden = true;
-  body.append(name, tagline, hint);
-
-  const infoButton = document.createElement('button');
-  infoButton.type = 'button';
-  infoButton.className = 'level-info';
-  infoButton.setAttribute('aria-label', 'Подробнее');
-  infoButton.textContent = 'i';
-  // Подсказка раскрывается по иконке, не выбирая уровень.
-  infoButton.addEventListener('click', (event) => {
-    event.stopPropagation();
-    hint.hidden = !hint.hidden;
-    infoButton.classList.toggle(LEVEL_INFO_OPEN_CLASS, !hint.hidden);
-  });
-
-  card.append(badge, body, infoButton);
+  name.textContent = BOT_LEVEL_INFO[level].name;
+  card.append(badge, name);
   return { level, card };
 }
 
+interface LevelPickerElements {
+  grid: HTMLElement;
+  tagline: HTMLElement;
+  hint: HTMLElement;
+  info: HTMLButtonElement;
+}
+
 // Карточки уровней — из общего с сервером контракта; выбранный уровень запоминается на устройстве.
-function mountLevelPicker(container: HTMLElement): { selected: () => BotLevel } {
+function mountLevelPicker(elements: LevelPickerElements): { selected: () => BotLevel } {
   const cards = BOT_LEVELS.map(buildLevelCard);
   let selected = parseBotLevel(localStorage.getItem(BOT_LEVEL_KEY));
   const render = (): void => {
@@ -108,6 +91,8 @@ function mountLevelPicker(container: HTMLElement): { selected: () => BotLevel } 
       card.classList.toggle(LEVEL_SELECTED_CLASS, isSelected);
       card.setAttribute('aria-checked', String(isSelected));
     }
+    elements.tagline.textContent = BOT_LEVEL_INFO[selected].tagline;
+    elements.hint.textContent = BOT_LEVEL_INFO[selected].summary;
   };
   for (const { level, card } of cards) {
     const select = (): void => {
@@ -122,8 +107,13 @@ function mountLevelPicker(container: HTMLElement): { selected: () => BotLevel } 
         select();
       }
     });
-    container.append(card);
+    elements.grid.append(card);
   }
+  elements.info.addEventListener('click', () => {
+    elements.hint.hidden = !elements.hint.hidden;
+    elements.info.classList.toggle(LEVEL_INFO_OPEN_CLASS, !elements.hint.hidden);
+    elements.info.setAttribute('aria-expanded', String(!elements.hint.hidden));
+  });
   render();
   return { selected: () => selected };
 }
@@ -135,7 +125,12 @@ function showHome(): void {
   home.hidden = false;
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
   statsInput.value = localStorage.getItem(STATS_KEY) ?? '3322';
-  const picker = mountLevelPicker(byId('bot-levels', HTMLElement));
+  const picker = mountLevelPicker({
+    grid: byId('bot-levels', HTMLElement),
+    tagline: byId('level-tagline', HTMLElement),
+    hint: byId('level-hint', HTMLElement),
+    info: byId('level-info', HTMLButtonElement),
+  });
   const startDuelWith = (code: string): void => {
     localStorage.setItem(NICKNAME_KEY, nickname.value);
     localStorage.setItem(STATS_KEY, statsInput.value);
