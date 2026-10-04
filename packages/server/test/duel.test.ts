@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DT, normalizeAngle, TURRET_RATE, type Action, type Stats } from '@tanks/shared/engine';
 import {
+  botRoomCode,
   EventFlag,
   MessageType,
   type RoundStartMessage,
@@ -306,11 +307,11 @@ describe('полный раунд', () => {
   }, 60000);
 });
 
-describe('против манекена', () => {
-  it('охотник догоняет манекена и доигрывает раунд до конца, начинается следующий', async () => {
+describe('против бота', () => {
+  it('скриптовый человек против Охотника: раунд доигрывается до конца, начинается следующий', async () => {
     const human = await TestClient.connect(port);
     clients.push(human);
-    human.join('botduel', 'Охотник', HUNTER);
+    human.join(botRoomCode(3, 'duel'), 'Человек', HUNTER);
     await human.nextOfType(MessageType.Welcome);
     await human.nextOfType(MessageType.RoundStart);
 

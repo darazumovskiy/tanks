@@ -1,5 +1,6 @@
 import { expect, test, type Browser } from '@playwright/test';
-import { Player, sleep, until } from './player.js';
+import { botRoomCode, type BotLevel } from '@tanks/shared/protocol';
+import { Player, sleep, until, type DebugState } from './player.js';
 import { GameServer } from './server.js';
 
 const DEFAULT_STATS = '3322';
@@ -36,6 +37,11 @@ test.afterAll(async () => {
 
 function roomCode(prefix = 'e2e'): string {
   return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+// Код комнаты не длиннее 16 знаков: после префикса с уровнем остаётся место на короткий случайный хвост.
+function botCode(level: BotLevel): string {
+  return botRoomCode(level, Math.random().toString(36).slice(2, 10));
 }
 
 async function openPair(
@@ -186,10 +192,7 @@ test('телефон: кнопка авто-огня стреляет без к�
   await desktop.close();
 });
 
-test('комната с манекеном: раунд стартует сразу, манекен двигается', async ({ browser }) => {
-  const human = await Player.open(browser, server.baseUrl, roomCode('bot'), 'Дима', DEFAULT_STATS);
-  const start = await human.waitForFight();
-  expect(start.side).toBe(1);
+async function expectEnemyMoves(human: Player, start: DebugState, what: string): Promise<void> {
   await until(
     async () => {
       const state = await human.state();
@@ -200,8 +203,26 @@ test('комната с манекеном: раунд стартует сраз
       return hasMoved || state.enemy.heading !== start.enemy.heading ? true : null;
     },
     10_000,
-    'манекен не двигается',
+    what,
   );
+}
+
+test('комната с манекеном по ссылке: раунд стартует сразу, манекен двигается', async ({ browser }) => {
+  const human = await Player.open(browser, server.baseUrl, botCode(1), 'Дима', DEFAULT_STATS);
+  const start = await human.waitForFight();
+  expect(start.side).toBe(1);
+  expect(start.nicknames[0]).toBe('Манекен');
+  await expectEnemyMoves(human, start, 'манекен не двигается');
+  await human.close();
+});
+
+test('с главной: выбран уровень 10, «Против бота» ведёт в бой с ПАРАЛЛАКС-ASTRA', async ({ browser }) => {
+  const human = await Player.openAgainstBot(browser, server.baseUrl, 'Дима', 10);
+  await expect(human.page).toHaveURL(/\/d\/bot10[a-z0-9]+$/);
+  const start = await human.waitForFight();
+  expect(start.side).toBe(1);
+  expect(start.nicknames[0]).toBe('ПАРАЛЛАКС-ASTRA');
+  await expectEnemyMoves(human, start, 'бот Астры не двигается');
   await human.close();
 });
 

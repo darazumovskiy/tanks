@@ -7,3 +7,5 @@ package-lock.json
 packages/shared/test/determinism/fixtures.json
 packages/mobile/android
 packages/mobile/ios
+
+packages/server/bots/

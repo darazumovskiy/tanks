@@ -8,6 +8,7 @@
 |---|---|
 | [backend/protocol.md](backend/protocol.md) | Бинарный протокол клиент ↔ сервер, подтверждение ввода, квантование |
 | [backend/duel-server.md](backend/duel-server.md) | Сервер дуэли: комнаты, фазы, тик, тесты |
+| [backend/bot-ladder.md](backend/bot-ladder.md) | Лестница ботов: уровни 1–3 и 10, код комнаты `bot<уровень>…`, бот как подключение с зеркалом раунда, файл бота Астры, стенд «бот против бота» |
 | [backend/game-log.md](backend/game-log.md) | Журнал игры: идентификатор и таймкод дуэли, файлы на сервере, строки сервера и клиента, приёмщик `/log` |
 | [frontend/duel-client.md](frontend/duel-client.md) | Клиент дуэли: предсказание, интерполяция, ввод, рендер, HUD |
 | [frontend/touch-controls.md](frontend/touch-controls.md) | Сенсорное управление: два плавающих стика, перевод в действие, план тестирования |

@@ -19,6 +19,7 @@
 | Как проверять на телефоне и эмуляторе, замеры на устройстве | [knowledge/device-testing.md](knowledge/device-testing.md) |
 | Камера дуэли: стратегии, правила, настройки, инварианты, лаборатория, план тестирования | [tech/impl/frontend/duel-camera.md](../../tech/impl/frontend/duel-camera.md) |
 | Приглашение по ссылке: «Копировать» и «Поделиться», ссылка открывает Android-приложение (App Links), плашка «Открыть в приложении» | [tech/impl/frontend/invite-link.md](../../tech/impl/frontend/invite-link.md) |
+| Лестница ботов: уровни, код комнаты, бот как подключение, файл бота Астры, стенд «бот против бота» | [tech/impl/backend/bot-ladder.md](../../tech/impl/backend/bot-ladder.md) |
 | Журнал игры: идентификатор и таймкод на экране, файлы `/opt/tanks-logs/<id>.log`, что пишут сервер и клиент, как читать | [tech/impl/backend/game-log.md](../../tech/impl/backend/game-log.md) |
 | Разбор «дёргания» на телефоне по журналу DNE5: пачки команд и снимков, цифры, причина, лечение | [knowledge/jitter-dne5.md](knowledge/jitter-dne5.md) |
 | Камера и управление: передача 2026-10-03 (задел `camera-lab`, порядок работ по управлению) | [knowledge/camera-handoff.md](knowledge/camera-handoff.md) |

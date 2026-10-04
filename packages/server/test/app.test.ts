@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  botRoomCode,
   MessageType,
   PROTOCOL_VERSION,
   ErrorCode,
@@ -226,15 +227,8 @@ describe('вход в комнату', () => {
     expect(app.stats().rooms).toBe(1);
   });
 
-  it('код с префиксом bot — дуэль против манекена: он уже сидит первым, раунд стартует сразу', async () => {
-    const human = await connect();
-    human.join('botxyz1', 'Дима');
-    const welcome = await human.nextOfType(MessageType.Welcome);
-    expect(welcome.side).toBe(1);
-    const start = await human.nextOfType(MessageType.RoundStart);
-    expect(start.tanks[0].nickname).toBe('Манекен');
-    expect(start.tanks[1].nickname).toBe('Дима');
-
+  // Бот на месте 0 за 400 снимков успевает и поехать, и выстрелить.
+  async function watchBot(human: TestClient): Promise<{ hasMoved: boolean; hasFired: boolean }> {
     let hasMoved = false;
     let hasFired = false;
     let lastHeading: number | null = null;
@@ -249,15 +243,49 @@ describe('вход в комнату', () => {
         hasFired = true;
       }
     }
-    expect(hasMoved).toBe(true);
-    expect(hasFired).toBe(true);
+    return { hasMoved, hasFired };
+  }
+
+  it('код bot01… — дуэль против манекена: он уже сидит первым, раунд стартует сразу', async () => {
+    const code = botRoomCode(1, 'xyz1');
+    const human = await connect();
+    human.join(code, 'Дима');
+    const welcome = await human.nextOfType(MessageType.Welcome);
+    expect(welcome.side).toBe(1);
+    const start = await human.nextOfType(MessageType.RoundStart);
+    expect(start.tanks[0].nickname).toBe('Манекен');
+    expect(start.tanks[1].nickname).toBe('Дима');
+    expect(await watchBot(human)).toEqual({ hasMoved: true, hasFired: true });
 
     const stranger = await connect();
-    stranger.join('botxyz1', 'Третий');
+    stranger.join(code, 'Третий');
     expect((await stranger.nextOfType(MessageType.Error)).code).toBe(ErrorCode.RoomFull);
 
     human.close();
     await sleep(100);
+    expect(app.stats().rooms).toBe(0);
+  });
+
+  it.each([
+    [2, 'Карусель', { armor: 4, engine: 2, gun: 2, reload: 2 }],
+    [3, 'Охотник', { armor: 3, engine: 3, gun: 2, reload: 2 }],
+    [10, 'ПАРАЛЛАКС-ASTRA', { armor: 2, engine: 1, gun: 2, reload: 5 }],
+  ] as const)('уровень %i — бот «%s» со своими характеристиками, двигается', async (level, name, stats) => {
+    const human = await connect();
+    human.join(botRoomCode(level, 'xyz1'), 'Дима');
+    const start = await human.nextOfType(MessageType.RoundStart);
+    expect(start.tanks[0]).toEqual({ nickname: name, stats });
+    // Стоящий за стеной человек не цель: уровни 2–10 в стену не стреляют, проверяется только движение.
+    expect((await watchBot(human)).hasMoved).toBe(true);
+  });
+
+  it('код bot без заполненного уровня — неверный код комнаты, комната не создаётся', async () => {
+    for (const code of ['botabc', 'bot1abc', 'bot07abc', 'bot99abc']) {
+      const client = await connect();
+      client.join(code, 'Дима');
+      expect((await client.nextOfType(MessageType.Error)).code).toBe(ErrorCode.BadMessage);
+      expect(await client.closed()).toBe(true);
+    }
     expect(app.stats().rooms).toBe(0);
   });
 

@@ -212,6 +212,7 @@ export class Game {
     gameTick: number;
     roundIndex: number;
     score: [number, number];
+    nicknames: [string, string];
     isFighting: boolean;
     isAutoFiring: boolean;
     rttMs: number;
@@ -236,6 +237,7 @@ export class Game {
       gameTick: this.prediction.latestGameTick,
       roundIndex: this.roundStart.roundIndex,
       score: this.roundStart.score,
+      nicknames: this.names(),
       isFighting: this.prediction.isFighting,
       isAutoFiring: this.input.isAutoFiring,
       rttMs: this.net.rttMs,

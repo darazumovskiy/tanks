@@ -18,6 +18,7 @@ export interface DebugState {
   gameId: string;
   roundIndex: number;
   score: [number, number];
+  nicknames: [string, string];
   isFighting: boolean;
   isAutoFiring: boolean;
   me: TankState;
@@ -29,6 +30,8 @@ export interface DebugState {
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
 const AUTOFIRE_BUTTON = '#autofire';
+const BOT_LEVEL_SELECT = '#bot-level';
+const CREATE_BOT_BUTTON = '#create-bot';
 const COPY_BUTTON = '#overlay .overlay-copy';
 const OPEN_APP_BANNER = '#open-app';
 const OPEN_APP_LINK = '#open-app-link';
@@ -97,6 +100,24 @@ export class Player {
     );
     const page = await context.newPage();
     await page.goto(`${baseUrl}/d/${roomCode}`);
+    return new Player(context, page, name);
+  }
+
+  // Игрок заходит с главной: выбирает уровень бота и жмёт «Против бота».
+  static async openAgainstBot(browser: Browser, baseUrl: string, name: string, botLevel: number): Promise<Player> {
+    const context = await browser.newContext();
+    await context.addInitScript(
+      (entries: Record<string, string>) => {
+        for (const [key, value] of Object.entries(entries)) {
+          localStorage.setItem(key, value);
+        }
+      },
+      { [NICKNAME_KEY]: name },
+    );
+    const page = await context.newPage();
+    await page.goto(`${baseUrl}/`);
+    await page.locator(BOT_LEVEL_SELECT).selectOption(String(botLevel));
+    await page.locator(CREATE_BOT_BUTTON).click();
     return new Player(context, page, name);
   }
 

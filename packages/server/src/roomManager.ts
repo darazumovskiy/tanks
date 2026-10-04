@@ -1,18 +1,16 @@
-import { DEFAULT_STATS } from '@tanks/shared/engine';
-import { BOT_NICKNAME, BOT_SIDE, DummyBot } from './bot.js';
+import { botLevelOf, isBotRoomCode } from '@tanks/shared/protocol';
+import { createBot } from './bots/ladder.js';
 import { NO_LOG, type GameLog } from './gameLog.js';
 import { DEFAULT_ROOM_OPTIONS, Room, type Connection, type RoomOptions, type Seat } from './room.js';
 
 const CODE_PATTERN = /^[a-z0-9]{3,16}$/;
-// Код с этим префиксом — дуэль против манекена: сервер сажает бота первым игроком при создании комнаты.
-export const BOT_ROOM_PREFIX = 'bot';
 
+// Код с префиксом бота обязан нести заполненный уровень.
 export function isValidRoomCode(code: string): boolean {
-  return CODE_PATTERN.test(code);
-}
-
-export function isBotRoomCode(code: string): boolean {
-  return code.startsWith(BOT_ROOM_PREFIX);
+  if (!CODE_PATTERN.test(code)) {
+    return false;
+  }
+  return !isBotRoomCode(code) || botLevelOf(code) !== null;
 }
 
 interface Membership {
@@ -36,14 +34,20 @@ export class RoomManager {
     return this.rooms.size;
   }
 
+  // Комната бота создаётся с ботом на месте 0; код уже проверен isValidRoomCode.
   getOrCreate(code: string): Room {
-    let room = this.rooms.get(code);
-    if (room === undefined) {
-      room = new Room(code, this.options, this.log);
-      this.rooms.set(code, room);
-      if (isBotRoomCode(code)) {
-        this.seatBot(room);
-      }
+    const existing = this.rooms.get(code);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const room = new Room(code, this.options, this.log);
+    this.rooms.set(code, room);
+    const level = botLevelOf(code);
+    if (level !== null) {
+      const bot = createBot(level, this.random, (connection, nickname, stats) =>
+        room.join(0, connection, nickname, stats),
+      );
+      this.botSeats.set(room, bot.seat);
     }
     return room;
   }
@@ -56,7 +60,7 @@ export class RoomManager {
     this.memberships.set(connection, { room, seat });
   }
 
-  // В комнате с манекеном один человек: ушёл он — манекен снимается; пустая комната удаляется.
+  // В комнате с ботом один человек: ушёл он — бот снимается; пустая комната удаляется.
   detach(connection: Connection): void {
     const membership = this.memberships.get(connection);
     if (membership === undefined) {
@@ -78,13 +82,5 @@ export class RoomManager {
     for (const room of this.rooms.values()) {
       room.step(lateMs);
     }
-  }
-
-  // Комната только что создана, место манекена свободно.
-  private seatBot(room: Room): void {
-    const bot = new DummyBot(this.random, (connection) =>
-      room.join(BOT_SIDE, connection, BOT_NICKNAME, { ...DEFAULT_STATS }),
-    );
-    this.botSeats.set(room, bot.seat);
   }
 }

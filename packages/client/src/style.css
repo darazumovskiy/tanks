@@ -327,13 +327,18 @@ input {
   opacity: 0.9;
 }
 
-.home input {
+.home input,
+.home select {
   padding: 10px 12px;
   font-size: 18px;
   color: #f4f1e8;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 8px;
+}
+
+.home select option {
+  color: #0b0f0d;
 }
 
 .home button.secondary {
