@@ -3,10 +3,11 @@ import { GameServer } from '../server.js';
 
 // Эталоны кадра толпы: каждый кадр стенда `/?lab=frames&set=ffa` на каждом своём экране и главная с секцией
 // общего боя совпадают с эталоном попиксельно. Кадры холста снимаются прямым и обратным порядком: кадр не зависит
-// от предыдущего.
+// от предыдущего. Кадры интерфейса матча — страница целиком: поле на холсте боя и интерфейс поверх.
 
 interface FfaFrameInfo {
   id: string;
+  kind: 'canvas' | 'page';
   screens: string[];
 }
 
@@ -43,14 +44,44 @@ const PHONE: BrowserContextOptions = {
   hasTouch: true,
 };
 const DESKTOP: BrowserContextOptions = { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 };
-const EXPECTED_FRAMES: FfaFrameInfo[] = [
-  { id: 'floor-50', screens: ['phone', 'desktop'] },
-  { id: 'floor-seam', screens: ['phone', 'desktop'] },
+const SCREENS: readonly { id: string; options: BrowserContextOptions }[] = [
+  { id: 'phone', options: PHONE },
+  { id: 'desktop', options: DESKTOP },
+];
+const BOTH = ['phone', 'desktop'];
+const CANVAS_FRAMES: Omit<FfaFrameInfo, 'kind'>[] = [
+  { id: 'floor-50', screens: BOTH },
+  { id: 'floor-seam', screens: BOTH },
   { id: 'floor-pending', screens: ['phone'] },
   { id: 'crowd-50', screens: ['phone'] },
   { id: 'zone-50', screens: ['phone'] },
   { id: 'shield-shake', screens: ['phone'] },
   { id: 'art-color', screens: ['phone'] },
+];
+const PAGE_FRAMES: Omit<FfaFrameInfo, 'kind'>[] = [
+  { id: 'hud-connecting', screens: ['phone'] },
+  { id: 'hud-lobby-few', screens: ['phone'] },
+  { id: 'hud-lobby-start', screens: BOTH },
+  { id: 'hud-lobby-full', screens: ['phone'] },
+  { id: 'hud-lobby-50', screens: ['phone'] },
+  { id: 'hud-countdown', screens: ['phone'] },
+  { id: 'hud-fight', screens: ['phone'] },
+  { id: 'hud-death', screens: ['phone'] },
+  { id: 'hud-out', screens: ['phone'] },
+  { id: 'hud-final', screens: ['phone'] },
+  { id: 'hud-final-start', screens: ['phone'] },
+  { id: 'hud-idle', screens: ['phone'] },
+  { id: 'hud-spectator', screens: ['phone'] },
+  { id: 'hud-results', screens: BOTH },
+  { id: 'hud-fatal-idle', screens: ['phone'] },
+  { id: 'hud-fatal-replaced', screens: ['phone'] },
+  { id: 'hud-fatal-update', screens: ['phone'] },
+  { id: 'hud-fatal-error', screens: ['phone'] },
+  { id: 'hud-connection', screens: ['phone'] },
+];
+const EXPECTED_FRAMES: FfaFrameInfo[] = [
+  ...CANVAS_FRAMES.map((frame): FfaFrameInfo => ({ ...frame, kind: 'canvas' })),
+  ...PAGE_FRAMES.map((frame): FfaFrameInfo => ({ ...frame, kind: 'page' })),
 ];
 
 const server = new GameServer();
@@ -87,10 +118,31 @@ test('кадры толпы совпадают с эталонами в любо
   await page.evaluate(() => window.tanksFfaFrames.ready());
   const frames = await page.evaluate(() => window.tanksFfaFrames.frames);
   expect(frames).toEqual(EXPECTED_FRAMES);
-  await snapshotFrames(page, frames);
-  await snapshotFrames(page, [...frames].reverse());
+  const canvasFrames = frames.filter((frame) => frame.kind === 'canvas');
+  await snapshotFrames(page, canvasFrames);
+  await snapshotFrames(page, [...canvasFrames].reverse());
   await context.close();
 });
+
+for (const screen of SCREENS) {
+  test(`интерфейс матча совпадает с эталонами: ${screen.id}`, async ({ browser }) => {
+    const context = await browser.newContext(screen.options);
+    const page = await context.newPage();
+    await page.goto(`${server.baseUrl}/?lab=frames&set=ffa&seed=${String(SEED)}`);
+    await page.waitForFunction(() => 'tanksFfaFrames' in window);
+    await page.evaluate(() => window.tanksFfaFrames.ready());
+    for (const frame of PAGE_FRAMES.filter((candidate) => candidate.screens.includes(screen.id))) {
+      await page.evaluate(
+        ([frameId, screenId]) => {
+          window.tanksFfaFrames.show(frameId, screenId);
+        },
+        [frame.id, screen.id] as const,
+      );
+      await expect.soft(page).toHaveScreenshot(`${frame.id}-${screen.id}.png`, EXACT);
+    }
+    await context.close();
+  });
+}
 
 // Четыре разрешения; на экране — четыре масштаба, стык кусков и оба угла поля, по шесть дробных сдвигов камеры;
 // полная отрисовка с дробной тряской, пока куски не готовы. Стык — до 1/255: Chromium тестов без видеокарты.
@@ -108,10 +160,7 @@ test('пол кусками: кусок дважды одинаков, стык 
   await context.close();
 });
 
-for (const [screenId, options] of [
-  ['phone', PHONE],
-  ['desktop', DESKTOP],
-] as const) {
+for (const { id: screenId, options } of SCREENS) {
   test(`главная с секцией общего боя совпадает с эталоном: ${screenId}`, async ({ browser }) => {
     const context = await browser.newContext(options);
     const page = await context.newPage();

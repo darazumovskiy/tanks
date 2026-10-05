@@ -12,6 +12,7 @@ import {
 import { FfaCamera, type FfaAim } from '../ffa/ffaCamera.js';
 import type { FfaFrameView, FfaViewTank } from '../ffa/ffaPrediction.js';
 import { FfaFxPolicy } from '../ffa/fxPolicy.js';
+import { FfaHud } from '../ffa/hud/hud.js';
 import { FX_SCREENS, type FxScreen } from '../fxLab/scenes.js';
 import { buildSelect } from '../labShared.js';
 import { worldToScreen, type Camera } from '../render/camera.js';
@@ -22,12 +23,14 @@ import { StampDecals } from '../render/stampDecals.js';
 import { makeCanvas } from '../render/view.js';
 import { defaultSettings } from '../settings.js';
 import { FFA_FRAMES, FFA_SPRITE_PROBE, type FfaStandFrame, type StandTank } from './ffaFrames.js';
+import { FFA_HUD_FRAMES, type FfaHudFrame } from './ffaHudFrames.js';
 import { checkFloor } from './floorChecks.js';
 import { waitForFonts } from './fonts.js';
 import { installSeededRandom } from './seededRandom.js';
 
 // Стенд кадров толпы (`/?lab=frames&set=ffa`): именованные кадры настоящим рендером толпы через те же камеру,
-// правила эффектов и рисование, что игра, в замороженное время — эталоны визуальной регрессии.
+// правила эффектов и рисование, что игра, в замороженное время — эталоны визуальной регрессии. Кадр страницы —
+// поле на холсте боя во весь экран и настоящий интерфейс матча поверх.
 // `window.tanksFfaFrames`: `frames`, `ready()`, `show(frameId, screenId)`, `snapshot()`, `floorChecks()` — сверки
 // пола кусками. `?seed=` — случайность каждого показа с этого зерна.
 
@@ -49,6 +52,20 @@ const BULLET_SPEED = deriveStats(DEFAULT_STATS).bulletSpeed;
 const MAX_HP = deriveStats(DEFAULT_STATS).maxHp;
 const READOUT = { gameId: 'K7QX', fps: 60, worstFrameMs: 19, rttMs: 46, correctionPx: 0.4, isMuted: false };
 const OWN_PALETTE_SUFFIX = '-own';
+const COARSE_POINTER = '(pointer: coarse)';
+const PAGE_CLASSES = ['duel', 'ffa'];
+const NO_ACTIONS = {
+  invite: (): Promise<void> => Promise.resolve(),
+  leave: (): void => undefined,
+  rejoin: (): void => undefined,
+  reload: (): void => undefined,
+};
+
+interface StandFrameInfo {
+  id: string;
+  kind: 'canvas' | 'page';
+  screens: string[];
+}
 
 interface StandTarget {
   screen: FxScreen;
@@ -83,11 +100,47 @@ function chunkCostClock(): () => number {
   };
 }
 
-function makeTarget(screen: FxScreen, isOwnPaletteOnly: boolean): StandTarget {
-  const { canvas, ctx } = makeCanvas(1, 1);
+function elementById(id: string): HTMLElement {
+  const element = document.getElementById(id);
+  if (element === null) {
+    throw new Error(`нет элемента #${id}`);
+  }
+  return element;
+}
+
+function stageCanvas(): HTMLCanvasElement {
+  const element = elementById('stage');
+  if (!(element instanceof HTMLCanvasElement)) {
+    throw new Error('#stage — не холст');
+  }
+  return element;
+}
+
+function makeScreenTarget(screen: FxScreen, isOwnPaletteOnly: boolean): StandTarget {
+  const { canvas } = makeCanvas(1, 1);
   canvas.style.width = `${String(screen.width)}px`;
   canvas.style.height = `${String(screen.height)}px`;
   canvas.className = 'fx-stage-canvas';
+  return makeTarget(screen, canvas, isOwnPaletteOnly);
+}
+
+// Холст страницы боя: размер и плотность — из окна, как в игре.
+function makePageTarget(): StandTarget {
+  const screen: FxScreen = {
+    id: 'page',
+    width: window.innerWidth,
+    height: window.innerHeight,
+    pixelRatio: window.devicePixelRatio,
+    isTouchDevice: matchMedia(COARSE_POINTER).matches,
+  };
+  return makeTarget(screen, stageCanvas(), false);
+}
+
+function makeTarget(screen: FxScreen, canvas: HTMLCanvasElement, isOwnPaletteOnly: boolean): StandTarget {
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) {
+    throw new Error('Canvas 2D недоступен');
+  }
   const effects = new Effects(
     new StampDecals(),
     (id) => (id === target.frame.myId ? FFA_OWN_COLOR : FFA_OTHER_COLOR),
@@ -247,6 +300,25 @@ function targetKey(screenId: string, isOwnPaletteOnly: boolean): string {
   return isOwnPaletteOnly ? `${screenId}${OWN_PALETTE_SUFFIX}` : screenId;
 }
 
+// Как при входе в бой толпы: холст во весь экран, кнопки боя поверх, лаборатории не видно.
+function enterFfaPage(root: HTMLElement, frame: FfaHudFrame, isTouchDevice: boolean): void {
+  root.hidden = true;
+  document.body.classList.add(...PAGE_CLASSES);
+  stageCanvas().hidden = false;
+  elementById('menu').hidden = false;
+  elementById('settings-toggle').hidden = false;
+  elementById('autofire').hidden = !isTouchDevice || !frame.hasFieldControls;
+}
+
+// Интерфейс кадра: сессия из сообщений сервера; зритель смотрит за целью среди живых танков поля.
+function renderHud(hud: FfaHud, frame: FfaHudFrame): void {
+  const { session, now } = frame.build();
+  if (session.screen() === 'spectator') {
+    session.followSpectator(frame.scene.tanks.filter((tank) => tank.isAlive !== false).map((tank) => tank.id));
+  }
+  hud.render(session.hud(now, hud.layout), now);
+}
+
 export function showFfaFrameStand(root: HTMLElement): void {
   const firstFrame = FFA_FRAMES[0];
   if (firstFrame === undefined) {
@@ -261,10 +333,12 @@ export function showFfaFrameStand(root: HTMLElement): void {
   const zone = fullGameZone(firstFrame.size);
   const targets = new Map<string, StandTarget>();
   for (const screen of FX_SCREENS) {
-    targets.set(targetKey(screen.id, false), makeTarget(screen, false));
-    targets.set(targetKey(screen.id, true), makeTarget(screen, true));
+    targets.set(targetKey(screen.id, false), makeScreenTarget(screen, false));
+    targets.set(targetKey(screen.id, true), makeScreenTarget(screen, true));
   }
-  const ready = waitForAssets([...targets.values()], zone);
+  const pageTarget = makePageTarget();
+  const hud = new FfaHud(elementById('ffa-hud'), NO_ACTIONS, pageTarget.screen.isTouchDevice);
+  const ready = waitForAssets([...targets.values(), pageTarget], zone);
 
   root.hidden = false;
   root.innerHTML = '';
@@ -281,7 +355,23 @@ export function showFfaFrameStand(root: HTMLElement): void {
   root.append(controls, stage, info);
   let shown: HTMLCanvasElement | null = null;
 
+  const showPage = (frame: FfaHudFrame): void => {
+    enterFfaPage(root, frame, pageTarget.screen.isTouchDevice);
+    playFrame(pageTarget, frame.scene, zone);
+    shown = pageTarget.canvas;
+    renderHud(hud, frame);
+  };
+
   const show = (frameId: string, screenId: string): void => {
+    const hudFrame = FFA_HUD_FRAMES.find((candidate) => candidate.id === frameId);
+    if (hudFrame !== undefined) {
+      if (!hudFrame.screens.some((id) => id === screenId)) {
+        throw new Error(`кадр ${frameId} не снимается на экране ${screenId}`);
+      }
+      reseed?.();
+      showPage(hudFrame);
+      return;
+    }
     const frame = FFA_FRAMES.find((candidate) => candidate.id === frameId);
     const target = frame === undefined ? undefined : targets.get(targetKey(screenId, frame.isOwnPaletteOnly));
     if (frame === undefined || target === undefined) {
@@ -313,9 +403,13 @@ export function showFfaFrameStand(root: HTMLElement): void {
     info.textContent = String(error);
   });
 
+  const frames: StandFrameInfo[] = [
+    ...FFA_FRAMES.map((frame): StandFrameInfo => ({ id: frame.id, kind: 'canvas', screens: [...frame.screens] })),
+    ...FFA_HUD_FRAMES.map((frame): StandFrameInfo => ({ id: frame.id, kind: 'page', screens: [...frame.screens] })),
+  ];
   Object.assign(window, {
     tanksFfaFrames: {
-      frames: FFA_FRAMES.map((frame) => ({ id: frame.id, screens: [...frame.screens] })),
+      frames,
       ready: (): Promise<void> => ready,
       show,
       snapshot: (): string => {

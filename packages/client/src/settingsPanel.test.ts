@@ -24,7 +24,7 @@ describe('SettingsPanel', () => {
     toggle = document.createElement('button');
     document.body.append(root, toggle);
     store = new SettingsStore(localStorage, DEFAULT_SETTINGS, PLAYER);
-    new SettingsPanel(root, toggle, store, true);
+    new SettingsPanel(root, toggle, store, { isTouchDevice: true, hasCameraGroup: true });
   });
 
   const rangeFor = (key: string): HTMLInputElement => {
@@ -105,7 +105,10 @@ describe('SettingsPanel', () => {
     const desktopRoot = document.createElement('aside');
     document.body.append(desktopRoot);
     const desktopStore = new SettingsStore(localStorage, defaultSettings(), PLAYER);
-    new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, false);
+    new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, {
+      isTouchDevice: false,
+      hasCameraGroup: true,
+    });
     return Array.from(desktopRoot.querySelectorAll<HTMLLabelElement>('label.settings-check')).map(
       (row) => row.querySelector('.settings-head span')?.textContent ?? null,
     );
@@ -181,7 +184,10 @@ describe('SettingsPanel', () => {
     const adminRoot = document.createElement('aside');
     document.body.append(adminRoot);
     const adminStore = new SettingsStore(localStorage, DEFAULT_SETTINGS, ADMIN);
-    new SettingsPanel(adminRoot, document.createElement('button'), adminStore, true);
+    new SettingsPanel(adminRoot, document.createElement('button'), adminStore, {
+      isTouchDevice: true,
+      hasCameraGroup: true,
+    });
     const title = adminRoot.querySelector('.settings-group-title');
     expect(title?.textContent).toBe(ADMIN_GROUP_TITLE);
     const labels = checkLabels(adminRoot);
@@ -209,7 +215,10 @@ describe('SettingsPanel', () => {
     const phoneRoot = document.createElement('aside');
     document.body.append(phoneRoot);
     const phoneStore = new SettingsStore(localStorage, DEFAULT_SETTINGS, ADMIN);
-    new SettingsPanel(phoneRoot, document.createElement('button'), phoneStore, true);
+    new SettingsPanel(phoneRoot, document.createElement('button'), phoneStore, {
+      isTouchDevice: true,
+      hasCameraGroup: true,
+    });
     const checkbox = Array.from(phoneRoot.querySelectorAll<HTMLLabelElement>('label.settings-check'))
       .find((row) => row.querySelector('.settings-head span')?.textContent === ZONE_FIRE_LABEL)
       ?.querySelector<HTMLInputElement>('input[type=checkbox]');
@@ -224,7 +233,10 @@ describe('SettingsPanel', () => {
     const desktopRoot = document.createElement('aside');
     document.body.append(desktopRoot);
     const desktopStore = new SettingsStore(localStorage, defaultSettings(), ADMIN);
-    new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, false);
+    new SettingsPanel(desktopRoot, document.createElement('button'), desktopStore, {
+      isTouchDevice: false,
+      hasCameraGroup: true,
+    });
     const desktopLabels = checkLabels(desktopRoot);
     expect(desktopLabels).toContain(LEAD_HINT_LABEL);
     expect(desktopLabels).not.toContain(ZONE_FIRE_LABEL);
@@ -286,11 +298,29 @@ describe('SettingsPanel', () => {
   it('на компьютере полей камеры нет', () => {
     const desktopRoot = document.createElement('aside');
     document.body.append(desktopRoot);
-    new SettingsPanel(desktopRoot, document.createElement('button'), store, false);
+    new SettingsPanel(desktopRoot, document.createElement('button'), store, {
+      isTouchDevice: false,
+      hasCameraGroup: true,
+    });
     expect(desktopRoot.querySelector('button.settings-mode')).toBeNull();
     const labels = Array.from(desktopRoot.querySelectorAll('.settings-head span:first-child')).map(
       (span) => span.textContent,
     );
     expect(labels).toEqual(['Размер стика', 'Мёртвая зона', 'Разворот', 'Радиус кольца огня']);
+  });
+
+  it('в бою толпы на телефоне группы камеры нет, остальное — как в дуэли', () => {
+    const crowdRoot = document.createElement('aside');
+    document.body.append(crowdRoot);
+    new SettingsPanel(crowdRoot, document.createElement('button'), store, {
+      isTouchDevice: true,
+      hasCameraGroup: false,
+    });
+    expect(crowdRoot.querySelector('button.settings-mode')).toBeNull();
+    const labels = Array.from(crowdRoot.querySelectorAll('.settings-row .settings-head span:first-child')).map(
+      (span) => span.textContent,
+    );
+    expect(labels).toEqual(['Размер стика', 'Мёртвая зона', 'Разворот', 'Радиус кольца огня']);
+    expect(checkLabels(crowdRoot)).toEqual(checkLabels(root));
   });
 });

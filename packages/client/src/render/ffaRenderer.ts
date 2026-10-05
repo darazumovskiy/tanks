@@ -7,8 +7,9 @@ import { isInView, type Camera } from './camera.js';
 import type { Effects, FxBullet } from './effects.js';
 import { FieldRenderer, type FieldScene, type SceneTank } from './field.js';
 import { ScreenLayers, screenOf, type DebugReadout } from './screenLayers.js';
+import { ShieldRings, type ShieldRing } from './shieldRings.js';
 import { TiledFloor } from './tiledFloor.js';
-import { rgba, SIDE_COLORS } from './view.js';
+import { BODY_FONT, rgba, SIDE_COLORS } from './view.js';
 
 // Свой танк и свои снаряды — акцент, все чужие — цвет противника; бот — тот же цвет с отметкой у ника.
 export const FFA_OWN_COLOR = SIDE_COLORS[0];
@@ -20,12 +21,25 @@ const BORDER_WIDTH = 1200;
 const CULL_MARGIN = 100;
 const MAX_PIXEL_RATIO = 4;
 
-// Кольцо неуязвимости — черновой вид: ореол и ядро цветом танка.
+// Кольцо неуязвимости — черновой вид: ореол и ядро цветом танка; у своего ядро — дуга остатка по часовой с
+// верха поверх бледного полного кольца.
 const SHIELD_RADIUS = 38;
 const SHIELD_HALO_WIDTH = 7;
 const SHIELD_HALO_ALPHA = 0.18;
 const SHIELD_CORE_WIDTH = 2;
 const SHIELD_CORE_ALPHA = 0.85;
+const SHIELD_TRACK_ALPHA = 0.25;
+const SHIELD_ARC_START = -Math.PI / 2;
+// Подпись под своим танком, пока он неуязвим: размеры — в точках экрана.
+const SHIELD_HINT = 'Неуязвим, пока не выстрелишь';
+const SHIELD_HINT_FONT_PX = 12;
+const SHIELD_HINT_GAP_PX = 14;
+const SHIELD_HINT_OUTLINE_PX = 3;
+const SHIELD_HINT_ALPHA = 0.9;
+const TEXT_COLOR = '#f4f1e8';
+const TEXT_OUTLINE_COLOR = '#07080a';
+const TEXT_OUTLINE_ALPHA = 0.7;
+const FULL_TURN = Math.PI * 2;
 
 export interface FfaTankLabel {
   label: string;
@@ -87,6 +101,7 @@ export class FfaRenderer {
   private readonly field: FieldRenderer;
   private readonly layers: ScreenLayers;
   private readonly floor: TiledFloor;
+  private readonly shields = new ShieldRings();
   private pixelRatio = 1;
 
   constructor(
@@ -178,7 +193,7 @@ export class FfaRenderer {
       ownTankId: myId,
       isShotGuarded: input.controls.isShotGuarded,
       fieldLayer: (ctx) => {
-        this.drawShields(ctx, visible, myId);
+        this.drawShields(ctx, visible, myId, this.shields.update(visible, myId, input.frameMs), camera.scale);
       },
     };
   }
@@ -201,24 +216,55 @@ export class FfaRenderer {
     };
   }
 
-  private drawShields(ctx: CanvasRenderingContext2D, tanks: readonly FfaViewTank[], myId: number | null): void {
+  private drawShields(
+    ctx: CanvasRenderingContext2D,
+    tanks: readonly FfaViewTank[],
+    myId: number | null,
+    rings: readonly ShieldRing[],
+    scale: number,
+  ): void {
     ctx.save();
-    for (const tank of tanks) {
-      if (!tank.isAlive || tank.shieldLeft <= 0) {
+    for (const ring of rings) {
+      const tank = tanks.find((candidate) => candidate.id === ring.id);
+      if (tank?.isAlive !== true) {
         continue;
       }
       const color = colorOf(tank.id, myId);
-      const alpha = smoothstep(tank.presence);
+      const alpha = ring.alpha * smoothstep(tank.presence);
       ctx.beginPath();
-      ctx.arc(tank.x, tank.y, SHIELD_RADIUS, 0, Math.PI * 2);
+      ctx.arc(tank.x, tank.y, SHIELD_RADIUS, 0, FULL_TURN);
       ctx.lineWidth = SHIELD_HALO_WIDTH;
       ctx.strokeStyle = rgba(color, SHIELD_HALO_ALPHA * alpha);
       ctx.stroke();
       ctx.lineWidth = SHIELD_CORE_WIDTH;
+      if (ring.share === null) {
+        ctx.strokeStyle = rgba(color, SHIELD_CORE_ALPHA * alpha);
+        ctx.stroke();
+        continue;
+      }
+      ctx.strokeStyle = rgba(color, SHIELD_TRACK_ALPHA * alpha);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(tank.x, tank.y, SHIELD_RADIUS, SHIELD_ARC_START, SHIELD_ARC_START + FULL_TURN * ring.share);
       ctx.strokeStyle = rgba(color, SHIELD_CORE_ALPHA * alpha);
       ctx.stroke();
+      this.drawShieldHint(ctx, tank, alpha, scale);
     }
     ctx.restore();
+  }
+
+  // Подпись в координатах поля, размеры поделены на масштаб камеры: на экране она одного размера при любом окне.
+  private drawShieldHint(ctx: CanvasRenderingContext2D, tank: FfaViewTank, alpha: number, scale: number): void {
+    const y = tank.y + SHIELD_RADIUS + SHIELD_HINT_GAP_PX / scale;
+    ctx.font = `600 ${String(SHIELD_HINT_FONT_PX / scale)}px ${BODY_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = SHIELD_HINT_OUTLINE_PX / scale;
+    ctx.strokeStyle = rgba(TEXT_OUTLINE_COLOR, TEXT_OUTLINE_ALPHA * alpha);
+    ctx.strokeText(SHIELD_HINT, tank.x, y);
+    ctx.fillStyle = rgba(TEXT_COLOR, SHIELD_HINT_ALPHA * alpha);
+    ctx.fillText(SHIELD_HINT, tank.x, y);
   }
 
   private resize(): void {

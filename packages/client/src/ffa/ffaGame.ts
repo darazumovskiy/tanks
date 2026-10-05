@@ -39,7 +39,8 @@ import type { Telemetry } from '../telemetry.js';
 import { FfaCamera, type FfaAim, type FfaFraming } from './ffaCamera.js';
 import { FfaPrediction, type FfaFrameView } from './ffaPrediction.js';
 import { FfaFxPolicy } from './fxPolicy.js';
-import { FfaSession, type FfaScreen as SessionScreen } from './session.js';
+import { FfaHud } from './hud/hud.js';
+import { feedText, FfaSession, type FfaScreen as SessionScreen } from './session.js';
 
 export interface FfaGameOptions {
   size: FfaSize;
@@ -86,6 +87,9 @@ export interface FfaGameDeps {
   tokens: TokenStore;
   goHome: () => void;
   reload: () => void;
+  // Адрес страницы без пути: из него собирается ссылка «Позвать друга».
+  pageOrigin: string;
+  copyText: (text: string) => Promise<void>;
 }
 
 const TOKEN_KEY_PREFIX = 'tanks.ffaToken.';
@@ -93,11 +97,7 @@ const TICK_MS = DT * 1000;
 const MAX_FRAME_MS = 250;
 const FRAME_HISTORY = 120;
 const SECOND_MS = 1000;
-const NOTICE_MS = 2000;
 const VIEW_MARGIN = 100;
-const BOT_MARK = 'БОТ';
-const STATUS_CLASS = 'ffa-status';
-const SECONDS_PER_MINUTE = 60;
 const EMPTY_VIEW: FfaFrameView = { tanks: [], bullets: [], kits: [], zoneRadius: 0 };
 
 function sessionTokens(storage: Storage): TokenStore {
@@ -112,44 +112,8 @@ function sessionTokens(storage: Storage): TokenStore {
   };
 }
 
-interface StatusButton {
-  label: string;
-  isPrimary: boolean;
-  onPress: () => void;
-}
-
-interface StatusLine {
-  title: string;
-  text: string;
-  buttons: StatusButton[];
-}
-
-interface Notice {
-  title: string;
-  text: string;
-  until: number;
-}
-
-// «смельчак» по числу: 1 и 21 — смельчак, 2–4 и 22–24 — смельчака, остальные, в том числе 11–14, — смельчаков.
-function daredevils(count: number): string {
-  const lastTwo = count % 100;
-  const last = count % 10;
-  if (lastTwo >= 11 && lastTwo <= 14) {
-    return 'смельчаков';
-  }
-  if (last === 1) {
-    return 'смельчак';
-  }
-  return last >= 2 && last <= 4 ? 'смельчака' : 'смельчаков';
-}
-
-function clock(seconds: number): string {
-  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
-  return `${String(minutes)}:${String(seconds % SECONDS_PER_MINUTE).padStart(2, '0')}`;
-}
-
-// Бой толпы: связывает сеть, сессию, предсказание, ввод, камеру, рендер, эффекты и звук; держит цикл кадров
-// и фиксированный шаг ввода. Экраны вокруг боя — служебной строкой поверх поля.
+// Бой толпы: связывает сеть, сессию, предсказание, ввод, камеру, рендер, интерфейс матча, эффекты и звук; держит
+// цикл кадров и фиксированный шаг ввода.
 export class FfaGame {
   private readonly deps: FfaGameDeps;
   private readonly map: FfaMap;
@@ -161,13 +125,12 @@ export class FfaGame {
   private readonly camera = new FfaCamera();
   private readonly fxPolicy = new FfaFxPolicy();
   private readonly diag: DiagLog;
-  private readonly status: HTMLElement;
+  private readonly hud: FfaHud;
   private session: FfaSession;
   private net: NetClient;
   private prediction: FfaPrediction | null = null;
   private framing: FfaFraming | null = null;
   private frameView: FfaFrameView = EMPTY_VIEW;
-  private spectating: number | null = null;
   private seq = 0;
   private accumulator = 0;
   private lastFrame: number;
@@ -182,8 +145,6 @@ export class FfaGame {
   private inputsThisSecond = 0;
   private isHidden = false;
   private isClosed = false;
-  private notice: Notice | null = null;
-  private statusKey = '';
   private hasFieldControls: boolean | null = null;
 
   constructor(
@@ -217,6 +178,8 @@ export class FfaGame {
         ((): void => {
           location.reload();
         }),
+      pageOrigin: deps.pageOrigin ?? location.origin,
+      copyText: deps.copyText ?? ((text): Promise<void> => navigator.clipboard.writeText(text)),
     };
     this.map = ffaMap(options.size);
     this.roomCode = ffaRoomCode(options.size);
@@ -247,10 +210,22 @@ export class FfaGame {
         },
       },
     );
-    this.status = document.createElement('div');
-    this.status.className = STATUS_CLASS;
-    options.hud.replaceChildren(this.status);
-    options.hud.hidden = false;
+    this.hud = new FfaHud(
+      options.hud,
+      {
+        invite: () => this.deps.copyText(`${this.deps.pageOrigin}/ffa/${String(options.size)}`),
+        leave: () => {
+          this.leave();
+        },
+        rejoin: (isWithToken) => {
+          this.restart(isWithToken);
+        },
+        reload: () => {
+          this.deps.reload();
+        },
+      },
+      options.isTouchDevice,
+    );
     this.bindPage();
     this.net = this.connect();
     this.deps.requestFrame((next) => {
@@ -319,8 +294,8 @@ export class FfaGame {
       aimSource: this.input.isMouseAiming ? 'mouse' : 'turret',
       mouseWorld: mouseWorld === null ? null : { ...mouseWorld },
       score: score === null ? null : { ...score },
-      feed: [...session.feed],
-      spectating: this.spectating,
+      feed: session.hud(this.deps.now(), this.hud.layout).feed.map(feedText),
+      spectating: session.spectating,
       isAutoFiring: this.input.isAutoFiring,
       floorChunks: this.renderer.floorChunks,
       floorMemoryMb: this.renderer.floorMemoryMb,
@@ -379,18 +354,16 @@ export class FfaGame {
 
   // Новое соединение: номера команд снова с единицы, неподтверждённое и снимки старого соединения забыты.
   private onWelcome(message: FfaWelcomeMessage): void {
-    const outcome = this.session.onWelcome(message);
+    const outcome = this.session.onWelcome(message, this.deps.now());
     this.deps.tokens.write(this.options.size, message.token);
     this.seq = 0;
     this.prediction?.resetConnection();
     if (outcome === 'lost') {
       this.prediction = null;
       this.resetMatchEffects();
-      this.showNotice('НЕ УСПЕЛИ', 'Место ушло — заходим заново');
     }
     if (outcome === 'returned') {
       this.camera.snap();
-      this.showNotice('ВЕРНУЛИСЬ!', '');
     }
     this.diag.setGame(message.gameId);
     this.diag.write(`net welcome id=${String(message.playerId)} game=${message.gameId} outcome=${outcome}`);
@@ -415,7 +388,7 @@ export class FfaGame {
   }
 
   private onSnapshot(message: FfaSnapshotMessage, receivedAt: number): void {
-    if (!this.session.acceptSnapshot(message)) {
+    if (!this.session.acceptSnapshot(message, receivedAt)) {
       return;
     }
     const prediction = this.prediction;
@@ -476,10 +449,6 @@ export class FfaGame {
     this.camera.snap();
   }
 
-  private showNotice(title: string, text: string): void {
-    this.notice = { title, text, until: this.deps.now() + NOTICE_MS };
-  }
-
   private setAutoFire(isOn: boolean): void {
     if (this.input.isAutoFiring === isOn) {
       return;
@@ -500,6 +469,9 @@ export class FfaGame {
       if (event.code === 'KeyM' && !event.repeat) {
         this.sfx.toggle();
       }
+    });
+    this.options.canvas.addEventListener('pointerdown', () => {
+      this.switchSpectator();
     });
     // Вкладка скрылась — одна команда «стоп»: танк не едет туда, куда держали газ, пока игрока нет. Вернулась —
     // отсчёт кадров с этого мгновения, иначе первый кадр нагонит пропущенное пачкой команд.
@@ -595,7 +567,6 @@ export class FfaGame {
     const me = this.prediction?.me ?? null;
     const isOwnOnField = me !== null && me.isAlive && (screen === 'fight' || screen === 'countdown');
     if (isOwnOnField) {
-      this.spectating = null;
       return this.camera.update(me, this.aimOf(me), size, elapsed);
     }
     if ((screen === 'dead' || screen === 'results') && this.framing !== null) {
@@ -607,18 +578,30 @@ export class FfaGame {
         return this.camera.update(target, { kind: 'turret', angle: target.turret }, size, elapsed);
       }
     }
-    this.spectating = null;
     return this.camera.update({ x: this.map.width / 2, y: this.map.height / 2 }, { kind: 'none' }, size, elapsed);
   }
 
+  // Смена цели переставляет камеру сразу.
   private spectatorTarget(view: FfaFrameView): FfaFrameView['tanks'][number] | null {
     const alive = view.tanks.filter((tank) => tank.isAlive);
-    const targetId = this.session.spectatorTarget(alive.map((tank) => tank.id));
-    if (targetId !== this.spectating) {
+    const previous = this.session.spectating;
+    const targetId = this.session.followSpectator(alive.map((tank) => tank.id));
+    if (targetId !== previous) {
       this.camera.snap();
     }
-    this.spectating = targetId;
     return alive.find((tank) => tank.id === targetId) ?? null;
+  }
+
+  // Касание или клик по полю у зрителя — следующий живой по таблице.
+  private switchSpectator(): void {
+    if (this.session.screen() !== 'spectator') {
+      return;
+    }
+    const aliveIds = this.frameView.tanks.filter((tank) => tank.isAlive).map((tank) => tank.id);
+    const previous = this.session.spectating;
+    if (this.session.nextSpectator(aliveIds) !== previous) {
+      this.camera.snap();
+    }
   }
 
   private frame(now: number): void {
@@ -669,7 +652,7 @@ export class FfaGame {
       frameMs: elapsed,
       frameTimes: this.frameTimes,
     });
-    this.renderStatus(now, screen);
+    this.hud.render(this.session.hud(now, this.hud.layout), now);
     this.writeSummary(now);
   }
 
@@ -728,7 +711,6 @@ export class FfaGame {
     }
     this.session = new FfaSession(this.options.size);
     this.prediction = null;
-    this.spectating = null;
     this.resetMatchEffects();
     this.net = this.connect();
   }
@@ -736,212 +718,5 @@ export class FfaGame {
   private leave(): void {
     this.close();
     this.deps.goHome();
-  }
-
-  private statusLine(now: number, screen: SessionScreen): StatusLine | null {
-    const session = this.session;
-    const home: StatusButton = {
-      label: 'На главную',
-      isPrimary: false,
-      onPress: () => {
-        this.leave();
-      },
-    };
-    const exit: StatusButton = {
-      label: 'Выйти',
-      isPrimary: false,
-      onPress: () => {
-        this.leave();
-      },
-    };
-    switch (screen) {
-      case 'idle':
-        return {
-          title: 'ВЫКИНУЛО ЗА БЕЗДЕЙСТВИЕ',
-          text: 'Танк стоял слишком долго — место отдали другому.',
-          buttons: [
-            {
-              label: 'Вернуться в бой',
-              isPrimary: true,
-              onPress: () => {
-                this.restart(false);
-              },
-            },
-            home,
-          ],
-        };
-      case 'replaced':
-        return {
-          title: 'ТЫ ИГРАЕШЬ В ДРУГОМ МЕСТЕ',
-          text: 'Бой открыт в другой вкладке или на другом устройстве.',
-          buttons: [
-            {
-              label: 'Играть здесь',
-              isPrimary: true,
-              onPress: () => {
-                this.restart(true);
-              },
-            },
-            home,
-          ],
-        };
-      case 'update':
-        return {
-          title: 'ВЫШЛО ОБНОВЛЕНИЕ',
-          text: 'Перезагрузи — и в бой.',
-          buttons: [
-            {
-              label: 'Обновить',
-              isPrimary: true,
-              onPress: () => {
-                this.deps.reload();
-              },
-            },
-          ],
-        };
-      case 'error':
-        return {
-          title: 'ЧТО-ТО ПОШЛО НЕ ТАК',
-          text: 'Сервер нас не понял. Попробуем ещё раз?',
-          buttons: [
-            {
-              label: 'Ещё раз',
-              isPrimary: true,
-              onPress: () => {
-                this.restart(true);
-              },
-            },
-            home,
-          ],
-        };
-      default:
-        break;
-    }
-    if (session.isConnectionLost) {
-      return { title: 'СВЯЗЬ ПРОПАЛА', text: 'Держим твоё место, возвращаемся…', buttons: [] };
-    }
-    if (this.notice !== null && now < this.notice.until) {
-      return { title: this.notice.title, text: this.notice.text, buttons: [] };
-    }
-    switch (screen) {
-      case 'connecting':
-        return { title: 'Подключаемся…', text: '', buttons: [] };
-      case 'lobby':
-        return { title: 'СОБИРАЕМ ТОЛПУ', text: this.lobbyText(now), buttons: [exit] };
-      case 'countdown':
-        return { title: this.countdownTitle(now), text: '', buttons: [] };
-      case 'fight':
-        return this.fightLine();
-      case 'dead':
-        return this.deathLine();
-      case 'spectator':
-        return {
-          title: this.spectating === null ? 'СМОТРИМ БОЙ' : `Смотришь за: ${session.nameOf(this.spectating)}`,
-          text: '',
-          buttons: [],
-        };
-      case 'results':
-        return { title: 'ИТОГИ', text: this.resultsText(now), buttons: [exit] };
-    }
-  }
-
-  private lobbyText(now: number): string {
-    const lobby = this.session.lobby(now);
-    const count = `${String(lobby.players)} / ${String(lobby.capacity)}`;
-    if (lobby.players < lobby.minimum) {
-      const missing = lobby.minimum - lobby.players;
-      return `${count} · Ещё ${String(missing)} ${daredevils(missing)} — и в бой`;
-    }
-    if (lobby.startInS === 0) {
-      return `${count} · Полный сбор — поехали!`;
-    }
-    return `${count} · Старт через ${String(Math.ceil(lobby.startInS ?? 0))}`;
-  }
-
-  private countdownTitle(now: number): string {
-    if (this.session.self?.state !== 'alive') {
-      return 'Высаживаемся с началом боя';
-    }
-    const secondsLeft = Math.ceil(this.session.phaseLeftS(now) ?? 0);
-    return secondsLeft >= 1 ? String(secondsLeft) : 'В БОЙ!';
-  }
-
-  private fightLine(): StatusLine {
-    const session = this.session;
-    const idleTicksLeft = session.self?.idleTicksLeft ?? null;
-    if (idleTicksLeft !== null) {
-      const seconds = Math.ceil(idleTicksLeft * DT);
-      return { title: 'ТЫ ТУТ?', text: `Шевельнись — иначе выкинет через ${String(seconds)}`, buttons: [] };
-    }
-    const score = session.score();
-    const place = score === null ? '' : `${String(score.place)}-й из ${String(score.total)}`;
-    return { title: clock(session.timeLeftS ?? 0), text: place, buttons: [] };
-  }
-
-  private deathLine(): StatusLine {
-    const session = this.session;
-    if (session.isFinal) {
-      return { title: 'ТЫ ВЫБЫЛ', text: 'Финал без возрождений — смотрим, кто кого', buttons: [] };
-    }
-    const { killerId, cause } = session.death();
-    if (cause === 'self') {
-      return { title: 'САМ СЕБЯ!', text: 'Рикошет — коварная штука', buttons: [] };
-    }
-    if (cause === 'zone') {
-      return { title: 'ЗОНА ДОЖАЛА', text: 'Держись внутри круга', buttons: [] };
-    }
-    if (killerId === null) {
-      return { title: 'ТЕБЯ ПОДБИЛИ', text: '', buttons: [] };
-    }
-    const mark = session.isBot(killerId) ? `${BOT_MARK} ` : '';
-    const how = cause === 'ricochet' ? ' рикошетом' : '';
-    return { title: `ТЕБЯ ПОДБИЛ ${mark}${session.nameOf(killerId)}${how}`, text: '', buttons: [] };
-  }
-
-  private resultsText(now: number): string {
-    const session = this.session;
-    if (session.players < session.minimum) {
-      return 'Ждём, пока соберёмся';
-    }
-    return `Следующий матч через ${String(Math.ceil(session.phaseLeftS(now) ?? 0))}`;
-  }
-
-  private renderStatus(now: number, screen: SessionScreen): void {
-    const line = this.statusLine(now, screen);
-    const key =
-      line === null ? '' : `${line.title}|${line.text}|${line.buttons.map((button) => button.label).join(',')}`;
-    if (key === this.statusKey) {
-      return;
-    }
-    this.statusKey = key;
-    this.status.replaceChildren();
-    this.status.hidden = line === null;
-    if (line === null) {
-      return;
-    }
-    const title = document.createElement('div');
-    title.className = 'ffa-status-title';
-    title.textContent = line.title;
-    this.status.append(title);
-    if (line.text !== '') {
-      const text = document.createElement('div');
-      text.className = 'ffa-status-text';
-      text.textContent = line.text;
-      this.status.append(text);
-    }
-    if (line.buttons.length === 0) {
-      return;
-    }
-    const buttons = document.createElement('div');
-    buttons.className = 'ffa-status-buttons';
-    for (const spec of line.buttons) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = spec.isPrimary ? 'ffa-button is-primary' : 'ffa-button';
-      button.textContent = spec.label;
-      button.addEventListener('click', spec.onPress);
-      buttons.append(button);
-    }
-    this.status.append(buttons);
   }
 }

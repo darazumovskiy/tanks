@@ -20,10 +20,12 @@ import {
   decode,
   encode,
   ErrorCode,
+  EventFlag,
   FfaPhase,
   MessageType,
   type ClientMessage,
   type FfaSnapshotEvent,
+  type FfaSnapshotMessage,
   type InputMessage,
   type ServerMessage,
 } from '@tanks/shared/protocol';
@@ -37,6 +39,7 @@ import { Sfx } from '../sfx.js';
 import { Telemetry } from '../telemetry.js';
 import { installFakeAudio, type SoundOutput } from '../testing/fakeAudio.js';
 import { snapshotOf } from '../testing/ffaServer.js';
+import { shownText } from '../testing/hudText.js';
 import { FfaGame, type FfaRendererLike, type TokenStore } from './ffaGame.js';
 import { PREDICTED_BULLET_ID_BASE } from './ffaPrediction.js';
 
@@ -125,6 +128,8 @@ interface Harness {
   settingsPanel: HTMLElement;
   tokens: Map<number, string>;
   calls: string[];
+  copied: string[];
+  autoFire: boolean[];
   fieldControls: boolean[];
   socket: () => FakeSocket;
   frames: (count: number) => void;
@@ -135,7 +140,7 @@ let clock = 0;
 let pendingFrame: ((now: number) => void) | null = null;
 
 // Страница боя как в index.html: холст, корень интерфейса толпы и панель настроек — соседи.
-function makeGame(storedToken = '', isAdmin = false): Harness {
+function makeGame(storedToken = '', isAdmin = false, isTouch = false): Harness {
   document.body.innerHTML = '';
   const stage = document.createElement('div');
   const canvas = document.createElement('canvas');
@@ -154,6 +159,8 @@ function makeGame(storedToken = '', isAdmin = false): Harness {
     erase: (size) => tokens.delete(size),
   };
   const calls: string[] = [];
+  const copied: string[] = [];
+  const autoFire: boolean[] = [];
   const fieldControls: boolean[] = [];
   let effects = null as Effects | null;
   const game = new FfaGame(
@@ -164,10 +171,10 @@ function makeGame(storedToken = '', isAdmin = false): Harness {
       canvas,
       hud,
       settings: { ...defaultSettings(), hasRicochetGuard: false },
-      isTouchDevice: false,
+      isTouchDevice: isTouch,
       isAdmin,
       telemetry: new Telemetry(CLIENT_INFO, { beacon: () => true }),
-      onAutoFireChange: () => undefined,
+      onAutoFireChange: (isOn) => autoFire.push(isOn),
       onFieldControlsChange: (isVisible) => fieldControls.push(isVisible),
     },
     {
@@ -191,6 +198,11 @@ function makeGame(storedToken = '', isAdmin = false): Harness {
       tokens: store,
       goHome: () => calls.push('home'),
       reload: () => calls.push('reload'),
+      pageOrigin: 'https://tanks.test',
+      copyText: (text) => {
+        copied.push(text);
+        return Promise.resolve();
+      },
     },
   );
   if (effects === null) {
@@ -214,6 +226,8 @@ function makeGame(storedToken = '', isAdmin = false): Harness {
     settingsPanel,
     tokens,
     calls,
+    copied,
+    autoFire,
     fieldControls,
     socket,
     frames: (count) => {
@@ -244,8 +258,9 @@ function state(
   phase: (typeof FfaPhase)[keyof typeof FfaPhase],
   ticksLeft: number | null,
   matchIndex = 1,
+  players = 2,
 ): ServerMessage {
-  return { type: MessageType.FfaState, phase, ticksLeft, players: 2, capacity: SIZE, minimum: 7, matchIndex };
+  return { type: MessageType.FfaState, phase, ticksLeft, players, capacity: SIZE, minimum: 7, matchIndex };
 }
 
 function matchStart(matchIndex = 1): ServerMessage {
@@ -343,7 +358,7 @@ function meOf(harness: Harness): { x: number; y: number; turret: number } {
 }
 
 function statusText(harness: Harness): string {
-  return harness.hud.textContent;
+  return shownText(harness.hud);
 }
 
 function pointer(kind: string, x: number, y: number, type: 'mouse' | 'touch'): PointerEvent {
@@ -739,7 +754,10 @@ describe('окончательные ошибки', () => {
     harness.frames(1);
     expect(harness.state().screen).toBe('idle');
     expect(harness.tokens.has(SIZE)).toBe(false);
-    const buttons = [...harness.hud.querySelectorAll('button')];
+    const buttons = [...harness.hud.querySelectorAll<HTMLButtonElement>('.ffa-fatal button')];
+    expect(statusText(harness)).toBe(
+      'ВЫКИНУЛО ЗА БЕЗДЕЙСТВИЕ Танк стоял слишком долго — место отдали другому. Вернуться в бой На главную',
+    );
     expect(buttons.map((button) => button.textContent)).toEqual(['Вернуться в бой', 'На главную']);
     buttons[0]?.click();
     expect(harness.sockets).toHaveLength(2);
@@ -747,7 +765,7 @@ describe('окончательные ошибки', () => {
     expect(harness.socket().sent[0]).toMatchObject({ type: MessageType.Join, token: '' });
     harness.socket().receive({ type: MessageType.Error, code: ErrorCode.Replaced, text: 'занято' });
     harness.frames(1);
-    const replaced = [...harness.hud.querySelectorAll('button')];
+    const replaced = [...harness.hud.querySelectorAll<HTMLButtonElement>('.ffa-fatal button')];
     expect(replaced.map((button) => button.textContent)).toEqual(['Играть здесь', 'На главную']);
     replaced[1]?.click();
     expect(harness.calls).toEqual(['home']);
@@ -759,7 +777,8 @@ describe('окончательные ошибки', () => {
     harness.socket().receive({ type: MessageType.Error, code: ErrorCode.BadProtocolVersion, text: 'старый' });
     harness.frames(1);
     expect(harness.state().screen).toBe('update');
-    harness.hud.querySelector('button')?.click();
+    expect(statusText(harness)).toBe('ВЫШЛО ОБНОВЛЕНИЕ Перезагрузи — и в бой. Обновить');
+    harness.hud.querySelector<HTMLButtonElement>('.ffa-fatal button')?.click();
     expect(harness.calls).toEqual(['reload']);
   });
 });
@@ -786,7 +805,7 @@ describe('ввод боя — только с холста', () => {
     harness.frames(1);
     expect(harness.renderer.last?.controls.sticks).toEqual([]);
     window.dispatchEvent(pointer('pointerup', 200, 300, 'touch'));
-    const exit = element(harness.hud, 'button');
+    const exit = element(harness.hud, '.ffa-lobby .ffa-button:not(.is-primary)');
     expect(exit.textContent).toBe('Выйти');
     (exit as HTMLButtonElement).click();
     expect(harness.calls).toEqual(['home']);
@@ -799,7 +818,7 @@ describe('ввод боя — только с холста', () => {
     const socket = harness.socket();
     expect(harness.fieldControls).toEqual([true]);
     const row = element(harness.settingsPanel, 'span');
-    const card = element(harness.hud, '.ffa-status');
+    const card = element(harness.hud, '.ffa-scoreboard');
     for (const target of [row, card]) {
       target.dispatchEvent(pointer('pointerdown', 900, 300, 'touch'));
       window.dispatchEvent(pointer('pointerup', 900, 300, 'touch'));
@@ -962,5 +981,520 @@ describe('свой снаряд', () => {
     const [predictedId, serverId] = rename.mock.calls[0] ?? [];
     expect(predictedId).toBeGreaterThanOrEqual(PREDICTED_BULLET_ID_BASE);
     expect(serverId).toBe(world.bullets.find((bullet) => bullet.owner === ME)?.id ?? 1);
+  });
+});
+
+describe('интерфейс матча', () => {
+  const SECOND_FRAMES = 60;
+
+  function hudPart(harness: Harness, selector: string): HTMLElement {
+    const found = harness.hud.querySelector<HTMLElement>(selector);
+    if (found === null) {
+      throw new Error(`нет элемента ${selector}`);
+    }
+    return found;
+  }
+
+  function isShown(harness: Harness, selector: string): boolean {
+    return hudPart(harness, selector).classList.contains('is-shown');
+  }
+
+  function partText(harness: Harness, selector: string): string {
+    return shownText(hudPart(harness, selector));
+  }
+
+  function click(harness: Harness, selector: string, label: string): void {
+    const target = [...harness.hud.querySelectorAll<HTMLButtonElement>(`${selector} button`)].find(
+      (candidate) => candidate.textContent === label,
+    );
+    if (target === undefined) {
+      throw new Error(`нет кнопки «${label}» в ${selector}`);
+    }
+    target.click();
+  }
+
+  function selfSnapshot(
+    world: World,
+    own: Partial<FfaSnapshotMessage['self']>,
+    events: FfaSnapshotEvent[] = [],
+  ): FfaSnapshotMessage {
+    const message = snapshotOf(world, { events });
+    return { ...message, self: { ...message.self, ...own } };
+  }
+
+  function scoreRows(rows: readonly [number, number, number][]): ServerMessage {
+    return {
+      type: MessageType.FfaScore,
+      rows: rows.map(([id, kills, deaths]) => ({ id, kills, deaths, damageDealt: 0, damageTaken: 0 })),
+    };
+  }
+
+  function lobbyGame(players: number): Harness {
+    const harness = makeGame();
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster([ENEMY, ME, 6]));
+    socket.receive(state(FfaPhase.Lobby, null, 0, players));
+    harness.frames(1);
+    return harness;
+  }
+
+  it('U1 лобби: меньше минимума, отметка минимума, состав с ботом, свой ник первым', () => {
+    const harness = lobbyGame(3);
+    expect(isShown(harness, '.ffa-lobby')).toBe(true);
+    expect(partText(harness, '.ffa-lobby .ffa-title')).toBe('СОБИРАЕМ ТОЛПУ');
+    expect(partText(harness, '.ffa-lobby-count')).toBe('3 / 10');
+    expect(partText(harness, '.ffa-lobby-status')).toBe('Ещё 4 смельчака — и в бой');
+    expect(hudPart(harness, '.ffa-progress-fill').style.width).toBe('30%');
+    expect(hudPart(harness, '.ffa-progress-mark').style.left).toBe('70%');
+    const chips = [...harness.hud.querySelectorAll<HTMLElement>('.ffa-roster .ffa-nick:not(.ffa-roster-more)')];
+    expect(chips.map((chip) => shownText(chip))).toEqual(['Дима', 'Вася', 'БОТ Робот']);
+    expect(chips.map((chip) => chip.classList.contains('is-me'))).toEqual([true, false, false]);
+    expect(isShown(harness, '.ffa-scoreboard')).toBe(false);
+  });
+
+  it('U1 лобби: старт по местным часам; полная игра — «Полный сбор»', () => {
+    const harness = lobbyGame(3);
+    harness.socket().receive(state(FfaPhase.Lobby, 210, 0, 7));
+    harness.frames(1);
+    expect(partText(harness, '.ffa-lobby-status')).toBe('Старт через 7');
+    harness.frames(2 * SECOND_FRAMES);
+    expect(partText(harness, '.ffa-lobby-status')).toBe('Старт через 5');
+    harness.socket().receive(state(FfaPhase.Lobby, 0, 0, 10));
+    harness.frames(1);
+    expect(partText(harness, '.ffa-lobby-status')).toBe('Полный сбор — поехали!');
+    expect(hudPart(harness, '.ffa-progress-fill').classList.contains('is-ready')).toBe(true);
+  });
+
+  it('U1 «Позвать друга» копирует ссылку на игру этого размера и говорит об этом 2 с; «Выйти» закрывает соединение', async () => {
+    const harness = lobbyGame(3);
+    click(harness, '.ffa-lobby', 'Позвать друга');
+    expect(harness.copied).toEqual(['https://tanks.test/ffa/10']);
+    await Promise.resolve();
+    harness.frames(1);
+    expect(isShown(harness, '.ffa-lobby-copied')).toBe(true);
+    expect(partText(harness, '.ffa-lobby-copied')).toBe('Ссылка у тебя — кидай другу');
+    harness.frames(2 * SECOND_FRAMES);
+    expect(isShown(harness, '.ffa-lobby-copied')).toBe(false);
+    click(harness, '.ffa-lobby', 'Выйти');
+    expect(harness.socket().isClosedByClient).toBe(true);
+    expect(harness.calls).toEqual(['home']);
+  });
+
+  it('U2 отсчёт: 3, 2, 1, «В БОЙ!» по местным часам; «В БОЙ!» держится и после начала боя, потом гаснет', () => {
+    const harness = makeGame();
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster());
+    socket.receive(state(FfaPhase.Countdown, 90));
+    socket.receive(matchStart());
+    socket.receive(snapshotOf(arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)])));
+    harness.frames(1);
+    expect(partText(harness, '.ffa-countdown')).toBe('3');
+    harness.frames(66);
+    expect(partText(harness, '.ffa-countdown')).toBe('2');
+    harness.frames(SECOND_FRAMES);
+    expect(partText(harness, '.ffa-countdown')).toBe('1');
+    harness.frames(SECOND_FRAMES);
+    expect(partText(harness, '.ffa-countdown')).toBe('В БОЙ!');
+    socket.receive(state(FfaPhase.Fight, 3600));
+    harness.frames(30);
+    expect(isShown(harness, '.ffa-countdown')).toBe(true);
+    harness.frames(30);
+    expect(isShown(harness, '.ffa-countdown')).toBe(false);
+  });
+
+  it('U3 табло: таймер из тика, место среди строк матча, счёт, лидер; на первом месте — «Ты лидер!»', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
+    enterFight(harness, world);
+    world.tick = 30 * 18;
+    harness.socket().receive(snapshotOf(world));
+    harness.socket().receive(
+      scoreRows([
+        [ENEMY, 3, 1],
+        [ME, 1, 2],
+        [6, 1, 0],
+      ]),
+    );
+    harness.frames(1);
+    expect(partText(harness, '.ffa-timer')).toBe('1:42');
+    expect(partText(harness, '.ffa-place')).toBe('3-й из 3 подбил 1 · погиб 2');
+    expect(partText(harness, '.ffa-leader')).toBe('Лидер: Вася · 3');
+    harness.socket().receive(
+      scoreRows([
+        [ENEMY, 3, 1],
+        [ME, 4, 2],
+      ]),
+    );
+    harness.frames(1);
+    expect(partText(harness, '.ffa-leader')).toBe('Ты лидер!');
+    expect(partText(harness, '.ffa-place')).toBe('1-й из 2 подбил 4 · погиб 2');
+  });
+
+  it('U4 лента: свои строки выделены, значки по виду, на телефоне 3 строки, на компьютере 4; строка гаснет через 5 с', () => {
+    for (const [isTouch, rows] of [
+      [true, 3],
+      [false, 4],
+    ] as const) {
+      const harness = makeGame('', false, isTouch);
+      const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
+      enterFight(harness, world);
+      const deaths = [
+        event('death', 6, 900, 650, ME),
+        { ...event('death', ENEMY, 900, 650, 6), flags: EventFlag.Ricochet },
+        { ...event('death', 6, 900, 650, 6), flags: EventFlag.Self | EventFlag.Ricochet },
+        { ...event('death', ENEMY, 900, 650, null), flags: EventFlag.Zone },
+        event('death', 6, 900, 650, 77),
+      ];
+      for (const death of deaths) {
+        step(world);
+        harness.socket().receive(snapshotOf(world, { events: [death] }));
+      }
+      harness.frames(1);
+      const shown = [...harness.hud.querySelectorAll<HTMLElement>('.ffa-feed-row')];
+      expect(shown).toHaveLength(rows);
+      expect(shown.map((row) => shownText(row)).slice(0, 3)).toEqual([
+        'Неизвестный танкист Робот',
+        'Вася сгорел в зоне',
+        'Робот сам себя',
+      ]);
+      expect(shown.map((row) => row.querySelector('.ffa-feed-icon')?.getAttribute('data-cause'))).toEqual(
+        ['bullet', 'zone', 'self', 'ricochet'].slice(0, rows),
+      );
+      harness.frames(5 * SECOND_FRAMES);
+      expect(harness.hud.querySelectorAll('.ffa-feed-row')).toHaveLength(0);
+      expect(isShown(harness, '.ffa-feed')).toBe(false);
+    }
+    const harness = makeGame();
+    const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
+    enterFight(harness, world);
+    step(world);
+    harness.socket().receive(snapshotOf(world, { events: [event('death', 6, 9, 9, ME)] }));
+    harness.frames(1);
+    const own = hudPart(harness, '.ffa-feed-row');
+    expect(own.classList.contains('is-my-kill')).toBe(true);
+    expect(own.querySelector('.ffa-feed-name.is-me')?.textContent).toBe('Дима');
+  });
+
+  it('U5 «тебя подбил»: игрок и бот, отсчёт до появления; появился — карточка скрыта, авто-огонь выключен', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
+    enterFight(harness, world);
+    harness.game.toggleAutoFire();
+    step(world);
+    harness
+      .socket()
+      .receive(
+        selfSnapshot(world, { state: 'wreck', killerId: ENEMY, ticksLeft: 60 }, [event('death', ME, 600, 650, ENEMY)]),
+      );
+    harness.frames(1);
+    expect(isShown(harness, '.ffa-death')).toBe(true);
+    expect(partText(harness, '.ffa-death')).toBe('ТЕБЯ ПОДБИЛ Вася Снова в бою через 4');
+    step(world);
+    harness.socket().receive(selfSnapshot(world, { state: 'waiting', killerId: 6, ticksLeft: 25 }));
+    harness.frames(1);
+    expect(partText(harness, '.ffa-death-title')).toBe('БОТ Робот');
+    expect(partText(harness, '.ffa-death-respawn')).toBe('Снова в бою через 1');
+    step(world);
+    harness.socket().receive(snapshotOf(world, { events: [event('spawn', ME, 600, 650)] }));
+    harness.frames(1);
+    expect(isShown(harness, '.ffa-death')).toBe(false);
+    expect(harness.autoFire).toEqual([true, false]);
+  });
+
+  it('U6 финал наступил, пока подбит: «ТЫ ВЫБЫЛ» без отсчёта, после обломков — зритель с той же карточкой', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
+    enterFight(harness, world);
+    world.tick = SUDDEN_DEATH_AT * 30 - 3;
+    harness
+      .socket()
+      .receive(
+        selfSnapshot(world, { state: 'wreck', killerId: ENEMY, ticksLeft: 60 }, [event('death', ME, 600, 650, ENEMY)]),
+      );
+    harness.frames(1);
+    expect(partText(harness, '.ffa-death-respawn')).toBe('Снова в бою через 4');
+    world.tick = SUDDEN_DEATH_AT * 30;
+    harness
+      .socket()
+      .receive(
+        selfSnapshot(world, { state: 'wreck', killerId: ENEMY, ticksLeft: 57 }, [event('suddenDeath', null, 0, 0)]),
+      );
+    harness.frames(1);
+    expect(partText(harness, '.ffa-death')).toBe('ТЫ ВЫБЫЛ Финал без возрождений — смотрим, кто кого');
+    world.tick += 60;
+    world.tanks = world.tanks.filter((candidate) => candidate.id !== ME);
+    harness.socket().receive(selfSnapshot(world, { state: 'spectator', killerId: ENEMY, ticksLeft: 0 }));
+    harness.frames(2);
+    expect(harness.state().screen).toBe('spectator');
+    expect(partText(harness, '.ffa-death-title')).toBe('ТЫ ВЫБЫЛ');
+    expect(isShown(harness, '.ffa-final')).toBe(false);
+  });
+
+  it('U8 финал: «ФИНАЛ ЧЕРЕЗ 5…1» по времени матча, событие — «ФИНАЛ!» на 2 с; вошедший в финал — «финал уже идёт»', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
+    enterFight(harness, world);
+    world.tick = (SUDDEN_DEATH_AT - 5) * 30;
+    harness.socket().receive(snapshotOf(world));
+    harness.frames(1);
+    expect(partText(harness, '.ffa-final')).toBe('ФИНАЛ ЧЕРЕЗ 5 Потом без возрождений');
+    world.tick = SUDDEN_DEATH_AT * 30 - 20;
+    harness.socket().receive(snapshotOf(world));
+    harness.frames(1);
+    expect(partText(harness, '.ffa-final')).toBe('ФИНАЛ ЧЕРЕЗ 1 Потом без возрождений');
+    world.tick = SUDDEN_DEATH_AT * 30;
+    harness.socket().receive(snapshotOf(world, { events: [event('suddenDeath', null, 0, 0)] }));
+    harness.frames(1);
+    expect(partText(harness, '.ffa-final')).toBe('ФИНАЛ! Подбили — смотришь до конца');
+    harness.frames(2 * SECOND_FRAMES);
+    expect(isShown(harness, '.ffa-final')).toBe(false);
+    const late = makeGame();
+    const socket = late.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster());
+    socket.receive(state(FfaPhase.Fight, 600));
+    socket.receive(matchStart());
+    const field = arena([tank(ENEMY, 1400, 650)]);
+    field.tick = SUDDEN_DEATH_AT * 30 + 60;
+    socket.receive(snapshotOf(field, { state: 'spectator' }));
+    late.frames(1);
+    expect(partText(late, '.ffa-death')).toBe('ФИНАЛ УЖЕ ИДЁТ Следующий матч — твой');
+    expect(isShown(late, '.ffa-final')).toBe(false);
+    socket.receive(score([[ENEMY, 1]]));
+    socket.receive(state(FfaPhase.Results, 300));
+    late.frames(1);
+    expect(partText(late, '.ffa-results-title')).toBe('СЛЕДУЮЩИЙ МАТЧ — ТВОЙ');
+    expect([...late.hud.querySelectorAll('.ffa-results-row')].map((row) => shownText(row))).toEqual(['1 Вася 1 0 —']);
+  });
+
+  it('U9 зритель: за убийцей; касание — следующий по таблице; цель погибла — следующий; живых нет — центр карты', () => {
+    const harness = makeGame('', false, true);
+    const world = arena([tank(ENEMY, 1400, 650), tank(6, 500, 300), tank(7, 1700, 1000)]);
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster([ME, ENEMY, 6, 7]));
+    socket.receive(state(FfaPhase.Fight, 600));
+    socket.receive(matchStart());
+    socket.receive(
+      scoreRows([
+        [7, 5, 0],
+        [ENEMY, 3, 0],
+        [6, 1, 0],
+        [ME, 0, 1],
+      ]),
+    );
+    for (let index = 0; index < 4; index++) {
+      step(world);
+      socket.receive(selfSnapshot(world, { state: 'spectator', killerId: ENEMY }));
+    }
+    harness.frames(10);
+    const centerOf = (): { x: number; y: number } => harness.state().viewCenter as { x: number; y: number };
+    expect(harness.state().spectating).toBe(ENEMY);
+    expect(isShown(harness, '.ffa-death')).toBe(true);
+    expect(isShown(harness, '.ffa-spectator')).toBe(false);
+    for (let elapsed = 0; elapsed < 4 * SECOND_FRAMES; elapsed += 10) {
+      step(world);
+      socket.receive(selfSnapshot(world, { state: 'spectator', killerId: ENEMY }));
+      harness.frames(10);
+    }
+    expect(isShown(harness, '.ffa-death')).toBe(false);
+    expect(partText(harness, '.ffa-spectator')).toBe('Смотришь за: Вася коснись — следующий');
+    expect(Math.abs(centerOf().x - 1400)).toBeLessThanOrEqual(250);
+    expect(harness.fieldControls).toEqual([false]);
+    expect(harness.renderer.last?.controls.sticks).toEqual([]);
+    harness.canvas.dispatchEvent(pointer('pointerdown', 300, 300, 'touch'));
+    harness.frames(1);
+    expect(harness.state().spectating).toBe(6);
+    expect(partText(harness, '.ffa-spectator-name')).toBe('БОТ Робот');
+    expect(Math.abs(centerOf().x - 500)).toBeLessThanOrEqual(250);
+    window.dispatchEvent(pointer('pointerup', 300, 300, 'touch'));
+    const target = world.tanks.find((candidate) => candidate.id === 6);
+    if (target !== undefined) {
+      target.isAlive = false;
+      target.hp = 0;
+    }
+    for (let index = 0; index < 4; index++) {
+      step(world);
+      socket.receive(selfSnapshot(world, { state: 'spectator', killerId: ENEMY }));
+    }
+    harness.frames(10);
+    expect(harness.state().spectating).toBe(7);
+    world.tanks = [];
+    for (let index = 0; index < 4; index++) {
+      step(world);
+      socket.receive(selfSnapshot(world, { state: 'spectator', killerId: ENEMY }));
+    }
+    harness.frames(30);
+    expect(harness.state().spectating).toBeNull();
+    expect(centerOf()).toEqual({ x: MAP.width / 2, y: MAP.height / 2 });
+    expect(isShown(harness, '.ffa-spectator')).toBe(false);
+  });
+
+  it('U9 на компьютере подсказка зрителя — про клик', () => {
+    const harness = makeGame();
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster());
+    socket.receive(state(FfaPhase.Fight, 600));
+    socket.receive(matchStart());
+    socket.receive(selfSnapshot(arena([tank(ENEMY, 1400, 650)]), { state: 'spectator', killerId: ENEMY }));
+    harness.frames(4);
+    expect(partText(harness, '.ffa-spectator-hint')).toBe('клик — следующий');
+  });
+
+  it('U10 «Ты тут?»: отсчёт, пока сервер его присылает; перестал — карточка гаснет', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
+    enterFight(harness, world);
+    step(world);
+    harness.socket().receive(selfSnapshot(world, { idleTicksLeft: 265 }));
+    harness.frames(1);
+    expect(isShown(harness, '.ffa-idle')).toBe(true);
+    expect(partText(harness, '.ffa-idle')).toBe('ТЫ ТУТ? Шевельнись — иначе выкинет через 9');
+    step(world);
+    harness.socket().receive(snapshotOf(world));
+    harness.frames(1);
+    expect(isShown(harness, '.ffa-idle')).toBe(false);
+  });
+
+  it('U12 итоги → следующий матч: итоги держатся до старта матча, затем отсчёт, нулевой счёт, пустые лента и табло', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
+    enterFight(harness, world);
+    const socket = harness.socket();
+    socket.receive(
+      scoreRows([
+        [ENEMY, 3, 1],
+        [ME, 1, 2],
+      ]),
+    );
+    step(world);
+    socket.receive(snapshotOf(world, { events: [event('death', 6, 9, 9, ME)] }));
+    socket.receive(state(FfaPhase.Results, 450, 1, 7));
+    harness.frames(1);
+    expect(partText(harness, '.ffa-results-title')).toBe('В СЛЕДУЮЩИЙ РАЗ');
+    expect(partText(harness, '.ffa-results-next')).toBe('Следующий матч через 15');
+    harness.frames(3 * SECOND_FRAMES);
+    expect(partText(harness, '.ffa-results-next')).toBe('Следующий матч через 12');
+    socket.receive(state(FfaPhase.Countdown, 90, 2, 7));
+    harness.frames(1);
+    expect(harness.state().screen).toBe('results');
+    expect(isShown(harness, '.ffa-results')).toBe(true);
+    socket.receive(matchStart(2));
+    socket.receive(
+      scoreRows([
+        [ENEMY, 0, 0],
+        [ME, 0, 0],
+      ]),
+    );
+    socket.receive(snapshotOf(arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)])));
+    harness.frames(1);
+    expect(harness.state()).toMatchObject({ screen: 'countdown', feed: [], score: { place: 1, kills: 0, deaths: 0 } });
+    expect(isShown(harness, '.ffa-results')).toBe(false);
+    expect(partText(harness, '.ffa-countdown')).toBe('3');
+    socket.receive(state(FfaPhase.Fight, 3600, 2, 7));
+    harness.frames(SECOND_FRAMES);
+    expect(harness.state()).toMatchObject({ screen: 'fight', feed: [] });
+    expect(isShown(harness, '.ffa-feed')).toBe(false);
+    expect(partText(harness, '.ffa-place')).toBe('1-й из 2 подбил 0 · погиб 0');
+  });
+
+  it('U12 игроков меньше минимума — «Ждём, пока соберёмся», затем лобби', () => {
+    const harness = makeGame();
+    enterFight(harness, arena([tank(ME, 600, 650)]));
+    harness.socket().receive(state(FfaPhase.Results, 450, 1, 3));
+    harness.frames(1);
+    expect(partText(harness, '.ffa-results-next')).toBe('Ждём, пока соберёмся');
+    harness.socket().receive(state(FfaPhase.Lobby, null, 1, 3));
+    harness.frames(1);
+    expect(isShown(harness, '.ffa-results')).toBe(false);
+    expect(isShown(harness, '.ffa-lobby')).toBe(true);
+  });
+
+  it('U14 занято: сам не переподключается; «Играть здесь» входит с пропуском', () => {
+    const harness = makeGame();
+    enterFight(harness, arena([tank(ME, 600, 650)]));
+    harness.socket().receive({ type: MessageType.Error, code: ErrorCode.Replaced, text: 'занято' });
+    harness.socket().drop();
+    vi.advanceTimersByTime(10_000);
+    harness.frames(1);
+    expect(harness.sockets).toHaveLength(1);
+    expect(statusText(harness)).toBe(
+      'ТЫ ИГРАЕШЬ В ДРУГОМ МЕСТЕ Бой открыт в другой вкладке или на другом устройстве. Играть здесь На главную',
+    );
+    click(harness, '.ffa-fatal', 'Играть здесь');
+    expect(harness.sockets).toHaveLength(2);
+    harness.socket().open();
+    expect(harness.socket().sent[0]).toMatchObject({ type: MessageType.Join, token: 'пропуск' });
+  });
+
+  it('U16 «ВЕРНУЛИСЬ!» гаснет через 2 с', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 600, 650)]);
+    enterFight(harness, world);
+    harness.socket().drop();
+    harness.frames(1);
+    expect(partText(harness, '.ffa-connection')).toBe('СВЯЗЬ ПРОПАЛА Держим место, возвращаемся…');
+    vi.advanceTimersByTime(1000);
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(state(FfaPhase.Fight, 3000));
+    socket.receive(matchStart());
+    step(world);
+    socket.receive(snapshotOf(world));
+    harness.frames(1);
+    expect(partText(harness, '.ffa-connection')).toBe('ВЕРНУЛИСЬ!');
+    harness.frames(2 * SECOND_FRAMES);
+    expect(isShown(harness, '.ffa-connection')).toBe(false);
+  });
+
+  it('U17 вход на итогах — итоги матча, в котором тебя нет: «СЛЕДУЮЩИЙ МАТЧ — ТВОЙ»', () => {
+    const harness = makeGame();
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster([ME, ENEMY, 6]));
+    socket.receive(state(FfaPhase.Results, 300, 1, 8));
+    socket.receive(matchStart());
+    socket.receive(
+      scoreRows([
+        [6, 4, 0],
+        [ENEMY, 2, 3],
+      ]),
+    );
+    harness.frames(1);
+    expect(partText(harness, '.ffa-results-title')).toBe('СЛЕДУЮЩИЙ МАТЧ — ТВОЙ');
+    expect(hudPart(harness, '.ffa-results-place').hidden).toBe(true);
+    expect([...harness.hud.querySelectorAll('.ffa-results-row')].map((row) => shownText(row))).toEqual([
+      '1 БОТ Робот 4 0 —',
+      '2 Вася 2 3 ×0,7',
+    ]);
+  });
+
+  it.each([
+    [ErrorCode.BadMessage, 'плохое сообщение'],
+    [ErrorCode.RoomFull, 'мест нет'],
+  ])('U22 ошибка %i — «ЧТО-ТО ПОШЛО НЕ ТАК»; «Ещё раз» входит с пропуском; «На главную» уводит', (code, text) => {
+    const harness = makeGame();
+    enterFight(harness, arena([tank(ME, 600, 650)]));
+    harness.socket().receive({ type: MessageType.Error, code, text });
+    harness.frames(1);
+    expect(harness.state().screen).toBe('error');
+    expect(statusText(harness)).toBe('ЧТО-ТО ПОШЛО НЕ ТАК Сервер нас не понял. Попробуем ещё раз? Ещё раз На главную');
+    click(harness, '.ffa-fatal', 'Ещё раз');
+    harness.socket().open();
+    expect(harness.socket().sent[0]).toMatchObject({ type: MessageType.Join, token: 'пропуск' });
+    harness.socket().receive({ type: MessageType.Error, code, text });
+    harness.frames(1);
+    click(harness, '.ffa-fatal', 'На главную');
+    expect(harness.calls).toEqual(['home']);
   });
 });

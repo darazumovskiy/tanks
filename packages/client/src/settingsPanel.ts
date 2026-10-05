@@ -42,6 +42,13 @@ interface StyleRow {
   options: Map<AimLineStyleId, HTMLButtonElement>;
 }
 
+// isTouchDevice — флажки `isTouchOnly` и группа камеры; hasCameraGroup — у режима есть стратегии камеры
+// (в бою толпы камера одна).
+export interface SettingsPanelOptions {
+  isTouchDevice: boolean;
+  hasCameraGroup: boolean;
+}
+
 // Панель настроек в бою: ползунки меняют хранилище сразу, игра читает его каждый тик — результат виден не выходя
 // из боя. Поля камеры и флажки `isTouchOnly` показываются только на устройстве с касанием, поля камеры — только
 // для выбранной стратегии. Флажок, от которого зависит ползунок, стоит прямо перед ним; остальные флажки — после
@@ -59,7 +66,7 @@ export class SettingsPanel {
     private readonly root: HTMLElement,
     toggle: HTMLElement,
     private readonly store: SettingsStore,
-    isTouchDevice: boolean,
+    { isTouchDevice, hasCameraGroup }: SettingsPanelOptions,
   ) {
     root.innerHTML = '';
     const title = document.createElement('div');
@@ -74,7 +81,7 @@ export class SettingsPanel {
       this.appendFlagBefore(field);
       root.append(this.buildRow(field));
     }
-    if (isTouchDevice) {
+    if (isTouchDevice && hasCameraGroup) {
       root.append(this.buildModeRow());
       for (const field of cameraFields) {
         root.append(this.buildRow(field));

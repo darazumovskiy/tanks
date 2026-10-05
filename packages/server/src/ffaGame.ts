@@ -550,13 +550,15 @@ export class FfaGame {
   private scoreMessage(match: FfaMatch): FfaScoreMessage {
     return {
       type: MessageType.FfaScore,
-      rows: match.players.map((player) => ({
-        id: player.id,
-        kills: player.kills,
-        deaths: player.deaths,
-        damageDealt: player.damageDealt,
-        damageTaken: player.damageTaken,
-      })),
+      rows: match.players
+        .filter((player) => player.hasPlayed)
+        .map((player) => ({
+          id: player.id,
+          kills: player.kills,
+          deaths: player.deaths,
+          damageDealt: player.damageDealt,
+          damageTaken: player.damageTaken,
+        })),
     };
   }
 

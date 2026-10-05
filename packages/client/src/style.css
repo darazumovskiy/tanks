@@ -734,8 +734,10 @@ input {
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
+/* Подсказка поворота — поверх любого интерфейса боя. */
 .rotate-hint {
   position: fixed;
+  z-index: 100;
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
@@ -1247,89 +1249,145 @@ input {
 
 /* Интерфейс боя толпы поверх холста: касания и клики по полю проходят насквозь к стикам, кнопки ловят сами. */
 .ffa-hud {
+  --ffa-accent: #e8825a;
+  --ffa-enemy: #4fc3c9;
+  --ffa-danger: #ff5a6a;
+  --ffa-zone: #ff4d5e;
+  --ffa-text: #f4f1e8;
+  --ffa-muted: rgba(244, 241, 232, 0.62);
+  --ffa-card: rgba(11, 13, 17, 0.9);
+  --ffa-edge: rgba(255, 255, 255, 0.14);
+  --ffa-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ffa-top: max(10px, env(safe-area-inset-top));
+  /* Лента справа и центральная колонка (плашка под таймером, карточка «подбит») делят ширину экрана: колонка
+     уже экрана на две ленты с отступом 12 и зазором 10 — длинные ники не сводят их вместе. */
+  --ffa-feed-width: 26vw;
+  --ffa-center-width: calc(100vw - 2 * (var(--ffa-feed-width) + 22px));
   position: fixed;
   inset: 0;
   z-index: 1;
   pointer-events: none;
   font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-  color: #f4f1e8;
+  color: var(--ffa-text);
 }
 
-.ffa-status {
-  position: absolute;
+/* В бою толпы своей панели слева нет: «⌂» встаёт в верхнюю полосу рядом с лидером. */
+body.ffa .menu-toggle {
   top: max(10px, env(safe-area-inset-top));
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  max-width: min(560px, 64vw);
-  padding: 7px 18px 8px;
-  text-align: center;
-  background: rgba(10, 12, 15, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 14px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-  animation: ffa-status-in 0.16s ease-out;
 }
 
-.ffa-status-title {
+.ffa-hud p,
+.ffa-hud h2 {
+  margin: 0;
+}
+
+/* Слой появляется и гаснет прозрачностью; погашенный не виден и не ловит нажатий. */
+.ffa-layer {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.16s var(--ffa-ease),
+    visibility 0s linear 0.16s;
+}
+
+.ffa-layer.is-shown {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.ffa-card {
+  background: var(--ffa-card);
+  border: 1px solid var(--ffa-edge);
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  transform: scale(0.96);
+  transition: transform 0.18s var(--ffa-ease);
+}
+
+.ffa-layer.is-shown .ffa-card {
+  transform: none;
+}
+
+.ffa-title {
   font-family: 'Russo One', 'Arial Black', sans-serif;
-  font-size: 18px;
-  letter-spacing: 0.02em;
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  line-height: 1.1;
 }
 
-.ffa-status-text {
-  font-size: 13px;
-  line-height: 1.35;
-  color: rgba(244, 241, 232, 0.7);
+.ffa-bot {
+  margin-right: 5px;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ffa-muted);
+  vertical-align: 0.08em;
 }
 
-.ffa-status-buttons {
+/* Экраны во весь размер: карточка по центру поверх затемнения поля. */
+.ffa-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+
+.ffa-buttons {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 6px;
+  align-items: center;
+  gap: 10px;
 }
 
 .ffa-button {
   pointer-events: auto;
-  min-height: 36px;
-  padding: 8px 16px;
+  min-height: 38px;
+  padding: 9px 18px;
   font-family: inherit;
   font-size: 14px;
   font-weight: 700;
-  color: #f4f1e8;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: var(--ffa-text);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 10px;
   cursor: pointer;
   touch-action: manipulation;
   transition:
     transform 0.12s ease-out,
     filter 0.12s ease-out,
-    background-color 0.12s ease-out;
+    background-color 0.12s ease-out,
+    border-color 0.12s ease-out;
 }
 
 .ffa-button.is-primary {
   color: #0b0f0d;
-  background: #e8825a;
-  border-color: #e8825a;
+  background: var(--ffa-accent);
+  border-color: var(--ffa-accent);
 }
 
-.ffa-button:hover {
-  filter: brightness(1.08);
+@media (hover: hover) {
+  .ffa-button:not(:disabled):hover {
+    filter: brightness(1.08);
+    border-color: rgba(255, 255, 255, 0.4);
+  }
+
+  .ffa-button.is-primary:not(:disabled):hover {
+    border-color: var(--ffa-accent);
+  }
 }
 
-.ffa-button:active {
+.ffa-button:not(:disabled):active {
   transform: scale(0.97);
-  filter: brightness(0.92);
+  filter: brightness(0.9);
 }
 
 .ffa-button:focus-visible {
-  outline: 2px solid #f4f1e8;
+  outline: 2px solid var(--ffa-text);
   outline-offset: 2px;
 }
 
@@ -1338,14 +1396,881 @@ input {
   cursor: not-allowed;
 }
 
-@keyframes ffa-status-in {
+.ffa-spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(244, 241, 232, 0.22);
+  border-top-color: var(--ffa-accent);
+  border-radius: 50%;
+  animation: ffa-spin 0.9s cubic-bezier(0.45, 0.1, 0.55, 0.9) infinite;
+}
+
+/* Иконка «i»: подсказка всплывает под ней мелким приглушённым текстом. */
+.ffa-hint {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.ffa-hint-toggle {
+  pointer-events: auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font:
+    italic 600 12px/1 Georgia,
+    'Times New Roman',
+    serif;
+  color: var(--ffa-muted);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 50%;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.ffa-hint.is-open .ffa-hint-toggle {
+  color: var(--ffa-text);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+@media (hover: hover) {
+  .ffa-hint-toggle:hover {
+    color: var(--ffa-text);
+    border-color: rgba(255, 255, 255, 0.6);
+  }
+}
+
+.ffa-hint-toggle:focus-visible {
+  outline: 2px solid var(--ffa-accent);
+  outline-offset: 2px;
+}
+
+.ffa-hint-text {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 6px);
+  left: 50%;
+  width: 230px;
+  padding: 8px 10px;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-align: left;
+  text-transform: none;
+  white-space: normal;
+  color: var(--ffa-muted);
+  background: rgba(11, 13, 17, 0.97);
+  border: 1px solid var(--ffa-edge);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%);
+  transition:
+    opacity 0.15s var(--ffa-ease),
+    visibility 0s linear 0.15s;
+}
+
+.ffa-hint.is-open .ffa-hint-text {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+/* Подключение: пол карты затемнён. */
+.ffa-connecting {
+  flex-direction: column;
+  gap: 12px;
+  background: rgba(5, 6, 8, 0.55);
+}
+
+.ffa-connecting .ffa-spinner {
+  width: 22px;
+  height: 22px;
+  border-width: 3px;
+}
+
+.ffa-connecting-text {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 18px;
+  letter-spacing: 0.04em;
+}
+
+/* Лобби: непрозрачная карточка поверх пола. */
+.ffa-lobby {
+  background: rgba(5, 6, 8, 0.35);
+}
+
+.ffa-lobby-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(560px, calc(100vw - 120px));
+  padding: 16px 20px 18px;
+  background: linear-gradient(180deg, #17130f, #0f1114 55%);
+  border-color: rgba(232, 130, 90, 0.38);
+}
+
+.ffa-lobby-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ffa-lobby-count {
+  margin-left: auto;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 20px;
+  color: var(--ffa-muted);
+  white-space: nowrap;
+}
+
+.ffa-lobby-players {
+  font-size: 32px;
+  color: var(--ffa-accent);
+}
+
+.ffa-progress {
+  position: relative;
+  height: 10px;
+  margin-bottom: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+}
+
+.ffa-progress-fill {
+  height: 100%;
+  background: rgba(232, 130, 90, 0.55);
+  border-radius: inherit;
+  transition:
+    width 0.2s var(--ffa-ease),
+    background-color 0.15s ease;
+}
+
+.ffa-progress-fill.is-ready {
+  background: var(--ffa-accent);
+  box-shadow: 0 0 12px rgba(232, 130, 90, 0.55);
+}
+
+.ffa-progress-mark {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 18px;
+  margin-left: -1px;
+  background: var(--ffa-text);
+  border-radius: 1px;
+}
+
+.ffa-progress-mark-label {
+  position: absolute;
+  top: 19px;
+  left: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ffa-muted);
+  transform: translateX(-50%);
+}
+
+.ffa-lobby-status {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 17px;
+  letter-spacing: 0.01em;
+}
+
+/* Облако — точка отсчёта offsetTop ников: карточка по центру сдвигается, пока облако подгоняется в две строки. */
+.ffa-roster {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ffa-nick {
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+}
+
+.ffa-nick.is-me {
+  color: var(--ffa-accent);
+  border-color: rgba(232, 130, 90, 0.6);
+  background: rgba(232, 130, 90, 0.12);
+}
+
+.ffa-roster-more {
+  color: var(--ffa-muted);
+  background: transparent;
+}
+
+.ffa-buttons .ffa-lobby-copied {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ffa-accent);
+}
+
+/* Отсчёт — в верхней полосе: свой танк ниже, табло в это время скрыто. */
+.ffa-countdown {
+  position: absolute;
+  top: max(6px, env(safe-area-inset-top));
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transform: translateX(-50%);
+}
+
+.ffa-countdown-value {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 58px;
+  line-height: 1;
+  letter-spacing: 0.03em;
+  text-shadow:
+    0 0 22px rgba(232, 130, 90, 0.55),
+    0 3px 14px rgba(0, 0, 0, 0.7);
+}
+
+.ffa-countdown-value.is-go {
+  color: var(--ffa-accent);
+}
+
+.ffa-countdown-value[data-tick='0'] {
+  animation: ffa-tick-a 0.42s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.ffa-countdown-value[data-tick='1'] {
+  animation: ffa-tick-b 0.42s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.ffa-countdown-note {
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ffa-muted);
+  background: var(--ffa-card);
+  border-radius: 999px;
+}
+
+/* Верхняя полоса боя: лидер у «⌂», таймер по центру, своё место справа. */
+.ffa-scoreboard {
+  position: absolute;
+  inset: 0 0 auto;
+}
+
+.ffa-timer,
+.ffa-leader,
+.ffa-place {
+  position: absolute;
+  top: var(--ffa-top);
+  background: rgba(11, 13, 17, 0.74);
+  border: 1px solid var(--ffa-edge);
+}
+
+.ffa-timer {
+  left: 50%;
+  min-width: 78px;
+  padding: 3px 14px 4px;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 22px;
+  letter-spacing: 0.05em;
+  text-align: center;
+  border-radius: 12px;
+  transform: translateX(-50%);
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.ffa-timer.is-final {
+  color: var(--ffa-danger);
+  border-color: rgba(255, 90, 106, 0.5);
+}
+
+.ffa-leader {
+  left: 54px;
+  display: flex;
+  align-items: center;
+  height: 34px;
+  max-width: 28vw;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border-radius: 999px;
+}
+
+/* Длинный ник лидера обрезается многоточием, счёт после него виден всегда. */
+.ffa-leader-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ffa-leader-kills {
+  flex: none;
+  white-space: pre;
+}
+
+.ffa-leader.is-me {
+  color: var(--ffa-accent);
+  border-color: rgba(232, 130, 90, 0.6);
+}
+
+.ffa-place {
+  right: 12px;
+  padding: 4px 12px 5px;
+  text-align: right;
+  border-radius: 12px;
+}
+
+.ffa-place-rank {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 16px;
+  line-height: 1.15;
+}
+
+.ffa-place-tally {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ffa-muted);
+}
+
+/* Лента — справа под табло, новые сверху; на телефоне не доходит до «АВТО». */
+.ffa-feed {
+  position: absolute;
+  top: calc(var(--ffa-top) + 52px);
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.ffa-feed-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: var(--ffa-feed-width);
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  background: rgba(11, 13, 17, 0.7);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  animation: ffa-feed-in 0.18s var(--ffa-ease);
+}
+
+.ffa-feed-row.is-my-kill {
+  background: rgba(232, 130, 90, 0.16);
+  border-color: rgba(232, 130, 90, 0.6);
+}
+
+.ffa-feed-row.is-my-death {
+  background: rgba(255, 90, 106, 0.12);
+  border-color: rgba(255, 90, 106, 0.5);
+}
+
+.ffa-feed-name {
+  max-width: 16ch;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ffa-feed-name.is-me {
+  color: var(--ffa-accent);
+}
+
+.ffa-feed-note {
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--ffa-muted);
+}
+
+.ffa-feed-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: rgba(244, 241, 232, 0.85);
+}
+
+.ffa-feed-icon[data-cause='ricochet'] {
+  color: rgb(255, 210, 140);
+}
+
+.ffa-feed-icon[data-cause='self'] {
+  color: var(--ffa-danger);
+}
+
+.ffa-feed-icon[data-cause='zone'] {
+  color: var(--ffa-zone);
+}
+
+/* «Тебя подбил» — внизу по центру: свой взрыв в середине экрана виден, стиков и «АВТО» у подбитого нет. */
+.ffa-death {
+  position: absolute;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.ffa-death-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: min(280px, var(--ffa-center-width));
+  max-width: var(--ffa-center-width);
+  padding: 10px 24px 12px;
+  text-align: center;
+}
+
+.ffa-death-kicker {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  color: var(--ffa-muted);
+}
+
+.ffa-death-title {
+  max-width: 100%;
+  overflow: hidden;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.12;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ffa-death-card.is-enemy {
+  border-color: rgba(79, 195, 201, 0.4);
+}
+
+.ffa-death-card.is-enemy .ffa-death-title {
+  color: var(--ffa-enemy);
+}
+
+.ffa-death-card.is-danger {
+  border-color: rgba(255, 90, 106, 0.45);
+}
+
+.ffa-death-card.is-danger .ffa-death-title {
+  color: var(--ffa-danger);
+}
+
+.ffa-death-card.is-zone {
+  border-color: rgba(255, 77, 94, 0.45);
+}
+
+.ffa-death-card.is-zone .ffa-death-title {
+  color: var(--ffa-zone);
+}
+
+.ffa-death-note {
+  font-size: 13px;
+  color: var(--ffa-muted);
+}
+
+.ffa-death-respawn {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ffa-muted);
+}
+
+.ffa-death-respawn-value {
+  margin-left: 2px;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 22px;
+  font-weight: 400;
+  color: var(--ffa-text);
+  vertical-align: -2px;
+}
+
+/* Зритель: плашка внизу по центру — стиков у зрителя нет. */
+.ffa-spectator {
+  position: absolute;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  left: 50%;
+  padding: 8px 20px 9px;
+  text-align: center;
+  background: var(--ffa-card);
+  border: 1px solid var(--ffa-edge);
+  border-radius: 14px;
+  transform: translateX(-50%);
+}
+
+.ffa-spectator-label {
+  font-size: 13px;
+  color: var(--ffa-muted);
+  white-space: nowrap;
+}
+
+.ffa-spectator-name {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--ffa-enemy);
+}
+
+.ffa-spectator-hint {
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--ffa-muted);
+}
+
+/* Под таймером одно место: связь, «Ты тут?», финал — в одну строку внутри верхней полосы, над своим танком. */
+.ffa-pill {
+  position: absolute;
+  top: calc(var(--ffa-top) + 37px);
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: max-content;
+  max-width: var(--ffa-center-width);
+  padding: 2px 12px 3px;
+  background: rgba(11, 13, 17, 0.9);
+  border: 1px solid var(--ffa-edge);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transform: translateX(-50%);
+}
+
+.ffa-pill-title {
+  flex: none;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.ffa-pill-note {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ffa-muted);
+}
+
+.ffa-pill .ffa-spinner {
+  width: 12px;
+  height: 12px;
+}
+
+.ffa-final {
+  border-color: rgba(255, 77, 94, 0.6);
+}
+
+.ffa-final .ffa-pill-title {
+  color: var(--ffa-zone);
+}
+
+.ffa-idle {
+  border-color: rgba(255, 90, 106, 0.6);
+}
+
+.ffa-idle .ffa-pill-title {
+  color: var(--ffa-danger);
+}
+
+.ffa-final.is-started {
+  background: rgba(58, 12, 18, 0.92);
+  box-shadow:
+    0 0 22px rgba(255, 77, 94, 0.35),
+    0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.ffa-connection.is-returned .ffa-pill-title {
+  color: var(--ffa-accent);
+}
+
+.ffa-connection:not(.is-lost) .ffa-spinner {
+  display: none;
+}
+
+/* Итоги: поле застыло под затемнением, карточка — заголовок слева, таблица справа. */
+.ffa-results {
+  background: rgba(5, 6, 8, 0.55);
+}
+
+.ffa-results-card {
+  display: flex;
+  align-items: stretch;
+  gap: 24px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  padding: 18px 22px 18px 24px;
+}
+
+.ffa-results-side {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  width: 230px;
+}
+
+.ffa-results-title {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 26px;
+  font-weight: 400;
+  line-height: 1.08;
+  letter-spacing: 0.03em;
+}
+
+.ffa-results-card.is-champion .ffa-results-title {
+  color: var(--ffa-accent);
+  text-shadow:
+    0 0 18px rgba(232, 130, 90, 0.75),
+    0 0 42px rgba(232, 130, 90, 0.35);
+}
+
+.ffa-results-card.is-podium .ffa-results-title {
+  color: var(--ffa-accent);
+}
+
+.ffa-results-place {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 17px;
+}
+
+.ffa-results-next {
+  font-size: 13px;
+  color: var(--ffa-muted);
+}
+
+.ffa-results-side .ffa-buttons {
+  margin-top: 10px;
+}
+
+.ffa-results-table {
+  align-self: center;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+
+.ffa-results-table th {
+  padding: 0 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  white-space: nowrap;
+  color: var(--ffa-muted);
+}
+
+.ffa-results-table th:nth-child(n + 3) {
+  text-align: right;
+}
+
+.ffa-results-table th .ffa-hint {
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.ffa-results-table th .ffa-hint-toggle {
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+}
+
+.ffa-results-table th .ffa-hint-text {
+  right: -6px;
+  left: auto;
+  transform: none;
+}
+
+.ffa-results-table td {
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.ffa-results-place-cell {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  color: var(--ffa-muted);
+}
+
+.ffa-results-name {
+  max-width: 18ch;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.ffa-results-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ffa-results-row.is-me td {
+  color: var(--ffa-accent);
+  background: rgba(232, 130, 90, 0.14);
+}
+
+.ffa-results-row.is-me td:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.ffa-results-row.is-me td:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+.ffa-results-gap td {
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 10px;
+  text-align: center;
+  color: var(--ffa-muted);
+}
+
+/* Окончательные экраны: карточка по центру поверх сильного затемнения. */
+.ffa-fatal {
+  background: rgba(5, 6, 8, 0.72);
+}
+
+.ffa-fatal-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: min(460px, calc(100vw - 32px));
+  padding: 22px 28px 22px;
+  text-align: center;
+}
+
+.ffa-fatal-text {
+  margin-bottom: 8px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ffa-muted);
+}
+
+.ffa-fatal .ffa-buttons {
+  justify-content: center;
+}
+
+/* Компьютер: экран выше — крупнее цифры и заголовки. */
+@media (min-height: 600px) {
+  .ffa-timer {
+    font-size: 28px;
+  }
+
+  .ffa-place-rank {
+    font-size: 19px;
+  }
+
+  .ffa-place-tally,
+  .ffa-leader,
+  .ffa-feed-row {
+    font-size: 13px;
+  }
+
+  .ffa-feed {
+    top: calc(var(--ffa-top) + 62px);
+  }
+
+  .ffa-pill {
+    top: calc(var(--ffa-top) + 50px);
+    gap: 10px;
+    padding: 4px 16px 5px;
+  }
+
+  .ffa-death {
+    bottom: 14vh;
+  }
+
+  .ffa-pill-title {
+    font-size: 18px;
+  }
+
+  .ffa-pill-note {
+    font-size: 13px;
+  }
+
+  .ffa-countdown-value {
+    font-size: 96px;
+  }
+
+  .ffa-death-title {
+    font-size: 38px;
+  }
+
+  .ffa-lobby-card {
+    width: min(620px, calc(100vw - 120px));
+    gap: 14px;
+    padding: 22px 26px 24px;
+  }
+
+  .ffa-title {
+    font-size: 26px;
+  }
+
+  .ffa-results-side {
+    width: 290px;
+  }
+
+  .ffa-results-title {
+    font-size: 32px;
+  }
+
+  .ffa-results-table {
+    font-size: 14px;
+  }
+
+  .ffa-results-table td {
+    padding: 4px 10px;
+  }
+}
+
+@keyframes ffa-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ffa-feed-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -6px);
+    transform: translateX(10px);
   }
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0);
+}
+
+@keyframes ffa-tick-a {
+  from {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+
+@keyframes ffa-tick-b {
+  from {
+    opacity: 0;
+    transform: scale(1.6);
   }
 }
 
@@ -1356,6 +2281,11 @@ input {
 
 .help a {
   color: #e8825a;
+}
+
+/* Справка общего боя и дуэли — один блок: зазор колонки главной между ними гасится. */
+#ffa-help {
+  margin-bottom: -16px;
 }
 
 .android {

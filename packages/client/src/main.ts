@@ -285,7 +285,10 @@ function startDuel(roomCode: string): void {
   const settingsToggle = byId('settings-toggle', HTMLButtonElement);
   settingsToggle.hidden = false;
   byId('menu', HTMLAnchorElement).hidden = false;
-  const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store, hasTouch);
+  const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store, {
+    isTouchDevice: hasTouch,
+    hasCameraGroup: true,
+  });
   window.addEventListener('keydown', (event) => {
     if (event.code === SETTINGS_KEY_CODE && !event.repeat) {
       panel.toggle();
@@ -319,7 +322,7 @@ async function startFfa(size: FfaSize): Promise<void> {
   const ffaModule = await import('./ffa/ffaGame.js');
   const canvas = byId('stage', HTMLCanvasElement);
   canvas.hidden = false;
-  document.body.classList.add('duel');
+  document.body.classList.add('duel', 'ffa');
   const hasTouch = isTouchDevice();
   const store = new SettingsStore(localStorage, defaultSettings(), { isAdmin });
   const autoFireButton = byId('autofire', HTMLButtonElement);
@@ -342,7 +345,11 @@ async function startFfa(size: FfaSize): Promise<void> {
   const settingsToggle = byId('settings-toggle', HTMLButtonElement);
   settingsToggle.hidden = false;
   byId('menu', HTMLAnchorElement).hidden = false;
-  const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store, hasTouch);
+  // Камера толпы одна — стратегий выбирать не из чего.
+  const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store, {
+    isTouchDevice: hasTouch,
+    hasCameraGroup: false,
+  });
   window.addEventListener('keydown', (event) => {
     if (event.code === SETTINGS_KEY_CODE && !event.repeat) {
       panel.toggle();

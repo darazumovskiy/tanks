@@ -501,9 +501,9 @@ describe('вход посреди матча', () => {
     expect(tankOf(fighting, late.welcome.playerId)).toBeDefined();
   });
 
-  it('в финале — зритель до конца матча', async () => {
-    await startApp({ matchSeconds: 4 });
-    const [a] = await fightPair();
+  it('в финале — зритель до конца матча, в счёт матча не входит', async () => {
+    await startApp({ matchSeconds: 60 });
+    const [a, b] = await fightPair();
     await waitFor(a.client, MessageType.FfaSnapshot, (snapshot) =>
       snapshot.events.some((event) => event.kind === 'suddenDeath'),
     );
@@ -514,6 +514,10 @@ describe('вход посреди матча', () => {
       (snapshot) => snapshot.self.state === 'spectator',
     );
     expect(tankOf(watching, late.welcome.playerId)).toBeUndefined();
+    const score = await late.client.nextOfType(MessageType.FfaScore);
+    expect(score.rows.map((row) => row.id).sort((x, y) => x - y)).toEqual(
+      [a.welcome.playerId, b.welcome.playerId].sort((x, y) => x - y),
+    );
   });
 });
 

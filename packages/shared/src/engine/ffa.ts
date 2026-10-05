@@ -31,6 +31,8 @@ export interface FfaPlayer {
   damageDealt: number;
   damageTaken: number;
   killerId: number | null;
+  // Был ли танк на поле в этом матче: вошедший в финал зрителем в счёт матча не входит.
+  hasPlayed: boolean;
 }
 
 // durationSeconds — длительность матча; suddenDeathAt — секунда матча, с которой возрождения нет.
@@ -49,7 +51,8 @@ export type FfaEvent =
   WorldEvent | { type: 'spawn'; tank: number; x: number; y: number } | { type: 'suddenDeath' } | { type: 'matchOver' };
 
 const WRECK_TICKS = Math.round(FFA.wreckSeconds * TICK_RATE);
-const RESPAWN_WAIT_TICKS = Math.round((FFA.respawnSeconds - FFA.wreckSeconds) * TICK_RATE);
+// Тиков от исчезновения обломков до появления: клиент досчитывает по ним отсчёт подбитого.
+export const FFA_RESPAWN_WAIT_TICKS = Math.round((FFA.respawnSeconds - FFA.wreckSeconds) * TICK_RATE);
 
 function ffaZonePlan(map: FfaMap, playerCount: number, durationSeconds: number): ZonePlan {
   const startRadius = Math.hypot(map.width / 2, map.height / 2) + ZONE_START_MARGIN;
@@ -91,6 +94,7 @@ function newPlayer(setup: FfaSetup, state: FfaPlayerState): FfaPlayer {
     damageDealt: 0,
     damageTaken: 0,
     killerId: null,
+    hasPlayed: false,
   };
 }
 
@@ -107,6 +111,7 @@ function spawnPlayer(match: FfaMatch, player: FfaPlayer, events: FfaEvent[]): vo
   tank.shieldLeft = FFA.shieldSeconds;
   match.world.tanks.push(tank);
   player.state = 'alive';
+  player.hasPlayed = true;
   events.push({ type: 'spawn', tank: tank.id, x: tank.x, y: tank.y });
 }
 
@@ -188,7 +193,7 @@ function advancePlayer(match: FfaMatch, player: FfaPlayer, events: FfaEvent[]): 
       return;
     }
     player.state = 'waiting';
-    player.ticksLeft = RESPAWN_WAIT_TICKS;
+    player.ticksLeft = FFA_RESPAWN_WAIT_TICKS;
     return;
   }
   if (player.state !== 'waiting') {
@@ -269,11 +274,17 @@ export function ffaStandings<T extends FfaStandingRow>(rows: readonly T[]): T[] 
   return [...rows].sort(compareStanding);
 }
 
+// Строка счёта с уроном: игрок матча на сервере или строка счёта у клиента.
+export interface FfaTallyRow extends FfaStandingRow {
+  damageDealt: number;
+  damageTaken: number;
+}
+
 // Сколько урона игрок раздал на каждую единицу полученного; убийство и смерть весят как танк.
-export function ffaEfficiency(player: FfaPlayer): number | null {
-  if (player.damageTaken === 0 && player.deaths === 0) {
+export function ffaEfficiency(row: FfaTallyRow): number | null {
+  if (row.damageTaken === 0 && row.deaths === 0) {
     return null;
   }
   const weight = FFA.efficiencyTankWeight;
-  return (player.damageDealt + weight * player.kills) / (player.damageTaken + weight * player.deaths);
+  return (row.damageDealt + weight * row.kills) / (row.damageTaken + weight * row.deaths);
 }

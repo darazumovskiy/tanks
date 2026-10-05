@@ -58,7 +58,8 @@ export interface FfaStandFrame {
 
 const PHONE: readonly FrameScreenId[] = ['phone'];
 const BOTH: readonly FrameScreenId[] = ['phone', 'desktop'];
-const ME = 1;
+export const STAND_ME = 1;
+const ME = STAND_ME;
 // Тряска от чужой гибели в кадре гаснет за доли секунды: снимок — около её пика.
 const DEATH_SHAKE_AGE_S = 0.04;
 const SHIELD_LEFT_S = 2.2;
@@ -83,7 +84,7 @@ function bulletAhead(tank: StandTank, distance: number): StandBullet {
   };
 }
 
-const CROWD: readonly StandTank[] = [
+export const CROWD: readonly StandTank[] = [
   OWN,
   { id: 2, name: 'Вася', x: 1900, y: 850, heading: Math.PI, turret: Math.PI - 0.15 },
   { id: 3, name: 'Петя', x: 2150, y: 1150, heading: -2, turret: 2.8, hp: 60 },
@@ -119,7 +120,7 @@ const SHIELD_WRECK: StandTank = {
   isAlive: false,
 };
 
-const BASE: Omit<FfaStandFrame, 'id' | 'title' | 'screens' | 'tanks'> = {
+export const BASE: Omit<FfaStandFrame, 'id' | 'title' | 'screens' | 'tanks'> = {
   size: 50,
   myId: ME,
   focus: { x: 2600, y: 1450 },
@@ -130,6 +131,21 @@ const BASE: Omit<FfaStandFrame, 'id' | 'title' | 'screens' | 'tanks'> = {
   crop: null,
   isOwnPaletteOnly: false,
   floorFrames: null,
+};
+
+export const CROWD_FRAME: FfaStandFrame = {
+  ...BASE,
+  id: 'crowd-50',
+  title: '12 танков: свой, чужие, бот с отметкой, подбитый, проявляющийся; снаряды своих и чужих',
+  screens: PHONE,
+  tanks: CROWD,
+  bullets: [
+    bulletAhead(OWN, 60),
+    bulletAhead(OWN, 220),
+    bulletAhead(CROWD[1] ?? OWN, 40),
+    bulletAhead(CROWD[2] ?? OWN, 120),
+    bulletAhead(CROWD[11] ?? OWN, 90),
+  ],
 };
 
 export const FFA_FRAMES: readonly FfaStandFrame[] = [
@@ -168,20 +184,7 @@ export const FFA_FRAMES: readonly FfaStandFrame[] = [
     zoneTimeS: null,
     floorFrames: PENDING_FLOOR_FRAMES,
   },
-  {
-    ...BASE,
-    id: 'crowd-50',
-    title: '12 танков: свой, чужие, бот с отметкой, подбитый, проявляющийся; снаряды своих и чужих',
-    screens: PHONE,
-    tanks: CROWD,
-    bullets: [
-      bulletAhead(OWN, 60),
-      bulletAhead(OWN, 220),
-      bulletAhead(CROWD[1] ?? OWN, 40),
-      bulletAhead(CROWD[2] ?? OWN, 120),
-      bulletAhead(CROWD[11] ?? OWN, 90),
-    ],
-  },
+  CROWD_FRAME,
   {
     ...BASE,
     id: 'zone-50',

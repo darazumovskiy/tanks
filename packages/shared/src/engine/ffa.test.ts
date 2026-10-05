@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BULLET_LIFETIME, BULLET_RADIUS, DEFAULT_STATS, FFA, TANK_RADIUS, TICK_RATE } from './constants.js';
 import {
   createFfaMatch,
+  FFA_RESPAWN_WAIT_TICKS,
   ffaEfficiency,
   ffaStandings,
   joinFfaMatch,
@@ -242,7 +243,8 @@ describe('подбитый и возрождение', () => {
     expect(match.world.tanks.some((tank) => tank.id === 1)).toBe(true);
     run(match, 1);
     expect(match.world.tanks.some((tank) => tank.id === 1)).toBe(false);
-    expect(playerOf(match, 1).state).toBe('waiting');
+    expect(playerOf(match, 1)).toMatchObject({ state: 'waiting', ticksLeft: FFA_RESPAWN_WAIT_TICKS });
+    expect(FFA_RESPAWN_WAIT_TICKS).toBe(RESPAWN_TICKS - WRECK_TICKS);
 
     run(match, RESPAWN_TICKS - WRECK_TICKS - 1);
     expect(match.world.tanks.some((tank) => tank.id === 1)).toBe(false);
@@ -377,16 +379,17 @@ describe('вход и выход посреди матча', () => {
     const match = openMatch(2);
     run(match, 10);
     joinFfaMatch(match, { id: 10, name: 'Новичок', stats: DEFAULT_STATS });
-    expect(playerOf(match, 10).state).toBe('waiting');
+    expect(playerOf(match, 10)).toMatchObject({ state: 'waiting', hasPlayed: false });
     const events = run(match, 1);
     expect(events.some((event) => event.type === 'spawn' && event.tank === 10)).toBe(true);
     expect(tankOf(match, 10).shieldLeft).toBe(FFA.shieldSeconds);
+    expect(playerOf(match, 10).hasPlayed).toBe(true);
 
     match.suddenDeathAt = 0;
     run(match, 1);
     joinFfaMatch(match, { id: 11, name: 'Опоздавший', stats: DEFAULT_STATS });
     run(match, 5);
-    expect(playerOf(match, 11).state).toBe('spectator');
+    expect(playerOf(match, 11)).toMatchObject({ state: 'spectator', hasPlayed: false });
     expect(match.world.tanks.some((tank) => tank.id === 11)).toBe(false);
     expect(() => {
       joinFfaMatch(match, { id: 10, name: 'Двойник', stats: DEFAULT_STATS });
@@ -451,6 +454,7 @@ describe('таблица и эффективность', () => {
       damageDealt,
       damageTaken,
       killerId: null,
+      hasPlayed: true,
     };
   }
 
@@ -476,6 +480,23 @@ describe('таблица и эффективность', () => {
     expect(ffaEfficiency(player(1, 3, 1, 400, 250))).toBeCloseTo((400 + weight * 3) / (250 + weight), 12);
     expect(ffaEfficiency(player(2, 0, 0, 100, 0))).toBeNull();
     expect(ffaEfficiency(player(3, 0, 0, 0, 20))).toBe(0);
+  });
+
+  it('строки счёта дают ту же эффективность, что игроки матча', () => {
+    const players = [
+      player(1, 3, 1, 400, 250),
+      player(2, 0, 0, 100, 0),
+      player(3, 0, 2, 0, 20),
+      player(4, 5, 0, 900, 0),
+    ];
+    const rows = players.map(({ id, kills, deaths, damageDealt, damageTaken }) => ({
+      id,
+      kills,
+      deaths,
+      damageDealt,
+      damageTaken,
+    }));
+    expect(rows.map(ffaEfficiency)).toEqual(players.map(ffaEfficiency));
   });
 });
 
