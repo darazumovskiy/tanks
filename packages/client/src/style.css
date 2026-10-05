@@ -868,6 +868,62 @@ input {
   font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
 
+.home-lead,
+.home-more,
+.home-help {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.home-help {
+  gap: 10px;
+}
+
+.home-help .help {
+  margin: 0;
+}
+
+/* Альбомный телефон и компьютер: имя и «В общий бой» слева под заголовком, танк и дуэль справа — главное действие
+   на первом экране без прокрутки. Уже — одна колонка в том же порядке, справка внизу. */
+@media (min-width: 720px) {
+  .home {
+    max-width: 920px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto auto 1fr;
+    grid-template-areas:
+      'title .'
+      'lead more'
+      'help more';
+    column-gap: 32px;
+    row-gap: 16px;
+    align-items: start;
+  }
+
+  .home h1 {
+    grid-area: title;
+  }
+
+  .home-lead {
+    grid-area: lead;
+  }
+
+  .home-more {
+    grid-area: more;
+  }
+
+  .home-more > .stats {
+    margin-top: 0;
+  }
+
+  .home-help {
+    grid-area: help;
+    padding-top: 8px;
+  }
+}
+
 .home h1 {
   margin: 0 0 8px;
   font-family: 'Russo One', 'Arial Black', sans-serif;
@@ -1224,8 +1280,8 @@ input {
   outline-offset: 2px;
 }
 
-/* Общий бой — первым из действий и отдельной карточкой: заголовок, кнопка основного действия и подсказка «i»
-   рядом с ней; дуэль ниже не читается частью этого блока. */
+/* Общий бой — первое действие, отдельной карточкой: заголовок, кнопка основного действия и подсказка «i» рядом с
+   ней; дуэль не читается частью этого блока. */
 .ffa-entry {
   display: flex;
   flex-direction: column;
@@ -1245,6 +1301,13 @@ input {
 
 .ffa-entry-row .action {
   flex: 1;
+}
+
+.ffa-locked {
+  margin: -2px 2px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e8825a;
 }
 
 /* Интерфейс боя толпы поверх холста: касания и клики по полю проходят насквозь к стикам, кнопки ловят сами. */
@@ -2281,11 +2344,6 @@ body.ffa .menu-toggle {
 
 .help a {
   color: #e8825a;
-}
-
-/* Справка общего боя и дуэли — один блок: зазор колонки главной между ними гасится. */
-#ffa-help {
-  margin-bottom: -16px;
 }
 
 .android {

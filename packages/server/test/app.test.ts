@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { connect as connectTcp } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -121,6 +121,35 @@ describe('HTTP', () => {
     } finally {
       rmSync(outside);
     }
+  });
+
+  it('кэш на год — только файлам сборки из /assets/; остальное браузер сверяет по дате и получает 304', async () => {
+    const base = `http://127.0.0.1:${String(port)}`;
+    mkdirSync(join(staticRoot, 'assets'));
+    mkdirSync(join(staticRoot, 'fonts'));
+    writeFileSync(join(staticRoot, 'assets', 'index-abc123.js'), 'build');
+    writeFileSync(join(staticRoot, 'fonts', 'inter-latin.woff2'), 'font');
+    writeFileSync(join(staticRoot, 'favicon.svg'), '<svg/>');
+
+    const hashed = await fetch(`${base}/assets/index-abc123.js`);
+    expect(hashed.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+    expect(await hashed.text()).toBe('build');
+
+    for (const path of ['/', '/ffa', '/favicon.svg', '/fonts/inter-latin.woff2', '/assets/%2e%2e/favicon.svg']) {
+      const response = await fetch(`${base}${path}`);
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get('cache-control'), path).toBe('no-cache');
+      const lastModified = response.headers.get('last-modified') ?? '';
+      expect(Date.parse(lastModified), path).not.toBeNaN();
+
+      const unchanged = await fetch(`${base}${path}`, { headers: { 'If-Modified-Since': lastModified } });
+      expect(unchanged.status, path).toBe(304);
+      expect(await unchanged.text(), path).toBe('');
+    }
+
+    const stale = await fetch(`${base}/favicon.svg`, { headers: { 'If-Modified-Since': new Date(0).toUTCString() } });
+    expect(stale.status).toBe(200);
+    expect(await stale.text()).toBe('<svg/>');
   });
 
   it('отдаёт index.html на маршрутах общего боя, кроме размеров не из списка', async () => {

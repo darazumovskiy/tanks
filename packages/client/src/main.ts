@@ -6,6 +6,7 @@ import { resolveAdminMode } from './admin.js';
 import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
 import { readClientInfo } from './clientInfo.js';
 import { mountFfaEntry } from './ffaEntry.js';
+import { fetchHomeHtml, reloadOnNewBuild } from './freshBuild.js';
 import { Game } from './game.js';
 import { showFrameStand } from './frameStand/stand.js';
 import { showFxLab } from './fxLab/fxLab.js';
@@ -172,19 +173,34 @@ function showHome(): void {
   const createBot = byId('create-bot', HTMLButtonElement);
   home.hidden = false;
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
+  // Ник на устройстве сразу: главная перезагружается сама, когда выходит новая сборка.
+  nickname.addEventListener('input', () => {
+    localStorage.setItem(NICKNAME_KEY, nickname.value);
+  });
+  const freshBuild = reloadOnNewBuild(document, {
+    pathname: location.pathname,
+    loadHome: fetchHomeHtml,
+    reload: () => {
+      location.reload();
+    },
+    now: () => performance.now(),
+  });
+  const goToFight = (path: string): void => {
+    freshBuild.cancelCheck();
+    location.assign(path);
+  };
   const ffa = mountFfaEntry(
     {
       start: byId('ffa-start', HTMLButtonElement),
       info: byId('ffa-info', HTMLButtonElement),
       hint: byId('ffa-hint', HTMLElement),
+      locked: byId('ffa-locked', HTMLElement),
     },
     {
       save: () => {
         saveProfile();
       },
-      navigate: (path) => {
-        location.assign(path);
-      },
+      navigate: goToFight,
     },
   );
   // Старт только с полностью розданными очками: иначе бой нечестный к сопернику с полной раскладкой.
@@ -211,7 +227,7 @@ function showHome(): void {
   });
   const startDuelWith = (code: string): void => {
     saveProfile();
-    location.assign(`/d/${code}`);
+    goToFight(`/d/${code}`);
   };
   create.addEventListener('click', () => {
     startDuelWith(randomCode());

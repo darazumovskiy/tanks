@@ -18,11 +18,13 @@ describe('вход в общий бой с главной', () => {
     document.body.innerHTML = `
       <button id="start" class="action">В общий бой</button>
       <button id="info" class="level-info" aria-expanded="false">i</button>
-      <p id="hint" hidden>До 30 танков на одной карте.</p>`;
+      <p id="hint" hidden>До 30 танков на одной карте.</p>
+      <p id="locked" hidden>Раздай танку все очки — и в бой</p>`;
     elements = {
       start: element('start', HTMLButtonElement),
       info: element('info', HTMLButtonElement),
       hint: element('hint', HTMLElement),
+      locked: element('locked', HTMLElement),
     };
     calls = [];
     entry = mountFfaEntry(elements, {
@@ -31,9 +33,10 @@ describe('вход в общий бой с главной', () => {
     });
   });
 
-  it('пока очки не розданы — кнопка недоступна и никуда не ведёт', () => {
+  it('пока очки не розданы — кнопка недоступна, никуда не ведёт, под ней подсказка', () => {
     entry.setReady(false);
     expect(elements.start.disabled).toBe(true);
+    expect(elements.locked.hidden).toBe(false);
     elements.start.click();
     expect(calls).toEqual([]);
   });
@@ -41,6 +44,7 @@ describe('вход в общий бой с главной', () => {
   it('танк собран — кнопка сохраняет ник и характеристики и ведёт на /ffa', () => {
     entry.setReady(false);
     entry.setReady(true);
+    expect(elements.locked.hidden).toBe(true);
     elements.start.click();
     expect(calls).toEqual(['save', 'navigate /ffa']);
   });

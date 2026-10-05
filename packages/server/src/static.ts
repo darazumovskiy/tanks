@@ -45,6 +45,12 @@ export function serveApk(apkPath: string, request: IncomingMessage, response: Se
   return true;
 }
 
+// Vite кладёт в `/assets/` файлы с хешем содержимого в имени: новое содержимое — новое имя, их можно хранить вечно.
+const HASHED_DIR = '/assets/';
+const HASHED_CACHE = 'public, max-age=31536000, immutable';
+// Остальное (index.html, иконки, шрифты) меняется под тем же именем: браузер сверяет дату и при совпадении получает 304.
+const REVALIDATED_CACHE = 'no-cache';
+
 // Раздаёт собранный клиент: файлы из dist как есть, маршруты приложения — index.html.
 export function serveStatic(root: string, request: IncomingMessage, response: ServerResponse): boolean {
   const pathname = requestPath(request);
@@ -54,11 +60,18 @@ export function serveStatic(root: string, request: IncomingMessage, response: Se
   if (!file.startsWith(resolve(root)) || !existsSync(file) || !statSync(file).isFile()) {
     return false;
   }
-  const type = MIME[extname(file)] ?? 'application/octet-stream';
-  response.writeHead(200, {
-    'Content-Type': type,
-    'Cache-Control': relative === 'index.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
-  });
+  const lastModified = statSync(file).mtime.toUTCString();
+  const headers = {
+    'Content-Type': MIME[extname(file)] ?? 'application/octet-stream',
+    'Cache-Control': relative.startsWith(HASHED_DIR) ? HASHED_CACHE : REVALIDATED_CACHE,
+    'Last-Modified': lastModified,
+  };
+  if (request.headers['if-modified-since'] === lastModified) {
+    response.writeHead(304, headers);
+    response.end();
+    return true;
+  }
+  response.writeHead(200, headers);
   createReadStream(file).pipe(response);
   return true;
 }

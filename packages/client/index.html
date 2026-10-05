@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
     <title>Танки</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="stylesheet" href="/fonts/fonts.css" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
@@ -27,62 +30,71 @@
     <section id="lab" class="lab" hidden></section>
     <section id="home" class="home" hidden>
       <h1>Танки</h1>
-      <label>
-        Имя
-        <input id="nickname" maxlength="16" placeholder="как тебя звать" autocomplete="off" />
-      </label>
-      <section class="stats">
-        <h2 class="levels-title">Танк</h2>
-        <div id="stats-picker" class="stats-picker"></div>
-      </section>
-      <section id="ffa-entry" class="ffa-entry">
-        <h2 class="levels-title">Общий бой</h2>
-        <div class="ffa-entry-row">
-          <button id="ffa-start" class="action" type="button">В общий бой</button>
-          <button id="ffa-info" class="level-info" type="button" aria-label="Подробнее" aria-expanded="false">i</button>
-        </div>
-        <p id="ffa-hint" class="level-hint" hidden>
-          До 30 танков на одной карте. Подбили — через пару секунд снова в деле.
+      <div class="home-lead">
+        <label>
+          Имя
+          <input id="nickname" maxlength="16" placeholder="как тебя звать" autocomplete="off" />
+        </label>
+        <section id="ffa-entry" class="ffa-entry">
+          <h2 class="levels-title">Общий бой</h2>
+          <div class="ffa-entry-row">
+            <button id="ffa-start" class="action" type="button">В общий бой</button>
+            <button id="ffa-info" class="level-info" type="button" aria-label="Подробнее" aria-expanded="false">
+              i
+            </button>
+          </div>
+          <p id="ffa-locked" class="ffa-locked" hidden>Раздай танку все очки — и в бой</p>
+          <p id="ffa-hint" class="level-hint" hidden>
+            До 30 танков на одной карте. Подбили — через пару секунд снова в деле.
+          </p>
+        </section>
+      </div>
+      <div class="home-more">
+        <section class="stats">
+          <h2 class="levels-title">Танк</h2>
+          <div id="stats-picker" class="stats-picker"></div>
+        </section>
+        <button id="create" class="action">Создать дуэль</button>
+        <section class="levels">
+          <h2 class="levels-title">Против бота</h2>
+          <div class="levels-row">
+            <button
+              id="bot-level-toggle"
+              class="dropdown-toggle"
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-label="Уровень бота"
+            ></button>
+            <button id="level-info" class="level-info" type="button" aria-label="Подробнее" aria-expanded="false">
+              i
+            </button>
+            <div id="bot-levels" class="dropdown-list" role="listbox" aria-label="Уровни бота" hidden></div>
+          </div>
+          <p id="level-hint" class="level-hint" hidden></p>
+          <button id="create-bot" class="action secondary">В бой</button>
+        </section>
+        <section id="android" class="android" hidden>
+          <h2>Приложение для Android</h2>
+          <canvas id="android-qr" width="200" height="200"></canvas>
+          <p class="help">
+            Наведи камеру телефона на код или открой <a id="android-link" href="/app/tanks.apk">ссылку</a>. Android один
+            раз спросит разрешение на установку не из магазина.
+          </p>
+        </section>
+      </div>
+      <div class="home-help">
+        <p id="ffa-help" class="help">
+          «В общий бой» — одна карта на толпу, каждый сам за себя. Подбили — через пару секунд снова в деле; под конец
+          круг сжимается, и начинается финал без возрождений. Коллег зови кнопкой «Позвать друга» в лобби.
         </p>
-      </section>
-      <button id="create" class="action">Создать дуэль</button>
-      <section class="levels">
-        <h2 class="levels-title">Против бота</h2>
-        <div class="levels-row">
-          <button
-            id="bot-level-toggle"
-            class="dropdown-toggle"
-            type="button"
-            aria-haspopup="listbox"
-            aria-expanded="false"
-            aria-label="Уровень бота"
-          ></button>
-          <button id="level-info" class="level-info" type="button" aria-label="Подробнее" aria-expanded="false">
-            i
-          </button>
-          <div id="bot-levels" class="dropdown-list" role="listbox" aria-label="Уровни бота" hidden></div>
-        </div>
-        <p id="level-hint" class="level-hint" hidden></p>
-        <button id="create-bot" class="action secondary">В бой</button>
-      </section>
-      <section id="android" class="android" hidden>
-        <h2>Приложение для Android</h2>
-        <canvas id="android-qr" width="200" height="200"></canvas>
         <p class="help">
-          Наведи камеру телефона на код или открой <a id="android-link" href="/app/tanks.apk">ссылку</a>. Android один
-          раз спросит разрешение на установку не из магазина.
+          «Создать дуэль» — ссылка для второго игрока; «Против бота» — тренировка с ботом выбранного уровня. Управление:
+          W A S D или стрелки — корпус, мышь — башня, левая кнопка или пробел — выстрел, M — звук. На телефоне: палец на
+          левой половине экрана — куда повёл, туда едет; на правой — башня, пока касаешься — огонь; кнопка «АВТО» у
+          правого края — огонь без остановки. Шестерёнка в углу (или O) — настройки управления и камеры прямо в бою.
         </p>
-      </section>
-      <p id="ffa-help" class="help">
-        «В общий бой» — одна карта на толпу: люди и боты, каждый сам за себя. Подбили — через пару секунд снова в деле;
-        под конец круг сжимается, и начинается финал без возрождений. Коллег зови кнопкой «Позвать друга» в лобби.
-      </p>
-      <p class="help">
-        «Создать дуэль» — ссылка для второго игрока; «Против бота» — тренировка с ботом выбранного уровня. Управление: W
-        A S D или стрелки — корпус, мышь — башня, левая кнопка или пробел — выстрел, M — звук. На телефоне: палец на
-        левой половине экрана — куда повёл, туда едет; на правой — башня, пока касаешься — огонь; кнопка «АВТО» у
-        правого края — огонь без остановки. Шестерёнка в углу (или O) — настройки управления и камеры прямо в бою.
-      </p>
+      </div>
     </section>
     <script type="module" src="/src/main.ts"></script>
   </body>

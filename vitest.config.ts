@@ -15,6 +15,10 @@ export default defineConfig({
           name: 'client',
           include: ['packages/client/src/**/*.test.ts'],
           environment: 'happy-dom',
+          // Разметка страницы в тестах ссылается на файлы сборки, которых нет: happy-dom не ходит за ними в сеть.
+          environmentOptions: {
+            happyDOM: { settings: { disableCSSFileLoading: true, handleDisabledFileLoadingAsSuccess: true } },
+          },
         },
       },
     ],
@@ -43,6 +47,7 @@ export default defineConfig({
         'packages/client/src/fxLab/{scenes,styleParams,paramPanel,contactSheet}.ts',
         'packages/client/src/clientInfo.ts',
         'packages/client/src/telemetry.ts',
+        'packages/client/src/freshBuild.ts',
         'packages/analysis/src/**/*.ts',
       ],
       exclude: [
@@ -62,7 +67,7 @@ export default defineConfig({
           functions: 95,
           lines: 95,
         },
-        'packages/client/src/{steering,flick,touch,input,clientInfo,telemetry,aimLine,zoneFire,admin}.ts': {
+        'packages/client/src/{steering,flick,touch,input,clientInfo,telemetry,aimLine,zoneFire,admin,freshBuild}.ts': {
           statements: 95,
           branches: 90,
           functions: 95,

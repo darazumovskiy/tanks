@@ -7,6 +7,8 @@ export interface FfaEntryElements {
   start: HTMLButtonElement;
   info: HTMLButtonElement;
   hint: HTMLElement;
+  // Строка под кнопкой, пока она недоступна: что сделать, чтобы попасть в бой.
+  locked: HTMLElement;
 }
 
 export interface FfaEntryActions {
@@ -20,7 +22,7 @@ export function mountFfaEntry(
   elements: FfaEntryElements,
   actions: FfaEntryActions,
 ): { setReady(isReady: boolean): void } {
-  const { start, info, hint } = elements;
+  const { start, info, hint, locked } = elements;
   start.addEventListener('click', () => {
     actions.save();
     actions.navigate(FFA_ENTRY_PATH);
@@ -34,6 +36,7 @@ export function mountFfaEntry(
   return {
     setReady: (isReady) => {
       start.disabled = !isReady;
+      locked.hidden = isReady;
     },
   };
 }
