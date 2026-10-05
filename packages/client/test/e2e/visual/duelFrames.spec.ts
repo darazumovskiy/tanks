@@ -199,6 +199,8 @@ for (const screen of SCREENS) {
     const context = await openContext(browser, screen.options);
     const page = await context.newPage();
     await page.goto(`${server.baseUrl}/`);
+    // Секцию общего боя охраняет свой эталон главной в ffaFrames.spec.ts; здесь — главная без неё.
+    await page.addStyleTag({ content: '#ffa-entry { display: none !important; }' });
     await loadFonts(page);
     await expect(page).toHaveScreenshot(`home-${screen.id}.png`, { ...EXACT, fullPage: true });
     await closeContext(context);

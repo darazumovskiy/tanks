@@ -115,7 +115,15 @@ describe.each(FFA_SIZES.map((size) => [size] as const))('карта на %i ме
     expect(buildFfaMap(size)).toEqual(map);
   });
 
-  it('отпечаток совпадает с эталоном', () => {
-    expect(fnv1a(JSON.stringify(map))).toBe(MAP_DIGESTS[size]);
+  it('отпечаток раскладки совпадает с эталоном', () => {
+    const layout: Partial<FfaMap> = { ...map };
+    delete layout.seed;
+    expect(fnv1a(JSON.stringify(layout))).toBe(MAP_DIGESTS[size]);
+  });
+
+  it('у карты свой сид, у разных размеров — разный', () => {
+    const seeds = new Set(FFA_SIZES.map((other) => ffaMap(other).seed));
+    expect(Number.isInteger(map.seed)).toBe(true);
+    expect(seeds.size).toBe(FFA_SIZES.length);
   });
 });

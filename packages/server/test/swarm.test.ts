@@ -237,8 +237,11 @@ describe('рой ботов через сокет', () => {
     };
 
     await until(
-      poll(() => roster.filter((player) => player.isBot).length === 8),
-      'восемь ботов в составе',
+      poll(
+        () =>
+          roster.filter((player) => player.isBot).length === 8 && swarm.bots().every((bot) => bot.playerId !== null),
+      ),
+      'восемь ботов в составе, у каждого свой номер',
     );
     expect(namesOf(roster)).toEqual(
       ['Ветеран', 'Манекен', 'Манекен', 'Новобранец', 'Призрак', 'Прогульщик', 'Прогульщик', 'Сержант'].sort(),

@@ -62,10 +62,12 @@ export interface FxEvent {
 type FxAnnouncement = 'zoneStart' | 'selfHit' | 'firstBlood';
 
 // Что событие делает с экраном целиком. Решает вызывающий: дуэль и толпа трясут и объявляют по своим правилам.
+// hasParticles — частицы, следы, цифры и отдача на месте события; без них событие далеко за окном только объявляется.
 export interface FxEventOptions {
   shake: number;
   flash: number;
   announcement: FxAnnouncement | null;
+  hasParticles: boolean;
 }
 
 export interface FxTank {
@@ -171,7 +173,9 @@ export class Effects {
   }
 
   onEvent(event: FxEvent, options: FxEventOptions): void {
-    this.spawnFor(event);
+    if (options.hasParticles) {
+      this.spawnFor(event);
+    }
     this.shake = Math.max(this.shake, options.shake);
     this.flashScreen = Math.max(this.flashScreen, options.flash);
     if (options.announcement !== null) {
@@ -456,6 +460,16 @@ export class Effects {
 
   drawDecals(ctx: CanvasRenderingContext2D, camera: Camera): void {
     this.decals.draw(ctx, camera);
+  }
+
+  // Снаряд сменил номер (предсказанный выстрел подтвердил сервер) — хвост продолжается под новым номером.
+  renameTrail(fromId: number, toId: number): void {
+    const trail = this.trails.get(fromId);
+    if (trail === undefined) {
+      return;
+    }
+    this.trails.delete(fromId);
+    this.trails.set(toId, trail);
   }
 
   drawBullets(ctx: CanvasRenderingContext2D, bullets: readonly FxBullet[]): void {

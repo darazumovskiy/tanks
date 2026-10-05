@@ -491,4 +491,47 @@ describe('InputReader', () => {
     expect(read().throttle).toBe(-1);
     expect(input.isReversing).toBe(false);
   });
+
+  it('по умолчанию точка под курсором запоминается в момент сдвига мыши: камера едет — точка та же', () => {
+    let cameraX = 0;
+    const duel = new InputReader(target, { toWorld: (x, y) => ({ x: x + cameraX, y }) }, settings);
+    target.dispatchEvent(pointer('pointermove', 9, 100, 0, 'mouse'));
+    cameraX = 500;
+    expect(duel.mouseWorld).toEqual({ x: 100, y: 0 });
+    expect(duel.read(me, { isReturning: false, isInZone: false }).turretTurn).toBe(0);
+  });
+
+  describe('курсор привязан к экрану', () => {
+    let cameraX = 0;
+    let anchored: InputReader;
+
+    beforeEach(() => {
+      cameraX = 0;
+      anchored = new InputReader(target, { toWorld: (x, y) => ({ x: x + cameraX, y }) }, settings, {
+        isMouseScreenAnchored: true,
+      });
+    });
+
+    it('до движения мыши точки нет и башню наводит не мышь', () => {
+      expect(anchored.mouseWorld).toBeNull();
+      expect(anchored.mouseScreen).toBeNull();
+      expect(anchored.isMouseAiming).toBe(false);
+    });
+
+    it('точка под неподвижным курсором пересчитывается при каждом чтении по текущей камере', () => {
+      target.dispatchEvent(pointer('pointermove', 9, 100, 0, 'mouse'));
+      expect(anchored.mouseScreen).toEqual({ x: 100, y: 0 });
+      expect(anchored.isMouseAiming).toBe(true);
+      expect(anchored.mouseWorld).toEqual({ x: 100, y: 0 });
+      cameraX = -300;
+      expect(anchored.mouseWorld).toEqual({ x: -200, y: 0 });
+      expect(anchored.read(me, { isReturning: false, isInZone: false }).turretTurn).toBe(-1);
+    });
+
+    it('стик башни отнимает наведение у мыши', () => {
+      target.dispatchEvent(pointer('pointermove', 9, 100, 0, 'mouse'));
+      target.dispatchEvent(pointer('pointerdown', 2, RIGHT_X, Y));
+      expect(anchored.isMouseAiming).toBe(false);
+    });
+  });
 });

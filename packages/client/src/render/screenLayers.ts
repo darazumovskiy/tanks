@@ -12,6 +12,7 @@ const ANNOUNCE_SCALE = 0.6;
 const ANNOUNCE_Y_SHARE = 0.3;
 const SCREEN_FLASH_ALPHA = 0.6;
 const DEBUG_BOTTOM_OFFSET = 8;
+const GAME_STAMP_FONT_PX = 11;
 const FRAME_GRAPH_BOTTOM_OFFSET = 24;
 const FRAME_GRAPH_HEIGHT = 36;
 const FRAME_GRAPH_BAR_WIDTH = 2;
@@ -98,6 +99,17 @@ export class ScreenLayers {
       UI_MARGIN,
       screen.height - DEBUG_BOTTOM_OFFSET,
     );
+    ctx.restore();
+  }
+
+  // Только игра и таймкод: по ним игрок называет момент, когда рассказывает о сбое.
+  drawGameStamp(readout: DebugReadout, screen: Screen): void {
+    const { ctx } = this;
+    ctx.save();
+    ctx.font = `${String(GAME_STAMP_FONT_PX)}px Inter, system-ui, sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(244,241,232,0.55)';
+    ctx.fillText(`${readout.gameId} ${gameTimecode(readout.gameTick)}`, UI_MARGIN, screen.height - DEBUG_BOTTOM_OFFSET);
     ctx.restore();
   }
 

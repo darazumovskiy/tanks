@@ -33,7 +33,7 @@ const WRECK_TICKS = FFA.wreckSeconds * TICK_RATE;
 const RESPAWN_TICKS = FFA.respawnSeconds * TICK_RATE;
 
 function testMap(spawnAreas: SpawnArea[] = CORNER_AREAS, walls: Wall[] = []): FfaMap {
-  return { name: 'Проба', size: 10, width: WIDTH, height: HEIGHT, walls, kits: [], spawnAreas };
+  return { name: 'Проба', size: 10, seed: 1, width: WIDTH, height: HEIGHT, walls, kits: [], spawnAreas };
 }
 
 function setups(count: number, firstId = 0): FfaSetup[] {
@@ -457,6 +457,18 @@ describe('таблица и эффективность', () => {
   it('по убийствам, при равенстве — по меньшему числу смертей, затем по номеру', () => {
     const order = ffaStandings([player(5, 2, 3), player(1, 4, 9), player(3, 2, 1), player(2, 2, 3)]);
     expect(order.map((entry) => entry.id)).toEqual([1, 3, 2, 5]);
+  });
+
+  it('строки счёта из протокола упорядочиваются так же, как игроки матча', () => {
+    const players = [player(5, 2, 3), player(1, 4, 9), player(3, 2, 1), player(2, 2, 3)];
+    const rows = players.map(({ id, kills, deaths, damageDealt, damageTaken }) => ({
+      id,
+      kills,
+      deaths,
+      damageDealt,
+      damageTaken,
+    }));
+    expect(ffaStandings(rows).map((row) => row.id)).toEqual(ffaStandings(players).map((entry) => entry.id));
   });
 
   it('эффективность по формуле; без полученного урона — нет', () => {

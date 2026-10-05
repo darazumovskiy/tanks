@@ -1,7 +1,7 @@
 import { ARENA } from '@tanks/shared/engine';
 import { EventFlag, type SnapshotEvent } from '@tanks/shared/protocol';
 
-type SoundName =
+export type SoundName =
   'shot' | 'ricochet' | 'impact' | 'hit' | 'zoneTick' | 'death' | 'clash' | 'pickup' | 'beep' | 'go' | 'alarm' | 'win';
 
 // Синтезированные звуки через Web Audio, без файлов. Контекст создаётся по первому действию игрока.
@@ -11,9 +11,23 @@ interface Audio {
   noise: AudioBuffer;
 }
 
+const DUEL_PAN_LIMIT = 0.8;
+
+// Панорама дуэли — по месту на поле: всё поле видно, левый край слева.
+function duelPan(x: number): number {
+  return Math.max(-DUEL_PAN_LIMIT, Math.min(DUEL_PAN_LIMIT, (x / ARENA.width) * 2 * DUEL_PAN_LIMIT - DUEL_PAN_LIMIT));
+}
+
+function isDocumentHidden(): boolean {
+  return document.visibilityState === 'hidden';
+}
+
+// Громкость и панорама приходят от вызывающего: дуэль считает их по полю, толпа — по экрану. Скрытая вкладка молчит.
 export class Sfx {
   private audio: Audio | null = null;
   isMuted = false;
+
+  constructor(private readonly isHidden: () => boolean = isDocumentHidden) {}
 
   unlock(): void {
     if (this.audio === null) {
@@ -40,11 +54,11 @@ export class Sfx {
     return this.isMuted;
   }
 
-  private out(audio: Audio, x: number | null, gain: number): GainNode {
+  private out(audio: Audio, pan: number, gain: number): GainNode {
     const g = audio.ctx.createGain();
     g.gain.value = gain;
     const panner = audio.ctx.createStereoPanner();
-    panner.pan.value = x === null ? 0 : Math.max(-0.8, Math.min(0.8, (x / ARENA.width) * 1.6 - 0.8));
+    panner.pan.value = pan;
     g.connect(panner).connect(audio.master);
     return g;
   }
@@ -102,75 +116,76 @@ export class Sfx {
     oscillator.stop(t + duration + 0.05);
   }
 
-  play(name: SoundName, x: number | null = null): void {
+  // pan — от −1 (слева) до 1 (справа); volume — множитель громкости звука.
+  play(name: SoundName, pan = 0, volume = 1): void {
     const audio = this.audio;
-    if (audio === null || this.isMuted) {
+    if (audio === null || this.isMuted || this.isHidden()) {
       return;
     }
     const t = audio.ctx.currentTime;
     switch (name) {
       case 'shot': {
-        const o = this.out(audio, x, 0.32);
+        const o = this.out(audio, pan, 0.32 * volume);
         this.noiseBurst(audio, o, t, 0.14, 'lowpass', 2600, 400);
         this.tone(audio, o, t, 0.16, 'sine', 140, 45);
         break;
       }
       case 'ricochet': {
-        const o = this.out(audio, x, 0.12);
+        const o = this.out(audio, pan, 0.12 * volume);
         this.tone(audio, o, t, 0.16, 'sine', 2600 + Math.random() * 600, 1300);
         this.noiseBurst(audio, o, t, 0.05, 'highpass', 3000, 5000);
         break;
       }
       case 'impact':
-        this.noiseBurst(audio, this.out(audio, x, 0.12), t, 0.08, 'bandpass', 1200, 500, 2);
+        this.noiseBurst(audio, this.out(audio, pan, 0.12 * volume), t, 0.08, 'bandpass', 1200, 500, 2);
         break;
       case 'hit': {
-        const o = this.out(audio, x, 0.35);
+        const o = this.out(audio, pan, 0.35 * volume);
         this.noiseBurst(audio, o, t, 0.18, 'bandpass', 1400, 400, 1.5);
         this.tone(audio, o, t, 0.12, 'square', 190, 90, 0.4);
         break;
       }
       case 'zoneTick':
-        this.tone(audio, this.out(audio, x, 0.05), t, 0.06, 'sawtooth', 260, 200);
+        this.tone(audio, this.out(audio, pan, 0.05 * volume), t, 0.06, 'sawtooth', 260, 200);
         break;
       case 'death': {
-        const o = this.out(audio, x, 0.7);
+        const o = this.out(audio, pan, 0.7 * volume);
         this.noiseBurst(audio, o, t, 1.4, 'lowpass', 1800, 90);
         this.tone(audio, o, t, 0.9, 'sine', 90, 28);
         this.noiseBurst(audio, o, t + 0.05, 0.5, 'bandpass', 700, 200, 1);
         break;
       }
       case 'clash': {
-        const o = this.out(audio, x, 0.2);
+        const o = this.out(audio, pan, 0.2 * volume);
         this.tone(audio, o, t, 0.3, 'triangle', 1700, 1500);
         this.tone(audio, o, t, 0.25, 'triangle', 2550, 2300, 0.6);
         break;
       }
       case 'pickup': {
-        const o = this.out(audio, x, 0.18);
+        const o = this.out(audio, pan, 0.18 * volume);
         [660, 880, 1320].forEach((frequency, index) => {
           this.tone(audio, o, t + index * 0.07, 0.14, 'sine', frequency, frequency);
         });
         break;
       }
       case 'beep':
-        this.tone(audio, this.out(audio, null, 0.2), t, 0.12, 'sine', 880, 880);
+        this.tone(audio, this.out(audio, pan, 0.2 * volume), t, 0.12, 'sine', 880, 880);
         break;
       case 'go': {
-        const o = this.out(audio, null, 0.25);
+        const o = this.out(audio, pan, 0.25 * volume);
         this.tone(audio, o, t, 0.4, 'sawtooth', 660, 1320, 0.5);
         this.tone(audio, o, t, 0.4, 'sine', 1320, 1320);
         break;
       }
       case 'alarm': {
-        const o = this.out(audio, null, 0.14);
+        const o = this.out(audio, pan, 0.14 * volume);
         for (let i = 0; i < 3; i++) {
           this.tone(audio, o, t + i * 0.28, 0.22, 'sawtooth', 330, 220);
         }
         break;
       }
       case 'win': {
-        const o = this.out(audio, null, 0.2);
+        const o = this.out(audio, pan, 0.2 * volume);
         [523, 659, 784, 1046].forEach((frequency, index) => {
           this.tone(audio, o, t + index * 0.09, 0.35, 'triangle', frequency, frequency);
         });
@@ -179,6 +194,7 @@ export class Sfx {
     }
   }
 
+  // События дуэли: панорама по месту на поле, полная громкость.
   events(events: readonly SnapshotEvent[]): void {
     for (const event of events) {
       switch (event.kind) {
@@ -188,15 +204,15 @@ export class Sfx {
         case 'death':
         case 'clash':
         case 'pickup':
-          this.play(event.kind, event.x);
+          this.play(event.kind, duelPan(event.x));
           break;
         case 'hit':
           if ((event.flags & EventFlag.Zone) !== 0) {
             if (Math.random() < 0.15) {
-              this.play('zoneTick', event.x);
+              this.play('zoneTick', duelPan(event.x));
             }
           } else {
-            this.play('hit', event.x);
+            this.play('hit', duelPan(event.x));
           }
           break;
         case 'zoneStart':

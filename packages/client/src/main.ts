@@ -1,10 +1,11 @@
 import { Capacitor } from '@capacitor/core';
-import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
+import { DEFAULT_STATS, FFA_SIZES, STAT_KEYS, STAT_POINTS, type FfaSize, type Stats } from '@tanks/shared/engine';
 import { BOT_LEVEL_INFO, BOT_LEVELS, botRoomCode, type BotLevel } from '@tanks/shared/protocol';
 import QRCode from 'qrcode';
 import { resolveAdminMode } from './admin.js';
 import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
 import { readClientInfo } from './clientInfo.js';
+import { mountFfaEntry } from './ffaEntry.js';
 import { Game } from './game.js';
 import { showFrameStand } from './frameStand/stand.js';
 import { showFxLab } from './fxLab/fxLab.js';
@@ -25,6 +26,9 @@ const AUTOFIRE_ACTIVE_CLASS = 'is-active';
 const LEVEL_SELECTED_CLASS = 'is-selected';
 const LEVEL_INFO_OPEN_CLASS = 'is-open';
 const LEVEL_LIST_OPEN_CLASS = 'is-open';
+// `/ffa` — игра на 30 мест, куда ведёт кнопка с главной.
+const FFA_DEFAULT_SIZE: FfaSize = 30;
+const FFA_ROUTE = /^\/ffa(?:\/(\d+))?$/;
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 // Один на страницу: ошибки главной и боя уходят с одинаковым описанием клиента.
 const telemetry = new Telemetry(readClientInfo());
@@ -168,6 +172,21 @@ function showHome(): void {
   const createBot = byId('create-bot', HTMLButtonElement);
   home.hidden = false;
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
+  const ffa = mountFfaEntry(
+    {
+      start: byId('ffa-start', HTMLButtonElement),
+      info: byId('ffa-info', HTMLButtonElement),
+      hint: byId('ffa-hint', HTMLElement),
+    },
+    {
+      save: () => {
+        saveProfile();
+      },
+      navigate: (path) => {
+        location.assign(path);
+      },
+    },
+  );
   // Старт только с полностью розданными очками: иначе бой нечестный к сопернику с полной раскладкой.
   const picker = mountStatsPicker(
     byId('stats-picker', HTMLElement),
@@ -177,8 +196,13 @@ function showHome(): void {
       const isComplete = statsLeft(stats) === 0;
       create.disabled = !isComplete;
       createBot.disabled = !isComplete;
+      ffa.setReady(isComplete);
     },
   );
+  const saveProfile = (): void => {
+    localStorage.setItem(NICKNAME_KEY, nickname.value);
+    localStorage.setItem(STATS_KEY, formatStats(picker.value()));
+  };
   const levels = mountLevelPicker({
     toggle: byId('bot-level-toggle', HTMLButtonElement),
     list: byId('bot-levels', HTMLElement),
@@ -186,8 +210,7 @@ function showHome(): void {
     info: byId('level-info', HTMLButtonElement),
   });
   const startDuelWith = (code: string): void => {
-    localStorage.setItem(NICKNAME_KEY, nickname.value);
-    localStorage.setItem(STATS_KEY, formatStats(picker.value()));
+    saveProfile();
     location.assign(`/d/${code}`);
   };
   create.addEventListener('click', () => {
@@ -289,14 +312,82 @@ function startDuel(roomCode: string): void {
   });
 }
 
+// Общий бой: та же страница боя, что у дуэли, — холст, кнопки поверх и корень интерфейса толпы. Ссылки `/ffa`
+// приложение-оболочка не перехватывает, поэтому баннера «Открыть в приложении» здесь нет.
+// Код толпы — отдельный кусок сборки: страница дуэли его не грузит.
+async function startFfa(size: FfaSize): Promise<void> {
+  const ffaModule = await import('./ffa/ffaGame.js');
+  const canvas = byId('stage', HTMLCanvasElement);
+  canvas.hidden = false;
+  document.body.classList.add('duel');
+  const hasTouch = isTouchDevice();
+  const store = new SettingsStore(localStorage, defaultSettings(), { isAdmin });
+  const autoFireButton = byId('autofire', HTMLButtonElement);
+  const autoFire = bindAutoFire(autoFireButton, hasTouch);
+  const game = new ffaModule.FfaGame({
+    size,
+    nickname: localStorage.getItem(NICKNAME_KEY) ?? '',
+    stats: parseStats(localStorage.getItem(STATS_KEY)),
+    canvas,
+    hud: byId('ffa-hud', HTMLElement),
+    settings: store.value,
+    isTouchDevice: hasTouch,
+    isAdmin,
+    telemetry,
+    onAutoFireChange: autoFire.reflect,
+    onFieldControlsChange: (isVisible) => {
+      autoFireButton.hidden = !hasTouch || !isVisible;
+    },
+  });
+  const settingsToggle = byId('settings-toggle', HTMLButtonElement);
+  settingsToggle.hidden = false;
+  byId('menu', HTMLAnchorElement).hidden = false;
+  const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store, hasTouch);
+  window.addEventListener('keydown', (event) => {
+    if (event.code === SETTINGS_KEY_CODE && !event.repeat) {
+      panel.toggle();
+    }
+  });
+  autoFireButton.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    game.toggleAutoFire();
+  });
+  bindRotateHint(byId('rotate', HTMLElement));
+  Object.assign(window, { tanksGame: game });
+  window.addEventListener('beforeunload', () => {
+    game.close();
+  });
+}
+
+// null — адрес не общего боя или размер не из списка игр.
+function ffaSizeOfPath(pathname: string): FfaSize | null {
+  const match = FFA_ROUTE.exec(pathname);
+  if (match === null) {
+    return null;
+  }
+  const digits = match[1];
+  if (digits === undefined) {
+    return FFA_DEFAULT_SIZE;
+  }
+  return FFA_SIZES.find((size) => String(size) === digits) ?? null;
+}
+
 const duelMatch = /^\/d\/([a-z0-9]{3,16})$/.exec(location.pathname);
-const labKind = new URLSearchParams(location.search).get('lab');
+const ffaSize = ffaSizeOfPath(location.pathname);
+const query = new URLSearchParams(location.search);
+const labKind = query.get('lab');
 if (duelMatch?.[1] !== undefined) {
   startDuel(duelMatch[1]);
+} else if (ffaSize !== null) {
+  void startFfa(ffaSize);
 } else if (labKind === 'camera') {
   showCameraLab(byId('lab', HTMLElement));
 } else if (labKind === 'fx') {
   showFxLab(byId('lab', HTMLElement));
+} else if (labKind === 'frames' && query.get('set') === 'ffa') {
+  void import('./frameStand/ffaStand.js').then(({ showFfaFrameStand }) => {
+    showFfaFrameStand(byId('lab', HTMLElement));
+  });
 } else if (labKind === 'frames') {
   showFrameStand(byId('lab', HTMLElement));
 } else {

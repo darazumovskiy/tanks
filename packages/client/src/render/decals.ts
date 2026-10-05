@@ -18,7 +18,7 @@ const TREAD_SIDE_OFFSETS = [-17, 17];
 const TREAD_BACK = 14;
 const FADE_COLOR = 'rgba(0,0,0,0.05)';
 
-function drawTread(g: CanvasRenderingContext2D, x: number, y: number, heading: number): void {
+export function drawTread(g: CanvasRenderingContext2D, x: number, y: number, heading: number): void {
   const px = -Math.sin(heading);
   const py = Math.cos(heading);
   g.fillStyle = TREAD_COLOR;
@@ -31,7 +31,7 @@ function drawTread(g: CanvasRenderingContext2D, x: number, y: number, heading: n
   }
 }
 
-function drawScorch(g: CanvasRenderingContext2D, x: number, y: number, radius: number, alpha: number): void {
+export function drawScorch(g: CanvasRenderingContext2D, x: number, y: number, radius: number, alpha: number): void {
   const gradient = g.createRadialGradient(x, y, 0, x, y, radius);
   gradient.addColorStop(0, `rgba(0,0,0,${String(alpha)})`);
   gradient.addColorStop(0.6, `rgba(10,8,6,${String(alpha * 0.5)})`);

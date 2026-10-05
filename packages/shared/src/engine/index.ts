@@ -20,3 +20,4 @@ export * from './random.js';
 export * from './ffaMaps.js';
 export * from './spawn.js';
 export * from './ffa.js';
+export * from './ffaView.js';

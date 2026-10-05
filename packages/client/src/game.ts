@@ -202,7 +202,12 @@ export class Game {
           this.showOverlay(`Связь потеряна, переподключаюсь через ${String(Math.round(retryInMs / 1000))} с…`, true);
         },
       },
-      { roomCode: options.roomCode, nickname: options.nickname, stats: options.stats ?? { ...DEFAULT_STATS } },
+      {
+        roomCode: options.roomCode,
+        nickname: options.nickname,
+        stats: options.stats ?? { ...DEFAULT_STATS },
+        token: '',
+      },
     );
     this.showOverlay('Подключаюсь…', false);
     requestAnimationFrame((now) => {

@@ -81,6 +81,8 @@ const GUARD_ALPHA = 0.95;
 
 // Пол в координатах поля; окно камеры — для пола, который рисуется кусками.
 type DrawFloor = (ctx: CanvasRenderingContext2D, camera: Camera) => void;
+// Слой режима на поле поверх танков: в координатах поля, под той же тряской, что танки.
+type DrawFieldLayer = (ctx: CanvasRenderingContext2D) => void;
 
 interface SceneZone {
   x: number;
@@ -117,6 +119,7 @@ export interface FieldScene {
   aimLine: AimLine | null;
   ownTankId: number | null;
   isShotGuarded: boolean;
+  fieldLayer: DrawFieldLayer | null;
 }
 
 // Длительность кадра — для плавного появления линии выстрела и отметки предохранителя.
@@ -172,6 +175,9 @@ export class FieldRenderer {
       if (tank.isAlive) {
         this.drawTank(tank);
       }
+    }
+    if (scene.fieldLayer !== null) {
+      scene.fieldLayer(ctx);
     }
     this.drawAimLine(scene.aimLine, frame);
     this.effects.drawBullets(ctx, scene.bullets);

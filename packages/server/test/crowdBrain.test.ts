@@ -460,6 +460,7 @@ describe('пирамида уровней', () => {
 const TEST_MAP: FfaMap = {
   name: 'Проба',
   size: 10,
+  seed: 1,
   width: 1600,
   height: 900,
   walls: [],

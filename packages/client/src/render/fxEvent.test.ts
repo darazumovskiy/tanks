@@ -17,7 +17,7 @@ const KINDS: readonly SnapshotEventKind[] = [
   'zoneStart',
   'roundOver',
 ];
-const QUIET = { shake: 0, flash: 0, announcement: null };
+const QUIET = { shake: 0, flash: 0, announcement: null, hasParticles: true };
 
 function duelEvent(kind: SnapshotEventKind, side: Side | null, flags = 0): SnapshotEvent {
   return { kind, side, x: 120, y: 340, value: 28, dx: 0.6, dy: 0.8, flags };
@@ -75,7 +75,12 @@ describe('тряска, вспышка и объявления дуэли', () =
     const policy = new DuelFxPolicy();
     expect(policy.optionsFor(duelEvent('shot', 0))).toEqual({ ...QUIET, shake: 2.5 });
     expect(policy.optionsFor(duelEvent('clash', null))).toEqual({ ...QUIET, shake: 6 });
-    expect(policy.optionsFor(duelEvent('death', 1))).toEqual({ shake: 26, flash: 0.55, announcement: null });
+    expect(policy.optionsFor(duelEvent('death', 1))).toEqual({
+      shake: 26,
+      flash: 0.55,
+      announcement: null,
+      hasParticles: true,
+    });
   });
 
   it('начало сжатия — объявление зоны; остальные виды не трогают экран', () => {

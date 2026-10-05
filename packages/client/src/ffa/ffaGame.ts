@@ -1,0 +1,943 @@
+import {
+  DT,
+  ffaMap,
+  IDLE_ACTION,
+  isShotReturning,
+  type Action,
+  type FfaMap,
+  type FfaSize,
+  type Point,
+  type Stats,
+  type Tank,
+} from '@tanks/shared/engine';
+import {
+  ErrorCode,
+  FfaPhase,
+  ffaRoomCode,
+  quantizeAction,
+  type ErrorMessage,
+  type FfaMatchStartMessage,
+  type FfaSnapshotMessage,
+  type FfaWelcomeMessage,
+} from '@tanks/shared/protocol';
+import { DiagLog } from '../diag.js';
+import { InputReader, type ShotContext } from '../input.js';
+import { NetClient, websocketUrl, type DisconnectReason, type SocketLike } from '../net.js';
+import { isInView, screenToWorld } from '../render/camera.js';
+import { Effects } from '../render/effects.js';
+import {
+  FFA_OTHER_COLOR,
+  FFA_OWN_COLOR,
+  FfaRenderer,
+  type FfaDrawInput,
+  type FfaScreen,
+} from '../render/ffaRenderer.js';
+import { StampDecals } from '../render/stampDecals.js';
+import type { Settings } from '../settings.js';
+import { Sfx } from '../sfx.js';
+import type { Telemetry } from '../telemetry.js';
+import { FfaCamera, type FfaAim, type FfaFraming } from './ffaCamera.js';
+import { FfaPrediction, type FfaFrameView } from './ffaPrediction.js';
+import { FfaFxPolicy } from './fxPolicy.js';
+import { FfaSession, type FfaScreen as SessionScreen } from './session.js';
+
+export interface FfaGameOptions {
+  size: FfaSize;
+  nickname: string;
+  stats: Stats;
+  // Ввод боя слушает только холст: интерфейс поверх с pointer-events: none пропускает нажатия к нему.
+  canvas: HTMLCanvasElement;
+  hud: HTMLElement;
+  settings: Readonly<Settings>;
+  isTouchDevice: boolean;
+  isAdmin: boolean;
+  telemetry: Telemetry;
+  onAutoFireChange: (isOn: boolean) => void;
+  // Кнопки управления боем нужны, только пока свой танк на поле.
+  onFieldControlsChange: (isVisible: boolean) => void;
+}
+
+export interface FfaRendererLike {
+  readonly screen: FfaScreen;
+  draw(input: FfaDrawInput): void;
+}
+
+// Пропуск общей игры по размеру: переживает перезагрузку страницы в окне возврата.
+export interface TokenStore {
+  read(size: FfaSize): string;
+  write(size: FfaSize, token: string): void;
+  erase(size: FfaSize): void;
+}
+
+type ColorOf = (id: number) => string;
+type NameOf = (id: number) => string;
+
+export interface FfaGameDeps {
+  url: string;
+  createSocket: (url: string) => SocketLike;
+  createRenderer: (canvas: HTMLCanvasElement, effects: Effects, map: FfaMap) => FfaRendererLike;
+  createEffects: (colorOf: ColorOf, nameOf: NameOf) => Effects;
+  createSfx: () => Sfx;
+  createDiag: (roomCode: string) => DiagLog;
+  now: () => number;
+  requestFrame: (callback: (now: number) => void) => void;
+  tokens: TokenStore;
+  goHome: () => void;
+  reload: () => void;
+}
+
+const TOKEN_KEY_PREFIX = 'tanks.ffaToken.';
+const TICK_MS = DT * 1000;
+const MAX_FRAME_MS = 250;
+const FRAME_HISTORY = 120;
+const SECOND_MS = 1000;
+const NOTICE_MS = 2000;
+const VIEW_MARGIN = 100;
+const BOT_MARK = 'БОТ';
+const STATUS_CLASS = 'ffa-status';
+const SECONDS_PER_MINUTE = 60;
+const EMPTY_VIEW: FfaFrameView = { tanks: [], bullets: [], kits: [], zoneRadius: 0 };
+
+function sessionTokens(storage: Storage): TokenStore {
+  return {
+    read: (size) => storage.getItem(`${TOKEN_KEY_PREFIX}${String(size)}`) ?? '',
+    write: (size, token) => {
+      storage.setItem(`${TOKEN_KEY_PREFIX}${String(size)}`, token);
+    },
+    erase: (size) => {
+      storage.removeItem(`${TOKEN_KEY_PREFIX}${String(size)}`);
+    },
+  };
+}
+
+interface StatusButton {
+  label: string;
+  isPrimary: boolean;
+  onPress: () => void;
+}
+
+interface StatusLine {
+  title: string;
+  text: string;
+  buttons: StatusButton[];
+}
+
+interface Notice {
+  title: string;
+  text: string;
+  until: number;
+}
+
+// «смельчак» по числу: 1 и 21 — смельчак, 2–4 и 22–24 — смельчака, остальные, в том числе 11–14, — смельчаков.
+function daredevils(count: number): string {
+  const lastTwo = count % 100;
+  const last = count % 10;
+  if (lastTwo >= 11 && lastTwo <= 14) {
+    return 'смельчаков';
+  }
+  if (last === 1) {
+    return 'смельчак';
+  }
+  return last >= 2 && last <= 4 ? 'смельчака' : 'смельчаков';
+}
+
+function clock(seconds: number): string {
+  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
+  return `${String(minutes)}:${String(seconds % SECONDS_PER_MINUTE).padStart(2, '0')}`;
+}
+
+// Бой толпы: связывает сеть, сессию, предсказание, ввод, камеру, рендер, эффекты и звук; держит цикл кадров
+// и фиксированный шаг ввода. Экраны вокруг боя — служебной строкой поверх поля.
+export class FfaGame {
+  private readonly deps: FfaGameDeps;
+  private readonly map: FfaMap;
+  private readonly roomCode: string;
+  private readonly renderer: FfaRendererLike;
+  private readonly effects: Effects;
+  private readonly sfx: Sfx;
+  private readonly input: InputReader;
+  private readonly camera = new FfaCamera();
+  private readonly fxPolicy = new FfaFxPolicy();
+  private readonly diag: DiagLog;
+  private readonly status: HTMLElement;
+  private session: FfaSession;
+  private net: NetClient;
+  private prediction: FfaPrediction | null = null;
+  private framing: FfaFraming | null = null;
+  private frameView: FfaFrameView = EMPTY_VIEW;
+  private spectating: number | null = null;
+  private seq = 0;
+  private accumulator = 0;
+  private lastFrame: number;
+  private frames = 0;
+  private fps = 0;
+  private fpsWindowStart: number;
+  private readonly frameTimes: number[] = [];
+  private worstFrameMs = 0;
+  private worstFrameCandidate = 0;
+  private summaryAt: number;
+  private snapshotsThisSecond = 0;
+  private inputsThisSecond = 0;
+  private isHidden = false;
+  private isClosed = false;
+  private notice: Notice | null = null;
+  private statusKey = '';
+  private hasFieldControls: boolean | null = null;
+
+  constructor(
+    private readonly options: FfaGameOptions,
+    deps: Partial<FfaGameDeps> = {},
+  ) {
+    this.deps = {
+      url: deps.url ?? websocketUrl(),
+      createSocket: deps.createSocket ?? ((url): SocketLike => new WebSocket(url)),
+      createRenderer:
+        deps.createRenderer ??
+        ((canvas, effects, map): FfaRendererLike => new FfaRenderer(canvas, effects, options.settings, map)),
+      createEffects:
+        deps.createEffects ?? ((colorOf, nameOf): Effects => new Effects(new StampDecals(), colorOf, nameOf)),
+      createSfx: deps.createSfx ?? ((): Sfx => new Sfx()),
+      createDiag: deps.createDiag ?? ((roomCode): DiagLog => new DiagLog(roomCode)),
+      now: deps.now ?? ((): number => performance.now()),
+      requestFrame:
+        deps.requestFrame ??
+        ((callback): void => {
+          requestAnimationFrame(callback);
+        }),
+      tokens: deps.tokens ?? sessionTokens(sessionStorage),
+      goHome:
+        deps.goHome ??
+        ((): void => {
+          location.assign('/');
+        }),
+      reload:
+        deps.reload ??
+        ((): void => {
+          location.reload();
+        }),
+    };
+    this.map = ffaMap(options.size);
+    this.roomCode = ffaRoomCode(options.size);
+    this.session = new FfaSession(options.size);
+    const now = this.deps.now();
+    this.lastFrame = now;
+    this.fpsWindowStart = now;
+    this.summaryAt = now;
+    this.diag = this.deps.createDiag(this.roomCode);
+    this.diag.write(
+      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'} mode=ffa size=${String(options.size)}`,
+    );
+    this.effects = this.deps.createEffects(
+      (id) => (id === this.session.playerId ? FFA_OWN_COLOR : FFA_OTHER_COLOR),
+      (id) => this.session.nameOf(id),
+    );
+    this.renderer = this.deps.createRenderer(options.canvas, this.effects, this.map);
+    this.sfx = this.deps.createSfx();
+    this.input = new InputReader(
+      options.canvas,
+      { toWorld: (clientX, clientY) => this.toWorld(clientX, clientY) },
+      options.settings,
+      {
+        now: this.deps.now,
+        isMouseScreenAnchored: true,
+        onGuard: (event): void => {
+          this.diag.write(`guard ${event}`);
+        },
+      },
+    );
+    this.status = document.createElement('div');
+    this.status.className = STATUS_CLASS;
+    options.hud.replaceChildren(this.status);
+    options.hud.hidden = false;
+    this.bindPage();
+    this.net = this.connect();
+    this.deps.requestFrame((next) => {
+      this.frame(next);
+    });
+  }
+
+  close(): void {
+    this.isClosed = true;
+    this.diag.write('close');
+    this.diag.close();
+    this.options.telemetry.leaveGame();
+    this.net.close();
+  }
+
+  toggleAutoFire(): boolean {
+    const isOn = !this.input.isAutoFiring;
+    this.setAutoFire(isOn);
+    return isOn;
+  }
+
+  debugState(): Record<string, unknown> {
+    const session = this.session;
+    const prediction = this.prediction;
+    const me = prediction?.me ?? null;
+    const camera = this.framing?.camera ?? null;
+    const view = this.frameView;
+    const score = session.score();
+    const mouseWorld = this.input.mouseWorld;
+    return {
+      mode: 'ffa',
+      screen: session.screen(),
+      playerId: session.playerId,
+      gameId: session.gameId,
+      size: this.options.size,
+      phase: session.phase,
+      matchIndex: session.stateMatchIndex,
+      players: session.players,
+      capacity: session.capacity,
+      minimum: session.minimum,
+      tick: session.tick,
+      timeLeftS: session.timeLeftS,
+      isFinal: session.isFinal,
+      self: session.self === null ? null : { ...session.self },
+      me:
+        me === null
+          ? null
+          : {
+              x: me.x,
+              y: me.y,
+              heading: me.heading,
+              turret: me.turret,
+              speed: me.speed,
+              hp: me.hp,
+              isAlive: me.isAlive,
+              shieldLeft: me.shieldLeft,
+            },
+      tanks: prediction?.tanksOnField.length ?? 0,
+      tanksInView: camera === null ? 0 : view.tanks.filter((tank) => isInView(camera, tank)).length,
+      bullets: view.bullets.length,
+      pending: prediction?.pendingCount ?? 0,
+      correctionPx: prediction?.lastCorrectionPx ?? 0,
+      rttMs: this.net.rttMs,
+      camera: camera === null ? null : { x: camera.x, y: camera.y, width: camera.width, height: camera.height },
+      viewCenter: this.framing === null ? null : { ...this.framing.viewCenter },
+      aimSource: this.input.isMouseAiming ? 'mouse' : 'turret',
+      mouseWorld: mouseWorld === null ? null : { ...mouseWorld },
+      score: score === null ? null : { ...score },
+      feed: [...session.feed],
+      spectating: this.spectating,
+      isAutoFiring: this.input.isAutoFiring,
+      fps: this.fps,
+      worstFrameMs: this.worstFrameMs,
+    };
+  }
+
+  private connect(): NetClient {
+    const { size } = this.options;
+    return new NetClient(
+      this.deps.url,
+      {
+        onFfaWelcome: (message) => {
+          this.onWelcome(message);
+        },
+        onFfaState: (message, receivedAt) => {
+          this.session.onState(message, receivedAt);
+          this.diag.write(
+            `net state phase=${String(message.phase)} left=${String(message.ticksLeft)} players=${String(message.players)}/${String(message.capacity)} min=${String(message.minimum)} match=${String(message.matchIndex)}`,
+          );
+          this.options.telemetry.event('net', 'state', { phase: message.phase, players: message.players });
+        },
+        onFfaRoster: (message) => {
+          this.session.onRoster(message);
+        },
+        onFfaMatchStart: (message) => {
+          this.onMatchStart(message);
+        },
+        onFfaSnapshot: (message, receivedAt) => {
+          this.onSnapshot(message, receivedAt);
+        },
+        onFfaScore: (message) => {
+          this.session.onScore(message);
+          this.fxPolicy.noteScore(message.rows);
+        },
+        onFfaBullets: (message) => {
+          this.prediction?.resetBullets(message.bullets);
+        },
+        onError: (message) => {
+          this.onError(message);
+        },
+        onDisconnect: (retryInMs, reason) => {
+          this.onDisconnect(retryInMs, reason);
+        },
+      },
+      {
+        roomCode: this.roomCode,
+        nickname: this.options.nickname,
+        stats: this.options.stats,
+        token: this.deps.tokens.read(size),
+      },
+      { createSocket: this.deps.createSocket, now: this.deps.now },
+    );
+  }
+
+  // Новое соединение: номера команд снова с единицы, неподтверждённое и снимки старого соединения забыты.
+  private onWelcome(message: FfaWelcomeMessage): void {
+    const outcome = this.session.onWelcome(message);
+    this.deps.tokens.write(this.options.size, message.token);
+    this.seq = 0;
+    this.prediction?.resetConnection();
+    if (outcome === 'lost') {
+      this.prediction = null;
+      this.resetMatchEffects();
+      this.showNotice('НЕ УСПЕЛИ', 'Место ушло — заходим заново');
+    }
+    if (outcome === 'returned') {
+      this.camera.snap();
+      this.showNotice('ВЕРНУЛИСЬ!', '');
+    }
+    this.diag.setGame(message.gameId);
+    this.diag.write(`net welcome id=${String(message.playerId)} game=${message.gameId} outcome=${outcome}`);
+    this.options.telemetry.setGame(message.gameId);
+    this.options.telemetry.event('net', 'welcome', { room: this.roomCode, outcome });
+  }
+
+  private onMatchStart(message: FfaMatchStartMessage): void {
+    const outcome = this.session.onMatchStart(message);
+    const myId = this.session.playerId;
+    if (myId !== null && (outcome === 'new' || this.prediction === null)) {
+      this.prediction = new FfaPrediction(this.map, this.session.rules, message.zone, myId, (id) => ({
+        name: this.session.nameOf(id),
+        stats: this.session.statsOf(id),
+      }));
+    }
+    if (outcome === 'new') {
+      this.resetMatchEffects();
+    }
+    this.diag.write(`net matchstart idx=${String(message.matchIndex)} outcome=${outcome}`);
+    this.options.telemetry.event('net', 'matchstart', { idx: message.matchIndex });
+  }
+
+  private onSnapshot(message: FfaSnapshotMessage, receivedAt: number): void {
+    if (!this.session.acceptSnapshot(message)) {
+      return;
+    }
+    const prediction = this.prediction;
+    if (prediction !== null) {
+      prediction.applySnapshot(message, receivedAt);
+      for (const { predictedId, serverId } of prediction.takeConfirmedBullets()) {
+        this.effects.renameTrail(predictedId, serverId);
+      }
+    }
+    this.diag.markSnapshot(message.gameTick, receivedAt);
+    this.snapshotsThisSecond++;
+    const camera = this.framing?.camera ?? null;
+    if (camera === null) {
+      return;
+    }
+    const myId = this.session.playerId;
+    this.effects.onSnapshot(
+      message.tick,
+      message.tanks.filter((tank) => isInView(camera, tank)),
+    );
+    for (const event of message.events) {
+      if (event.kind === 'spawn' && event.tank === myId) {
+        this.camera.snap();
+        this.setAutoFire(false);
+      }
+      const options = this.fxPolicy.optionsFor(event, myId, camera);
+      if (options !== null) {
+        this.effects.onEvent(event, options);
+      }
+      const sound = this.fxPolicy.soundFor(event, camera, message.tick);
+      if (sound !== null) {
+        this.sfx.play(sound.name, sound.pan, sound.volume);
+      }
+    }
+  }
+
+  private onError(message: ErrorMessage): void {
+    this.session.onError(message.code);
+    if (message.code === ErrorCode.Idle) {
+      this.deps.tokens.erase(this.options.size);
+    }
+    this.diag.write(`net error code=${String(message.code)} text=${message.text}`);
+    this.options.telemetry.event('net', `server error: ${message.text}`, { code: message.code });
+  }
+
+  private onDisconnect(retryInMs: number, reason: DisconnectReason): void {
+    if (this.isClosed) {
+      return;
+    }
+    this.session.onDisconnect();
+    this.diag.write(`net disconnect retry=${String(retryInMs)} reason=${reason}`);
+    this.options.telemetry.event('net', 'disconnect', { retryInMs, reason });
+  }
+
+  private resetMatchEffects(): void {
+    this.effects.reset();
+    this.fxPolicy.reset();
+    this.camera.snap();
+  }
+
+  private showNotice(title: string, text: string): void {
+    this.notice = { title, text, until: this.deps.now() + NOTICE_MS };
+  }
+
+  private setAutoFire(isOn: boolean): void {
+    if (this.input.isAutoFiring === isOn) {
+      return;
+    }
+    this.input.setAutoFire(isOn);
+    this.options.onAutoFireChange(isOn);
+    this.diag.write(`autofire on=${isOn ? '1' : '0'}`);
+  }
+
+  private bindPage(): void {
+    const unlock = (): void => {
+      this.sfx.unlock();
+    };
+    window.addEventListener('keydown', unlock);
+    window.addEventListener('mousedown', unlock);
+    window.addEventListener('touchstart', unlock);
+    window.addEventListener('keydown', (event) => {
+      if (event.code === 'KeyM' && !event.repeat) {
+        this.sfx.toggle();
+      }
+    });
+    // Вкладка скрылась — одна команда «стоп»: танк не едет туда, куда держали газ, пока игрока нет. Вернулась —
+    // отсчёт кадров с этого мгновения, иначе первый кадр нагонит пропущенное пачкой команд.
+    document.addEventListener('visibilitychange', () => {
+      const isHidden = document.visibilityState === 'hidden';
+      if (isHidden && !this.isHidden) {
+        this.sendStop();
+      }
+      this.isHidden = isHidden;
+      this.accumulator = 0;
+      this.lastFrame = this.deps.now();
+    });
+  }
+
+  private ownTankInPlay(): Tank | null {
+    const me = this.prediction?.me ?? null;
+    const phase = this.session.phase;
+    const isMatchRunning = phase === FfaPhase.Countdown || phase === FfaPhase.Fight;
+    const isOnline = this.net.isConnected && !this.session.hasFatalError;
+    if (me === null || !me.isAlive || !isMatchRunning || !isOnline) {
+      return null;
+    }
+    return me;
+  }
+
+  private sendStop(): void {
+    const prediction = this.prediction;
+    if (prediction === null || this.ownTankInPlay() === null) {
+      return;
+    }
+    this.sendInput(prediction, IDLE_ACTION);
+  }
+
+  private sendInput(prediction: FfaPrediction, action: Action): void {
+    this.seq++;
+    prediction.predict(this.seq, action);
+    this.net.sendInput(this.seq, action);
+    this.inputsThisSecond++;
+  }
+
+  private shotContext(me: Tank): ShotContext {
+    const isReturning =
+      this.options.settings.hasRicochetGuard && isShotReturning(this.map, me, me.turret, me.stats.bulletSpeed, null);
+    return { isReturning, isInZone: false };
+  }
+
+  private stepInput(elapsed: number): void {
+    const prediction = this.prediction;
+    const me = this.ownTankInPlay();
+    if (prediction === null || me === null || this.isHidden) {
+      this.accumulator = 0;
+      return;
+    }
+    this.accumulator += elapsed;
+    while (this.accumulator >= TICK_MS) {
+      this.accumulator -= TICK_MS;
+      this.sendInput(prediction, quantizeAction(this.input.read(me, this.shotContext(me))));
+    }
+  }
+
+  // Доля экрана под точкой окна; null — холст ещё не на странице.
+  private screenShare(clientX: number, clientY: number): Point | null {
+    const rect = this.options.canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      return null;
+    }
+    return { x: (clientX - rect.left) / rect.width, y: (clientY - rect.top) / rect.height };
+  }
+
+  private toWorld(clientX: number, clientY: number): Point {
+    const camera = this.framing?.camera;
+    const share = this.screenShare(clientX, clientY);
+    if (camera === undefined || share === null) {
+      return { x: this.map.width / 2, y: this.map.height / 2 };
+    }
+    const { width, height } = this.renderer.screen;
+    return screenToWorld(camera, { x: share.x * width, y: share.y * height });
+  }
+
+  private aimOf(me: Tank): FfaAim {
+    const cursor = this.input.mouseScreen;
+    const share = cursor === null ? null : this.screenShare(cursor.x, cursor.y);
+    if (this.input.isMouseAiming && share !== null) {
+      return { kind: 'mouse', cursor: share };
+    }
+    return { kind: 'turret', angle: me.turret };
+  }
+
+  // Свой танк на поле — камера на нём; подбит и на итогах — окно стоит, где было; зритель — за целью; иначе центр
+  // карты.
+  private frameCamera(view: FfaFrameView, screen: SessionScreen, elapsed: number): FfaFraming {
+    const size = this.renderer.screen;
+    const me = this.prediction?.me ?? null;
+    const isOwnOnField = me !== null && me.isAlive && (screen === 'fight' || screen === 'countdown');
+    if (isOwnOnField) {
+      this.spectating = null;
+      return this.camera.update(me, this.aimOf(me), size, elapsed);
+    }
+    if ((screen === 'dead' || screen === 'results') && this.framing !== null) {
+      return this.framing;
+    }
+    if (screen === 'spectator') {
+      const target = this.spectatorTarget(view);
+      if (target !== null) {
+        return this.camera.update(target, { kind: 'turret', angle: target.turret }, size, elapsed);
+      }
+    }
+    this.spectating = null;
+    return this.camera.update({ x: this.map.width / 2, y: this.map.height / 2 }, { kind: 'none' }, size, elapsed);
+  }
+
+  private spectatorTarget(view: FfaFrameView): FfaFrameView['tanks'][number] | null {
+    const alive = view.tanks.filter((tank) => tank.isAlive);
+    const targetId = this.session.spectatorTarget(alive.map((tank) => tank.id));
+    if (targetId !== this.spectating) {
+      this.camera.snap();
+    }
+    this.spectating = targetId;
+    return alive.find((tank) => tank.id === targetId) ?? null;
+  }
+
+  private frame(now: number): void {
+    if (this.isClosed) {
+      return;
+    }
+    this.deps.requestFrame((next) => {
+      this.frame(next);
+    });
+    const elapsed = Math.min(MAX_FRAME_MS, Math.max(0, now - this.lastFrame));
+    this.lastFrame = now;
+    this.countFrame(now, elapsed);
+    this.stepInput(elapsed);
+    const view = this.prediction?.view(now) ?? EMPTY_VIEW;
+    const screen = this.session.screen();
+    const hasFieldControls = this.ownTankInPlay() !== null;
+    this.showFieldControls(hasFieldControls);
+    const framing = this.frameCamera(view, screen, elapsed);
+    this.framing = framing;
+    this.frameView = view;
+    const { camera } = framing;
+    this.effects.update(
+      elapsed / SECOND_MS,
+      view.tanks.filter((tank) => isInView(camera, tank, VIEW_MARGIN)),
+    );
+    this.renderer.draw({
+      view,
+      myId: this.session.playerId,
+      camera,
+      zonePlan: this.session.match?.zone ?? null,
+      labelOf: (id) => ({ label: this.session.nameOf(id), isBot: this.session.isBot(id) }),
+      controls: {
+        sticks: hasFieldControls ? this.input.stickStates : [],
+        isShotGuarded: this.input.isShotGuarded,
+        isZoneFiring: this.input.isZoneFiring,
+        isReversing: this.input.isReversing,
+      },
+      readout: {
+        gameId: this.session.gameId ?? '',
+        gameTick: this.diag.gameTick(now),
+        fps: this.fps,
+        worstFrameMs: this.worstFrameMs,
+        rttMs: this.net.rttMs,
+        correctionPx: this.prediction?.lastCorrectionPx ?? 0,
+        isMuted: this.sfx.isMuted,
+      },
+      isFullReadout: this.options.isAdmin,
+      frameMs: elapsed,
+      frameTimes: this.frameTimes,
+    });
+    this.renderStatus(now, screen);
+    this.writeSummary(now);
+  }
+
+  private showFieldControls(isVisible: boolean): void {
+    if (this.hasFieldControls === isVisible) {
+      return;
+    }
+    this.hasFieldControls = isVisible;
+    this.options.onFieldControlsChange(isVisible);
+  }
+
+  private countFrame(now: number, elapsed: number): void {
+    this.frames++;
+    this.frameTimes.push(elapsed);
+    if (this.frameTimes.length > FRAME_HISTORY) {
+      this.frameTimes.shift();
+    }
+    this.worstFrameCandidate = Math.max(this.worstFrameCandidate, elapsed);
+    if (now - this.fpsWindowStart >= SECOND_MS) {
+      this.fps = (this.frames * SECOND_MS) / (now - this.fpsWindowStart);
+      this.worstFrameMs = this.worstFrameCandidate;
+      this.worstFrameCandidate = 0;
+      this.frames = 0;
+      this.fpsWindowStart = now;
+    }
+  }
+
+  private writeSummary(now: number): void {
+    if (now - this.summaryAt < SECOND_MS) {
+      return;
+    }
+    this.summaryAt = now;
+    const fps = Math.round(this.fps);
+    const worst = Math.round(this.worstFrameMs);
+    const rtt = Math.round(this.net.rttMs);
+    const pend = this.prediction?.pendingCount ?? 0;
+    this.diag.write(
+      `sec fps=${String(fps)} worst=${String(worst)} rtt=${String(rtt)} pend=${String(pend)} snaps=${String(this.snapshotsThisSecond)} ins=${String(this.inputsThisSecond)}`,
+    );
+    this.options.telemetry.event('sec', 'sec', {
+      fps,
+      worst,
+      rtt,
+      pend,
+      snaps: this.snapshotsThisSecond,
+      ins: this.inputsThisSecond,
+    });
+    this.snapshotsThisSecond = 0;
+    this.inputsThisSecond = 0;
+  }
+
+  private restart(isWithToken: boolean): void {
+    this.net.close();
+    if (!isWithToken) {
+      this.deps.tokens.erase(this.options.size);
+    }
+    this.session = new FfaSession(this.options.size);
+    this.prediction = null;
+    this.spectating = null;
+    this.resetMatchEffects();
+    this.net = this.connect();
+  }
+
+  private leave(): void {
+    this.close();
+    this.deps.goHome();
+  }
+
+  private statusLine(now: number, screen: SessionScreen): StatusLine | null {
+    const session = this.session;
+    const home: StatusButton = {
+      label: 'На главную',
+      isPrimary: false,
+      onPress: () => {
+        this.leave();
+      },
+    };
+    const exit: StatusButton = {
+      label: 'Выйти',
+      isPrimary: false,
+      onPress: () => {
+        this.leave();
+      },
+    };
+    switch (screen) {
+      case 'idle':
+        return {
+          title: 'ВЫКИНУЛО ЗА БЕЗДЕЙСТВИЕ',
+          text: 'Танк стоял слишком долго — место отдали другому.',
+          buttons: [
+            {
+              label: 'Вернуться в бой',
+              isPrimary: true,
+              onPress: () => {
+                this.restart(false);
+              },
+            },
+            home,
+          ],
+        };
+      case 'replaced':
+        return {
+          title: 'ТЫ ИГРАЕШЬ В ДРУГОМ МЕСТЕ',
+          text: 'Бой открыт в другой вкладке или на другом устройстве.',
+          buttons: [
+            {
+              label: 'Играть здесь',
+              isPrimary: true,
+              onPress: () => {
+                this.restart(true);
+              },
+            },
+            home,
+          ],
+        };
+      case 'update':
+        return {
+          title: 'ВЫШЛО ОБНОВЛЕНИЕ',
+          text: 'Перезагрузи — и в бой.',
+          buttons: [
+            {
+              label: 'Обновить',
+              isPrimary: true,
+              onPress: () => {
+                this.deps.reload();
+              },
+            },
+          ],
+        };
+      case 'error':
+        return {
+          title: 'ЧТО-ТО ПОШЛО НЕ ТАК',
+          text: 'Сервер нас не понял. Попробуем ещё раз?',
+          buttons: [
+            {
+              label: 'Ещё раз',
+              isPrimary: true,
+              onPress: () => {
+                this.restart(true);
+              },
+            },
+            home,
+          ],
+        };
+      default:
+        break;
+    }
+    if (session.isConnectionLost) {
+      return { title: 'СВЯЗЬ ПРОПАЛА', text: 'Держим твоё место, возвращаемся…', buttons: [] };
+    }
+    if (this.notice !== null && now < this.notice.until) {
+      return { title: this.notice.title, text: this.notice.text, buttons: [] };
+    }
+    switch (screen) {
+      case 'connecting':
+        return { title: 'Подключаемся…', text: '', buttons: [] };
+      case 'lobby':
+        return { title: 'СОБИРАЕМ ТОЛПУ', text: this.lobbyText(now), buttons: [exit] };
+      case 'countdown':
+        return { title: this.countdownTitle(now), text: '', buttons: [] };
+      case 'fight':
+        return this.fightLine();
+      case 'dead':
+        return this.deathLine();
+      case 'spectator':
+        return {
+          title: this.spectating === null ? 'СМОТРИМ БОЙ' : `Смотришь за: ${session.nameOf(this.spectating)}`,
+          text: '',
+          buttons: [],
+        };
+      case 'results':
+        return { title: 'ИТОГИ', text: this.resultsText(now), buttons: [exit] };
+    }
+  }
+
+  private lobbyText(now: number): string {
+    const lobby = this.session.lobby(now);
+    const count = `${String(lobby.players)} / ${String(lobby.capacity)}`;
+    if (lobby.players < lobby.minimum) {
+      const missing = lobby.minimum - lobby.players;
+      return `${count} · Ещё ${String(missing)} ${daredevils(missing)} — и в бой`;
+    }
+    if (lobby.startInS === 0) {
+      return `${count} · Полный сбор — поехали!`;
+    }
+    return `${count} · Старт через ${String(Math.ceil(lobby.startInS ?? 0))}`;
+  }
+
+  private countdownTitle(now: number): string {
+    if (this.session.self?.state !== 'alive') {
+      return 'Высаживаемся с началом боя';
+    }
+    const secondsLeft = Math.ceil(this.session.phaseLeftS(now) ?? 0);
+    return secondsLeft >= 1 ? String(secondsLeft) : 'В БОЙ!';
+  }
+
+  private fightLine(): StatusLine {
+    const session = this.session;
+    const idleTicksLeft = session.self?.idleTicksLeft ?? null;
+    if (idleTicksLeft !== null) {
+      const seconds = Math.ceil(idleTicksLeft * DT);
+      return { title: 'ТЫ ТУТ?', text: `Шевельнись — иначе выкинет через ${String(seconds)}`, buttons: [] };
+    }
+    const score = session.score();
+    const place = score === null ? '' : `${String(score.place)}-й из ${String(score.total)}`;
+    return { title: clock(session.timeLeftS ?? 0), text: place, buttons: [] };
+  }
+
+  private deathLine(): StatusLine {
+    const session = this.session;
+    if (session.isFinal) {
+      return { title: 'ТЫ ВЫБЫЛ', text: 'Финал без возрождений — смотрим, кто кого', buttons: [] };
+    }
+    const { killerId, cause } = session.death();
+    if (cause === 'self') {
+      return { title: 'САМ СЕБЯ!', text: 'Рикошет — коварная штука', buttons: [] };
+    }
+    if (cause === 'zone') {
+      return { title: 'ЗОНА ДОЖАЛА', text: 'Держись внутри круга', buttons: [] };
+    }
+    if (killerId === null) {
+      return { title: 'ТЕБЯ ПОДБИЛИ', text: '', buttons: [] };
+    }
+    const mark = session.isBot(killerId) ? `${BOT_MARK} ` : '';
+    const how = cause === 'ricochet' ? ' рикошетом' : '';
+    return { title: `ТЕБЯ ПОДБИЛ ${mark}${session.nameOf(killerId)}${how}`, text: '', buttons: [] };
+  }
+
+  private resultsText(now: number): string {
+    const session = this.session;
+    if (session.players < session.minimum) {
+      return 'Ждём, пока соберёмся';
+    }
+    return `Следующий матч через ${String(Math.ceil(session.phaseLeftS(now) ?? 0))}`;
+  }
+
+  private renderStatus(now: number, screen: SessionScreen): void {
+    const line = this.statusLine(now, screen);
+    const key =
+      line === null ? '' : `${line.title}|${line.text}|${line.buttons.map((button) => button.label).join(',')}`;
+    if (key === this.statusKey) {
+      return;
+    }
+    this.statusKey = key;
+    this.status.replaceChildren();
+    this.status.hidden = line === null;
+    if (line === null) {
+      return;
+    }
+    const title = document.createElement('div');
+    title.className = 'ffa-status-title';
+    title.textContent = line.title;
+    this.status.append(title);
+    if (line.text !== '') {
+      const text = document.createElement('div');
+      text.className = 'ffa-status-text';
+      text.textContent = line.text;
+      this.status.append(text);
+    }
+    if (line.buttons.length === 0) {
+      return;
+    }
+    const buttons = document.createElement('div');
+    buttons.className = 'ffa-status-buttons';
+    for (const spec of line.buttons) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = spec.isPrimary ? 'ffa-button is-primary' : 'ffa-button';
+      button.textContent = spec.label;
+      button.addEventListener('click', spec.onPress);
+      buttons.append(button);
+    }
+    this.status.append(buttons);
+  }
+}

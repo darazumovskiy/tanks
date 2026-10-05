@@ -247,7 +247,14 @@ export function stepFfaMatch(match: FfaMatch, actions: ReadonlyMap<number, unkno
   return events;
 }
 
-function compareStanding(a: FfaPlayer, b: FfaPlayer): number {
+// Строка таблицы: игрок матча на сервере или строка счёта у клиента.
+export interface FfaStandingRow {
+  id: number;
+  kills: number;
+  deaths: number;
+}
+
+function compareStanding(a: FfaStandingRow, b: FfaStandingRow): number {
   if (a.kills !== b.kills) {
     return b.kills - a.kills;
   }
@@ -258,8 +265,8 @@ function compareStanding(a: FfaPlayer, b: FfaPlayer): number {
 }
 
 // По убийствам, при равенстве — по меньшему числу смертей, затем по номеру.
-export function ffaStandings(players: readonly FfaPlayer[]): FfaPlayer[] {
-  return [...players].sort(compareStanding);
+export function ffaStandings<T extends FfaStandingRow>(rows: readonly T[]): T[] {
+  return [...rows].sort(compareStanding);
 }
 
 // Сколько урона игрок раздал на каждую единицу полученного; убийство и смерть весят как танк.

@@ -6,11 +6,14 @@ import { connect as connectTcp } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { TICK_RATE } from '@tanks/shared/engine';
 import {
   botRoomCode,
+  FfaPhase,
   MessageType,
   PROTOCOL_VERSION,
   ErrorCode,
+  type FfaStateMessage,
   type RoundStartMessage,
   type SnapshotMessage,
 } from '@tanks/shared/protocol';
@@ -120,6 +123,16 @@ describe('HTTP', () => {
     }
   });
 
+  it('отдаёт index.html на маршрутах общего боя, кроме размеров не из списка', async () => {
+    const base = `http://127.0.0.1:${String(port)}`;
+    for (const route of ['/ffa', '/ffa/10', '/ffa/30', '/ffa/50']) {
+      expect(await (await fetch(`${base}${route}`)).text()).toBe('<html>tanks</html>');
+    }
+    for (const route of ['/ffa/11', '/ffa/', '/ffa/30/x', '/ffax']) {
+      expect((await fetch(`${base}${route}`)).status).toBe(404);
+    }
+  });
+
   it('не принимает WebSocket на чужом пути', async () => {
     await expect(TestClient.connect(port, '/other')).rejects.toThrow();
   });
@@ -210,6 +223,91 @@ describe('процесс', () => {
     const after = (await healthz()).tick;
     expect(after - before).toBeGreaterThanOrEqual(5);
     expect(after - before).toBeLessThan(25);
+  });
+});
+
+describe('переключатели общей игры из окружения', () => {
+  const WAIT_MS = 10_000;
+
+  async function restart(ffaEnv: Record<string, string>): Promise<void> {
+    await app.close();
+    app = createApp({ ffaEnv, tickMs: TICK_MS });
+    port = await app.listen(0, '127.0.0.1');
+  }
+
+  async function stateOf(client: TestClient, phase: number): Promise<FfaStateMessage> {
+    let state = await client.nextOfType(MessageType.FfaState, WAIT_MS);
+    while (state.phase !== phase) {
+      state = await client.nextOfType(MessageType.FfaState, WAIT_MS);
+    }
+    return state;
+  }
+
+  it('минимум 1 — матч стартует с одним игроком; длительности лобби, матча и итогов — из переменных', async () => {
+    await restart({
+      FFA_MINIMUM: '1',
+      FFA_LOBBY_QUIET_SECONDS: '1',
+      FFA_MATCH_SECONDS: '2',
+      FFA_RESULTS_SECONDS: '1',
+    });
+    const client = await connect();
+    client.join('ffa10');
+    const lobby = await stateOf(client, FfaPhase.Lobby);
+    expect(lobby).toMatchObject({ players: 1, capacity: 10, minimum: 1, ticksLeft: TICK_RATE });
+    await stateOf(client, FfaPhase.Countdown);
+    expect((await client.nextOfType(MessageType.FfaMatchStart, WAIT_MS)).durationSeconds).toBe(2);
+    expect((await stateOf(client, FfaPhase.Fight)).ticksLeft).toBe(2 * TICK_RATE);
+    expect((await stateOf(client, FfaPhase.Results)).ticksLeft).toBe(TICK_RATE);
+  });
+
+  it('бездействие: предупреждение и выкидывание — из переменных', async () => {
+    await restart({
+      FFA_MINIMUM: '1',
+      FFA_LOBBY_QUIET_SECONDS: '1',
+      FFA_IDLE_WARN_SECONDS: '1',
+      FFA_IDLE_KICK_SECONDS: '2',
+    });
+    const client = await connect();
+    client.join('ffa10');
+    let snapshot = await client.nextOfType(MessageType.FfaSnapshot, WAIT_MS);
+    while (snapshot.self.idleTicksLeft === null) {
+      snapshot = await client.nextOfType(MessageType.FfaSnapshot, WAIT_MS);
+    }
+    expect(snapshot.self.idleTicksLeft).toBe(TICK_RATE);
+    expect((await client.nextOfType(MessageType.Error, WAIT_MS)).code).toBe(ErrorCode.Idle);
+  });
+
+  it('пустая переменная — умолчание', async () => {
+    await restart({ FFA_MINIMUM: '', FFA_MATCH_SECONDS: '' });
+    const client = await connect();
+    client.join('ffa10');
+    expect(await stateOf(client, FfaPhase.Lobby)).toMatchObject({ minimum: 7, ticksLeft: null });
+  });
+
+  it.each([
+    ['FFA_MINIMUM', 'много'],
+    ['FFA_MINIMUM', '0'],
+    ['FFA_MINIMUM', '2.5'],
+    ['FFA_MINIMUM', '11'],
+    ['FFA_MATCH_SECONDS', '2185'],
+    ['FFA_LOBBY_QUIET_SECONDS', '-1'],
+    ['FFA_RESULTS_SECONDS', '1e9'],
+    ['FFA_IDLE_WARN_SECONDS', 'x'],
+    ['FFA_IDLE_KICK_SECONDS', '3000'],
+  ])('%s=«%s» — createApp бросает ошибку с именем переменной', (name, value) => {
+    expect(() => createApp({ ffaEnv: { [name]: value } })).toThrow(name);
+  });
+
+  it.each([
+    [{ FFA_IDLE_WARN_SECONDS: '25' }],
+    [{ FFA_IDLE_KICK_SECONDS: '10' }],
+    [{ FFA_IDLE_WARN_SECONDS: '3', FFA_IDLE_KICK_SECONDS: '3' }],
+  ])('предупреждение не раньше выкидывания (%o) — ошибка с именами переменных', (ffaEnv) => {
+    expect(() => createApp({ ffaEnv })).toThrow(/FFA_IDLE_WARN_SECONDS.*FFA_IDLE_KICK_SECONDS/);
+  });
+
+  it('граничные значения принимаются: минимум 10, длительность 2184 с', async () => {
+    await createApp({ ffaEnv: { FFA_MINIMUM: '10', FFA_MATCH_SECONDS: '2184' } }).close();
   });
 });
 

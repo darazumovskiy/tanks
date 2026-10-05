@@ -9,6 +9,7 @@
   </head>
   <body>
     <canvas id="stage" hidden></canvas>
+    <div id="ffa-hud" class="ffa-hud" hidden></div>
     <div id="overlay" class="overlay" hidden></div>
     <div id="rotate" class="rotate-hint" hidden>Поверни телефон горизонтально</div>
     <div id="open-app" class="open-app" hidden>
@@ -33,6 +34,16 @@
       <section class="stats">
         <h2 class="levels-title">Танк</h2>
         <div id="stats-picker" class="stats-picker"></div>
+      </section>
+      <section id="ffa-entry" class="ffa-entry">
+        <h2 class="levels-title">Общий бой</h2>
+        <div class="ffa-entry-row">
+          <button id="ffa-start" class="action" type="button">В общий бой</button>
+          <button id="ffa-info" class="level-info" type="button" aria-label="Подробнее" aria-expanded="false">i</button>
+        </div>
+        <p id="ffa-hint" class="level-hint" hidden>
+          До 30 танков на одной карте. Подбили — через пару секунд снова в деле.
+        </p>
       </section>
       <button id="create" class="action">Создать дуэль</button>
       <section class="levels">

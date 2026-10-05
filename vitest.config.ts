@@ -23,7 +23,7 @@ export default defineConfig({
       include: [
         'packages/server/src/**/*.ts',
         'packages/shared/src/protocol/**/*.ts',
-        'packages/shared/src/engine/{trajectory,lead,ffa,ffaMaps,spawn,random}.ts',
+        'packages/shared/src/engine/{trajectory,lead,ffa,ffaMaps,ffaView,spawn,random}.ts',
         'packages/client/src/steering.ts',
         'packages/client/src/flick.ts',
         'packages/client/src/touch.ts',
@@ -34,6 +34,8 @@ export default defineConfig({
         'packages/client/src/render/aimLineStyle.ts',
         'packages/client/src/render/fxEvent.ts',
         'packages/client/src/duelPresenter.ts',
+        'packages/client/src/ffa/{session,ffaPrediction,ffaCamera,fxPolicy}.ts',
+        'packages/client/src/render/stampDecals.ts',
         'packages/client/src/fxLab/{scenes,styleParams,paramPanel,contactSheet}.ts',
         'packages/client/src/clientInfo.ts',
         'packages/client/src/telemetry.ts',
@@ -50,7 +52,7 @@ export default defineConfig({
         'packages/server/src/**': { statements: 100, branches: 100, functions: 100, lines: 100 },
         'packages/analysis/src/**': { statements: 90, branches: 90, functions: 90, lines: 90 },
         'packages/shared/src/protocol/**': { statements: 95, branches: 85, functions: 95, lines: 95 },
-        'packages/shared/src/engine/{trajectory,lead,ffa,ffaMaps,spawn,random}.ts': {
+        'packages/shared/src/engine/{trajectory,lead,ffa,ffaMaps,ffaView,spawn,random}.ts': {
           statements: 95,
           branches: 90,
           functions: 95,
@@ -63,6 +65,12 @@ export default defineConfig({
           lines: 95,
         },
         'packages/client/src/{render/fxEvent,duelPresenter}.ts': {
+          statements: 95,
+          branches: 90,
+          functions: 95,
+          lines: 95,
+        },
+        'packages/client/src/{ffa/session,ffa/ffaPrediction,ffa/ffaCamera,ffa/fxPolicy,render/stampDecals}.ts': {
           statements: 95,
           branches: 90,
           functions: 95,

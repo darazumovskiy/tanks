@@ -6,6 +6,7 @@ import { createDuelEffects, Renderer } from '../render/renderer.js';
 import { makeCanvas } from '../render/view.js';
 import { showRoundEnd } from '../roundEnd.js';
 import { defaultSettings } from '../settings.js';
+import { waitForFonts } from './fonts.js';
 import { DUEL_FRAMES, SPRITE_PROBE } from './frames.js';
 import { NAMES, type DuelFrame, type FrameKind, type FrameScreenId } from './model.js';
 import { frameImage, playFrame, type FrameTarget } from './play.js';
@@ -102,28 +103,8 @@ function hasSprites(target: FrameTarget): boolean {
   });
 }
 
-// Все начертания подключённого набора — до первого кадра: холст не ждёт шрифт и нарисовал бы запасным.
 async function waitForAssets(targets: readonly FrameTarget[]): Promise<void> {
-  if (document.readyState !== 'complete') {
-    await new Promise<void>((resolve) => {
-      window.addEventListener(
-        'load',
-        () => {
-          resolve();
-        },
-        { once: true },
-      );
-    });
-  }
-  const faces: FontFace[] = [];
-  document.fonts.forEach((face) => {
-    faces.push(face);
-  });
-  if (faces.length === 0) {
-    throw new Error('шрифты игры не подключились');
-  }
-  await Promise.all(faces.map((face) => face.load()));
-  await document.fonts.ready;
+  await waitForFonts();
   while (!targets.every(hasSprites)) {
     await delay(SPRITE_POLL_MS);
   }

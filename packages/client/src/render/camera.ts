@@ -161,9 +161,10 @@ export interface EdgeMarker {
   angle: number;
 }
 
-export function isInView(camera: Camera, point: Point): boolean {
-  const isInsideX = point.x >= camera.x && point.x <= camera.x + camera.width;
-  const isInsideY = point.y >= camera.y && point.y <= camera.y + camera.height;
+// margin — запас вокруг окна в единицах поля.
+export function isInView(camera: Camera, point: Point, margin = 0): boolean {
+  const isInsideX = point.x >= camera.x - margin && point.x <= camera.x + camera.width + margin;
+  const isInsideY = point.y >= camera.y - margin && point.y <= camera.y + camera.height + margin;
   return isInsideX && isInsideY;
 }
 

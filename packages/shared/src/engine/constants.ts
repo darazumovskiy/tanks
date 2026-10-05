@@ -19,10 +19,14 @@ export const ZONE = { startShrink: 60, endShrink: 100, finalRadius: 170, damageP
 // Зона начинает сжиматься с круга, описанного вокруг поля, с запасом.
 export const ZONE_START_MARGIN = 60;
 // Сжатие зоны — доли длительности матча: при 120 с это 45–105 с. Окно обзора — прямоугольник вокруг точки
-// камеры: дальше него в бою толпы не видят ни игрок, ни боты.
+// камеры: дальше него в бою толпы не видят ни игрок, ни боты. Сдвиг точки обзора вдоль ствола — доли окна:
+// вбок — ширины, вниз и вверх — высоты.
 export const FFA = {
   viewWidth: 1600,
   viewHeight: 900,
+  viewAheadSide: 0.15,
+  viewAheadDown: 0.23,
+  viewAheadUp: 0.14,
   matchSeconds: 120,
   respawnSeconds: 4,
   wreckSeconds: 2,

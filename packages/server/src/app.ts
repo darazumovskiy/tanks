@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
-import { DEFAULT_RULES, TICK_RATE, type RoundRules } from '@tanks/shared/engine';
+import { DEFAULT_RULES, FFA_SIZES, TICK_RATE, type FfaSize, type RoundRules } from '@tanks/shared/engine';
 import {
   decode,
   encode,
@@ -10,6 +10,7 @@ import {
   isClientMessage,
   isFfaRoomCode,
   MessageType,
+  NO_ID,
   PROTOCOL_VERSION,
   type ClientMessage,
 } from '@tanks/shared/protocol';
@@ -23,6 +24,7 @@ import { APK_ROUTE, requestPath, serveApk, serveStatic } from './static.js';
 
 // logDir — папка журналов игр; без неё журнал не ведётся и приёмщик строк клиента отключён.
 // rules — правила движка для всех комнат процесса.
+// ffaEnv — переключатели общей игры строками окружения (ключ — имя переменной) поверх `ffa`; пусто — умолчание.
 export interface AppOptions {
   staticRoot?: string;
   apkPath?: string;
@@ -30,6 +32,7 @@ export interface AppOptions {
   rules?: RoundRules;
   room?: RoomOptions;
   ffa?: FfaOptions;
+  ffaEnv?: Readonly<Record<string, string | undefined>>;
   tickMs?: number;
   random?: () => number;
   silenceTimeoutMs?: number;
@@ -57,6 +60,63 @@ const CATCH_UP_LIMIT_TICKS = 5;
 const DEFAULT_SILENCE_TIMEOUT_MS = 10_000;
 const SILENCE_CHECKS_PER_TIMEOUT = 4;
 
+const FFA_ENV = {
+  minimum: 'FFA_MINIMUM',
+  matchSeconds: 'FFA_MATCH_SECONDS',
+  lobbyQuietSeconds: 'FFA_LOBBY_QUIET_SECONDS',
+  resultsSeconds: 'FFA_RESULTS_SECONDS',
+  idleWarnSeconds: 'FFA_IDLE_WARN_SECONDS',
+  idleKickSeconds: 'FFA_IDLE_KICK_SECONDS',
+} as const;
+// Минимум один на все размеры, поэтому не больше самой маленькой игры.
+const FFA_MINIMUM_LIMIT = Math.min(...FFA_SIZES);
+// ticksLeft и idleTicksLeft уходят двумя байтами, а 0xFFFF там значит «нет»: длительность в тиках меньше него.
+const FFA_SECONDS_LIMIT = Math.floor((NO_ID - 1) / TICK_RATE);
+
+type FfaEnv = Readonly<Record<string, string | undefined>>;
+
+function envInteger(env: FfaEnv, name: string, limit: number): number | null {
+  const raw = env[name];
+  if (raw === undefined || raw === '') {
+    return null;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > limit) {
+    throw new Error(`${name} должен быть целым от 1 до ${String(limit)}, получено «${raw}»`);
+  }
+  return value;
+}
+
+function ticksOr(seconds: number | null, fallback: number): number {
+  return seconds === null ? fallback : seconds * TICK_RATE;
+}
+
+function ffaOptionsFromEnv(base: FfaOptions, env: FfaEnv): FfaOptions {
+  const minimum = envInteger(env, FFA_ENV.minimum, FFA_MINIMUM_LIMIT);
+  const matchSeconds = envInteger(env, FFA_ENV.matchSeconds, FFA_SECONDS_LIMIT);
+  const lobbyQuietSeconds = envInteger(env, FFA_ENV.lobbyQuietSeconds, FFA_SECONDS_LIMIT);
+  const resultsSeconds = envInteger(env, FFA_ENV.resultsSeconds, FFA_SECONDS_LIMIT);
+  const idleWarnSeconds = envInteger(env, FFA_ENV.idleWarnSeconds, FFA_SECONDS_LIMIT);
+  const idleKickSeconds = envInteger(env, FFA_ENV.idleKickSeconds, FFA_SECONDS_LIMIT);
+  const idleWarnTicks = ticksOr(idleWarnSeconds, base.idleWarnTicks);
+  const idleKickTicks = ticksOr(idleKickSeconds, base.idleKickTicks);
+  const isIdleSet = idleWarnSeconds !== null || idleKickSeconds !== null;
+  if (isIdleSet && idleWarnTicks >= idleKickTicks) {
+    throw new Error(`${FFA_ENV.idleWarnSeconds} должен быть меньше ${FFA_ENV.idleKickSeconds}`);
+  }
+  const minimums: Readonly<Record<FfaSize, number>> =
+    minimum === null ? base.minimum : { 10: minimum, 30: minimum, 50: minimum };
+  return {
+    ...base,
+    minimum: minimums,
+    matchSeconds: matchSeconds ?? base.matchSeconds,
+    lobbyQuietTicks: ticksOr(lobbyQuietSeconds, base.lobbyQuietTicks),
+    resultsTicks: ticksOr(resultsSeconds, base.resultsTicks),
+    idleWarnTicks,
+    idleKickTicks,
+  };
+}
+
 class SocketConnection implements FfaConnection {
   constructor(
     private readonly socket: WebSocket,
@@ -83,6 +143,7 @@ function toBytes(data: RawData): Uint8Array {
 }
 
 export function createApp(options: AppOptions = {}): App {
+  const ffaOptions = ffaOptionsFromEnv(options.ffa ?? DEFAULT_FFA_OPTIONS, options.ffaEnv ?? {});
   const fileLog = options.logDir === undefined ? null : new FileGameLog(options.logDir);
   const log: GameLog = fileLog ?? NO_LOG;
   const metrics = createMetrics();
@@ -92,7 +153,7 @@ export function createApp(options: AppOptions = {}): App {
     log,
     metrics,
     options.rules ?? DEFAULT_RULES,
-    options.ffa ?? DEFAULT_FFA_OPTIONS,
+    ffaOptions,
   );
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
   const server = createServer((request, response) => {

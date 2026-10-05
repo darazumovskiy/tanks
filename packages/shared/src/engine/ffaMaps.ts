@@ -11,8 +11,10 @@ export interface SpawnArea extends Point {
   radius: number;
 }
 
+// seed — сид карты: из него строятся стены, и клиент рисует по нему детали пола в каждом месте одинаково.
 export interface FfaMap extends BattleMap {
   size: FfaSize;
+  seed: number;
   spawnAreas: SpawnArea[];
 }
 
@@ -197,6 +199,7 @@ export function buildFfaMap(size: FfaSize): FfaMap {
   return {
     name: `Арена на ${String(size)}`,
     size,
+    seed: layout.seed,
     width: layout.width,
     height: layout.height,
     walls,

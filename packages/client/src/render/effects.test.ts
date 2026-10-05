@@ -5,7 +5,7 @@ import { Effects, type FxEvent, type FxEventOptions } from './effects.js';
 
 const COLORS: Readonly<Record<number, string>> = { 3: '#4fc3c9', 7: '#e8825a' };
 const NAMES: Readonly<Record<number, string>> = { 3: 'Вася', 7: 'Петя' };
-const QUIET: FxEventOptions = { shake: 0, flash: 0, announcement: null };
+const QUIET: FxEventOptions = { shake: 0, flash: 0, announcement: null, hasParticles: true };
 const ANNOUNCE_WIDTH = 1000;
 const ANNOUNCE_Y = 200;
 
@@ -119,13 +119,13 @@ describe('тряска, вспышка и объявление — ровно и
 
   it('сила тряски и вспышка — из параметров, сильнее текущих', () => {
     const effects = makeEffects();
-    effects.onEvent(fxEvent('shot'), { shake: 4, flash: 0.3, announcement: null });
+    effects.onEvent(fxEvent('shot'), { shake: 4, flash: 0.3, announcement: null, hasParticles: true });
     expect(effects.shake).toBe(4);
     expect(effects.flashScreen).toBe(0.3);
-    effects.onEvent(fxEvent('fizzle'), { shake: 2, flash: 0.1, announcement: null });
+    effects.onEvent(fxEvent('fizzle'), { shake: 2, flash: 0.1, announcement: null, hasParticles: true });
     expect(effects.shake).toBe(4);
     expect(effects.flashScreen).toBe(0.3);
-    effects.onEvent(fxEvent('bump'), { shake: 11, flash: 0.5, announcement: null });
+    effects.onEvent(fxEvent('bump'), { shake: 11, flash: 0.5, announcement: null, hasParticles: true });
     expect(effects.shake).toBe(11);
     expect(effects.flashScreen).toBe(0.5);
   });
@@ -145,6 +145,26 @@ describe('тряска, вспышка и объявление — ровно и
     expect(announcementTexts(effects)[0]).toEqual({ text: 'САМ СЕБЯ!', fillStyle: COLORS[3] });
     effects.onEvent(fxEvent('zoneStart', { tank: null }), { ...QUIET, announcement: 'zoneStart' });
     expect(announcementTexts(effects).map((drawn) => drawn.text)).toEqual(['ЗОНА СУЖАЕТСЯ', 'вне круга — урон']);
+  });
+
+  it('без частиц: объявление, тряска и вспышка есть, а на месте события — ни подпалины, ни цифры, ни отдачи', () => {
+    const decals = new FakeDecals();
+    const effects = makeEffects(decals);
+    effects.onEvent(fxEvent('death', { tank: 3, by: 7 }), {
+      shake: 5,
+      flash: 0.2,
+      announcement: 'firstBlood',
+      hasParticles: false,
+    });
+    effects.onEvent(fxEvent('shot', { tank: 7 }), { ...QUIET, hasParticles: false });
+    effects.onEvent(fxEvent('hit', { tank: 3, by: 7 }), { ...QUIET, hasParticles: false });
+    expect(announcementTexts(effects).map((drawn) => drawn.text)).toEqual(['ПЕРВАЯ КРОВЬ', 'Петя']);
+    expect(effects.shake).toBe(5);
+    expect(effects.flashScreen).toBe(0.2);
+    expect(decals.calls).toEqual([]);
+    expect(popupTexts(effects)).toEqual([]);
+    expect(effects.tankFx(7).recoil).toBe(0);
+    expect(effects.tankFx(3).flash).toBe(0);
   });
 
   it('объявление без нужного танка не показывается', () => {
@@ -219,5 +239,52 @@ describe('слой следов снаружи', () => {
     const { ctx } = recordingContext();
     effects.drawDecals(ctx, { x: 0, y: 0, width: 1600, height: 900, scale: 1 });
     expect(decals.calls).toEqual(['draw']);
+  });
+});
+
+describe('хвост снаряда', () => {
+  // Холст, который считает отрезки хвоста; градиент свечения — заглушка.
+  function strokeCounter(): { ctx: CanvasRenderingContext2D; strokes: () => number } {
+    let strokes = 0;
+    const state: Record<string | symbol, unknown> = {};
+    const ctx = new Proxy(state, {
+      get: (target, key) => {
+        if (key === 'stroke') {
+          return (): void => {
+            strokes++;
+          };
+        }
+        if (key === 'createRadialGradient') {
+          return () => ({ addColorStop: (): void => undefined });
+        }
+        return key in target ? target[key] : (): void => undefined;
+      },
+      set: (target, key, value) => {
+        target[key] = value;
+        return true;
+      },
+    }) as unknown as CanvasRenderingContext2D;
+    return { ctx, strokes: () => strokes };
+  }
+
+  function drawAt(effects: Effects, id: number, x: number): number {
+    const { ctx, strokes } = strokeCounter();
+    effects.drawBullets(ctx, [{ id, x, y: 0, color: '#ffffff' }]);
+    return strokes();
+  }
+
+  it('смена номера переносит хвост: подтверждённый снаряд продолжает след предсказанного', () => {
+    const effects = makeEffects();
+    drawAt(effects, 900, 0);
+    expect(drawAt(effects, 900, 10)).toBe(1);
+    effects.renameTrail(900, 5);
+    expect(drawAt(effects, 5, 20)).toBe(2);
+  });
+
+  it('без переноса снаряд с новым номером начинает хвост заново', () => {
+    const effects = makeEffects();
+    drawAt(effects, 900, 0);
+    drawAt(effects, 900, 10);
+    expect(drawAt(effects, 5, 20)).toBe(0);
   });
 });

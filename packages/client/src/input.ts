@@ -1,4 +1,4 @@
-import type { Action } from '@tanks/shared/engine';
+import type { Action, Point } from '@tanks/shared/engine';
 import type { Settings } from './settings.js';
 import { aimTurret, IDLE_HULL, isBehind, steerHull, type HullSteering } from './steering.js';
 import { TouchSticks, type StickSettings, type StickState } from './touch.js';
@@ -10,13 +10,16 @@ export type InputSettings = StickSettings & Pick<Settings, 'pivotThrottle' | 'ha
 
 export type GuardEvent = 'hold' | 'cancel';
 
+// isMouseScreenAnchored — точка под курсором пересчитывается из места курсора на экране при каждом чтении:
+// камера едет — точка под неподвижным курсором меняется. Без него точка поля запоминается в момент сдвига мыши.
 export interface InputHooks {
   now?: () => number;
   onGuard?: (event: GuardEvent) => void;
+  isMouseScreenAnchored?: boolean;
 }
 
 export interface Viewport {
-  toWorld(clientX: number, clientY: number): { x: number; y: number };
+  toWorld(clientX: number, clientY: number): Point;
 }
 
 export interface SteeredTank {
@@ -49,7 +52,9 @@ export class InputReader {
   private readonly sticks: TouchSticks;
   private readonly now: () => number;
   private readonly onGuard: (event: GuardEvent) => void;
-  private mouse: { x: number; y: number } | null = null;
+  private readonly isMouseScreenAnchored: boolean;
+  private mouse: Point | null = null;
+  private mouseClient: Point | null = null;
   private isMouseDown = false;
   private hull: Readonly<HullSteering> = IDLE_HULL;
   private isAutoFireOn = false;
@@ -67,6 +72,7 @@ export class InputReader {
   ) {
     this.now = hooks.now ?? ((): number => performance.now());
     this.onGuard = hooks.onGuard ?? ((): void => undefined);
+    this.isMouseScreenAnchored = hooks.isMouseScreenAnchored ?? false;
     this.sticks = new TouchSticks(target, settings, this.now);
     window.addEventListener('keydown', (event) => {
       if (event.repeat || isTypingTarget(event.target)) {
@@ -85,7 +91,11 @@ export class InputReader {
       this.isMouseDown = false;
     });
     target.addEventListener('pointermove', (event) => {
-      if (event.pointerType === 'mouse') {
+      if (event.pointerType !== 'mouse') {
+        return;
+      }
+      this.mouseClient = { x: event.clientX, y: event.clientY };
+      if (!this.isMouseScreenAnchored) {
         this.mouse = this.viewport.toWorld(event.clientX, event.clientY);
       }
     });
@@ -122,6 +132,24 @@ export class InputReader {
 
   get isReversing(): boolean {
     return this.hull.isReversing;
+  }
+
+  // Башню наводит курсор: мышь над полем была, стика башни нет.
+  get isMouseAiming(): boolean {
+    return this.sticks.stick('aim') === null && this.mouseClient !== null;
+  }
+
+  // Место курсора в координатах окна; null — мышь над полем ещё не двигалась.
+  get mouseScreen(): Point | null {
+    return this.mouseClient;
+  }
+
+  get mouseWorld(): Point | null {
+    const client = this.mouseClient;
+    if (!this.isMouseScreenAnchored || client === null) {
+      return this.mouse;
+    }
+    return this.viewport.toWorld(client.x, client.y);
   }
 
   setAutoFire(isOn: boolean): void {
@@ -195,7 +223,7 @@ export class InputReader {
     if (stick?.isActive === true) {
       return aimTurret(Math.atan2(stick.dy, stick.dx), me.turret);
     }
-    const mouse = this.mouse;
+    const mouse = this.mouseWorld;
     const isMouseAiming = stick === null && mouse !== null;
     if (isMouseAiming) {
       return aimTurret(Math.atan2(mouse.y - me.y, mouse.x - me.x), me.turret);

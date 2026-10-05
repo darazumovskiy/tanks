@@ -91,6 +91,7 @@ function duelScene(view: WorldView, hud: HudInfo): FieldScene {
     aimLine: hud.aimLine,
     ownTankId: hud.mySide,
     isShotGuarded: hud.isShotGuarded,
+    fieldLayer: null,
   };
 }
 

@@ -27,6 +27,7 @@ const app = createApp({
   ...(apkPath === undefined ? {} : { apkPath }),
   ...(logDir === undefined ? {} : { logDir }),
   rules: { wallSlidePercent },
+  ffaEnv: process.env,
 });
 
 const boundPort = await app.listen(port, host);

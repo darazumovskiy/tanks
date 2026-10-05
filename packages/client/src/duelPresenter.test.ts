@@ -232,15 +232,15 @@ describe('снимок сервера', () => {
     expect(effects.events).toEqual([
       {
         event: { kind: 'shot', tank: 0, by: null, x: 300, y: 200, value: 28, dx: 1, dy: 0, flags: 0 },
-        options: { shake: 2.5, flash: 0, announcement: null },
+        options: { shake: 2.5, flash: 0, announcement: null, hasParticles: true },
       },
       {
         event: { kind: 'hit', tank: 1, by: 0, x: 300, y: 200, value: 28, dx: 1, dy: 0, flags: EventFlag.Ricochet },
-        options: { shake: 9, flash: 0, announcement: 'firstBlood' },
+        options: { shake: 9, flash: 0, announcement: 'firstBlood', hasParticles: true },
       },
       {
         event: { kind: 'death', tank: 1, by: null, x: 300, y: 200, value: 28, dx: 1, dy: 0, flags: 0 },
-        options: { shake: 26, flash: 0.55, announcement: null },
+        options: { shake: 26, flash: 0.55, announcement: null, hasParticles: true },
       },
     ]);
   });
