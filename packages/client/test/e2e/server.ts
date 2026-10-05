@@ -11,6 +11,14 @@ const STATIC_ROOT = `${ROOT}/packages/client/dist`;
 const START_TIMEOUT_MS = 10_000;
 const PORT_LINE = /tanks server on \S*:(\d+)/;
 
+// Окружение разработчика не меняет страницы: установщик Android из `APK_PATH` добавил бы на главную код со ссылкой
+// на случайный порт. Нужен тесту — передаётся через extraEnv.
+function inheritedEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.APK_PATH;
+  return env;
+}
+
 // Собранный игровой сервер как отдельный процесс — тот же бинарник, что едет на боевую машину.
 // extraEnv — переменные окружения поверх обязательных (например, серверная ручка `WALL_SLIDE`).
 export class GameServer {
@@ -32,7 +40,7 @@ export class GameServer {
 
   async start(port = 0): Promise<void> {
     const child = spawn(process.execPath, [SERVER_ENTRY], {
-      env: { ...process.env, ...this.extraEnv, PORT: String(port), STATIC_ROOT, LOG_DIR: this.logDir },
+      env: { ...inheritedEnv(), ...this.extraEnv, PORT: String(port), STATIC_ROOT, LOG_DIR: this.logDir },
       stdio: ['ignore', 'pipe', 'inherit'],
     });
     this.child = child;

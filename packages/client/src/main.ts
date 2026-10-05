@@ -6,6 +6,7 @@ import { resolveAdminMode } from './admin.js';
 import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
 import { readClientInfo } from './clientInfo.js';
 import { Game } from './game.js';
+import { showFrameStand } from './frameStand/stand.js';
 import { showFxLab } from './fxLab/fxLab.js';
 import { showCameraLab } from './lab.js';
 import { defaultSettings, SettingsStore } from './settings.js';
@@ -296,6 +297,8 @@ if (duelMatch?.[1] !== undefined) {
   showCameraLab(byId('lab', HTMLElement));
 } else if (labKind === 'fx') {
   showFxLab(byId('lab', HTMLElement));
+} else if (labKind === 'frames') {
+  showFrameStand(byId('lab', HTMLElement));
 } else {
   showHome();
 }
