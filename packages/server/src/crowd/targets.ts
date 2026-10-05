@@ -1,7 +1,7 @@
 import { TICK_RATE, type Point } from '@tanks/shared/engine';
 import type { CrowdTank, CrowdView } from './view.js';
 
-export const MAX_HUNTERS = 2;
+const MAX_HUNTERS = 2;
 const RETARGET_TICKS = TICK_RATE;
 // Текущая цель уступает новой, только если та ближе во столько раз: иначе бот дёргался бы между двумя.
 const SWITCH_RATIO = 1.5;

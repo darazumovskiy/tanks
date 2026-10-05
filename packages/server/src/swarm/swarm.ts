@@ -22,6 +22,11 @@ const HEALTH_PATH = '/healthz';
 const BYTES_IN_KIB = 1024;
 const MS_IN_SECOND = 1000;
 const MICROSECONDS_IN_SECOND = 1_000_000;
+const SECONDS_IN_MINUTE = 60;
+const PERCENT = 100;
+const MEDIAN_SHARE = 0.5;
+const PING_HIGH_SHARE = 0.95;
+const BRAIN_HIGH_SHARE = 0.99;
 
 export interface SwarmOptions {
   url: string;
@@ -337,8 +342,8 @@ export class Swarm {
       bytesPerSecond: { average: rates.reduce((sum, rate) => sum + rate, 0) / total, max: Math.max(...rates) },
       snapshotsPerSecond: snapshots / total / seconds,
       gaps,
-      pingMs: { median: percentile(pings, 0.5), high: percentile(pings, 0.95) },
-      brainMs: { median: percentile(brainTimes, 0.5), high: percentile(brainTimes, 0.99) },
+      pingMs: { median: percentile(pings, MEDIAN_SHARE), high: percentile(pings, PING_HIGH_SHARE) },
+      brainMs: { median: percentile(brainTimes, MEDIAN_SHARE), high: percentile(brainTimes, BRAIN_HIGH_SHARE) },
       cpuShare: (cpu.user + cpu.system) / MICROSECONDS_IN_SECOND / seconds,
       serverTickMaxMs: await readServerTick(this.options.healthUrl ?? healthUrlOf(this.options.url)),
       visibleBullets: { average: visibleSamples > 0 ? visibleSum / visibleSamples : null, max: visibleMax },
@@ -363,7 +368,8 @@ function phaseText(report: SwarmReport): string {
       return 'отсчёт';
     case FfaPhase.Fight: {
       const seconds = Math.floor(report.matchTick / TICK_RATE);
-      return `бой ${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, '0')}`;
+      const minutes = Math.floor(seconds / SECONDS_IN_MINUTE);
+      return `бой ${String(minutes)}:${String(seconds % SECONDS_IN_MINUTE).padStart(2, '0')}`;
     }
     case FfaPhase.Results:
       return 'итоги';
@@ -373,7 +379,7 @@ function phaseText(report: SwarmReport): string {
 }
 
 export function formatReport(report: SwarmReport): string {
-  const percent = (share: number | null): string => optional(share === null ? null : share * 100, 0);
+  const percent = (share: number | null): string => optional(share === null ? null : share * PERCENT, 0);
   return [
     `${String(report.online)}/${String(report.total)} в игре`,
     phaseText(report),

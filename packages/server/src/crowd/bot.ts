@@ -64,7 +64,7 @@ const UNKNOWN_STATS = deriveStats(undefined);
 // Бот общей игры без транспорта: получает сообщения сервера, восстанавливает из них поле и отвечает командой.
 // Сокет роя и подключение внутри сервера — разные обёртки вокруг одного бота.
 export class CrowdBot {
-  readonly profile: CrowdProfile;
+  private readonly profile: CrowdProfile;
   token = '';
   playerId: number | null = null;
   phase: FfaPhase | null = null;
