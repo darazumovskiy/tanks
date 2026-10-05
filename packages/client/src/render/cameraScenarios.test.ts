@@ -34,6 +34,8 @@ const SPAWN_ENEMY: Point = { x: 140, y: 450 };
 // Быстрый танк проходит около 4 единиц за кадр; траектории ведут его с этой скоростью, а не телепортами.
 const TANK_UNITS_PER_FRAME = 4;
 const XIAOMI: ScreenGeometry = { id: 'xiaomi-14t-pro', width: 834, height: 375, pixelRatio: 3.25 };
+// Перебор сетки — тысячи прогонов камеры: под покрытием и параллельной нагрузкой занимает секунды.
+const GRID_TIMEOUT_MS = 30_000;
 
 function format(violations: readonly Violation[]): string {
   return violations.map((v) => `${v.invariant}: ${v.detail}`).join('; ');
@@ -92,60 +94,68 @@ describe.each(PHONE_CAMERA_MODES)('камера «$label»', ({ mode }) => {
       expect(violations, format(violations)).toEqual([]);
     });
 
-    it('сетка позиций без предыстории и с приездом из зеркальной точки: C1, C4, C8', () => {
-      const violations: string[] = [];
-      for (const me of GRID) {
-        for (const enemy of GRID) {
-          const scenario = { id: 'grid', title: 'grid', me, enemy };
-          const camera = settle(mode, settings, scenario, screen);
-          const common = check(camera, me, enemy);
-          const mirrored = settle(mode, settings, { ...scenario, me: mirrorX(me), enemy: mirrorX(enemy) }, screen);
-          const back = mirrorCamera(mirrored);
-          const isSymmetric = Math.abs(back.x - camera.x) < 0.01 && Math.abs(back.y - camera.y) < 0.01;
-          const strategy = createCameraStrategy(mode, settings);
-          const [, arrived] = runTrajectory(
-            strategy,
-            [hold(mirrorX(me), mirrorX(enemy), SETTLE_MS), hold(me, enemy, SETTLE_MS)],
-            screen,
-          );
-          const withHistory = arrived === undefined ? [] : check(arrived, me, enemy);
-          const label = `я (${String(me.x)}, ${String(me.y)}), противник (${String(enemy.x)}, ${String(enemy.y)})`;
-          for (const v of [...common, ...withHistory]) {
-            violations.push(`${label}: ${v.invariant} ${v.detail}`);
-          }
-          if (!isSymmetric) {
-            violations.push(`${label}: C4 зеркало ${JSON.stringify(back)} против ${JSON.stringify(camera)}`);
+    it(
+      'сетка позиций без предыстории и с приездом из зеркальной точки: C1, C4, C8',
+      () => {
+        const violations: string[] = [];
+        for (const me of GRID) {
+          for (const enemy of GRID) {
+            const scenario = { id: 'grid', title: 'grid', me, enemy };
+            const camera = settle(mode, settings, scenario, screen);
+            const common = check(camera, me, enemy);
+            const mirrored = settle(mode, settings, { ...scenario, me: mirrorX(me), enemy: mirrorX(enemy) }, screen);
+            const back = mirrorCamera(mirrored);
+            const isSymmetric = Math.abs(back.x - camera.x) < 0.01 && Math.abs(back.y - camera.y) < 0.01;
+            const strategy = createCameraStrategy(mode, settings);
+            const [, arrived] = runTrajectory(
+              strategy,
+              [hold(mirrorX(me), mirrorX(enemy), SETTLE_MS), hold(me, enemy, SETTLE_MS)],
+              screen,
+            );
+            const withHistory = arrived === undefined ? [] : check(arrived, me, enemy);
+            const label = `я (${String(me.x)}, ${String(me.y)}), противник (${String(enemy.x)}, ${String(enemy.y)})`;
+            for (const v of [...common, ...withHistory]) {
+              violations.push(`${label}: ${v.invariant} ${v.detail}`);
+            }
+            if (!isSymmetric) {
+              violations.push(`${label}: C4 зеркало ${JSON.stringify(back)} против ${JSON.stringify(camera)}`);
+            }
           }
         }
-      }
-      expect(violations.slice(0, 20), `${String(violations.length)} нарушений`).toEqual([]);
-    });
+        expect(violations.slice(0, 20), `${String(violations.length)} нарушений`).toEqual([]);
+      },
+      GRID_TIMEOUT_MS,
+    );
 
-    it('C3: сдвиг своего танка на 2 единицы меняет окно не более чем на 6 при том же уровне', () => {
-      const violations: string[] = [];
-      for (const me of GRID) {
-        for (const enemy of [SPAWN_ENEMY, { x: 800, y: 450 }, { x: 1576, y: 876 }, null]) {
-          const base = settle(mode, settings, { id: 'c3', title: 'c3', me, enemy }, screen);
-          for (const shifted of [
-            { x: me.x + CONTINUITY_STEP, y: me.y },
-            { x: me.x, y: me.y + CONTINUITY_STEP },
-          ]) {
-            const moved = settle(mode, settings, { id: 'c3', title: 'c3', me: shifted, enemy }, screen);
-            const isSameLevel = Math.abs(moved.height - base.height) < 1;
-            if (!isSameLevel) {
-              continue;
-            }
-            const jump = Math.max(Math.abs(moved.x - base.x), Math.abs(moved.y - base.y));
-            if (jump > CONTINUITY_TOLERANCE) {
-              violations.push(
-                `я (${String(me.x)}, ${String(me.y)}) → (${String(shifted.x)}, ${String(shifted.y)}): скачок ${jump.toFixed(1)}`,
-              );
+    it(
+      'C3: сдвиг своего танка на 2 единицы меняет окно не более чем на 6 при том же уровне',
+      () => {
+        const violations: string[] = [];
+        for (const me of GRID) {
+          for (const enemy of [SPAWN_ENEMY, { x: 800, y: 450 }, { x: 1576, y: 876 }, null]) {
+            const base = settle(mode, settings, { id: 'c3', title: 'c3', me, enemy }, screen);
+            for (const shifted of [
+              { x: me.x + CONTINUITY_STEP, y: me.y },
+              { x: me.x, y: me.y + CONTINUITY_STEP },
+            ]) {
+              const moved = settle(mode, settings, { id: 'c3', title: 'c3', me: shifted, enemy }, screen);
+              const isSameLevel = Math.abs(moved.height - base.height) < 1;
+              if (!isSameLevel) {
+                continue;
+              }
+              const jump = Math.max(Math.abs(moved.x - base.x), Math.abs(moved.y - base.y));
+              if (jump > CONTINUITY_TOLERANCE) {
+                violations.push(
+                  `я (${String(me.x)}, ${String(me.y)}) → (${String(shifted.x)}, ${String(shifted.y)}): скачок ${jump.toFixed(1)}`,
+                );
+              }
             }
           }
         }
-      }
-      expect(violations.slice(0, 20), `${String(violations.length)} нарушений`).toEqual([]);
-    });
+        expect(violations.slice(0, 20), `${String(violations.length)} нарушений`).toEqual([]);
+      },
+      GRID_TIMEOUT_MS,
+    );
 
     it('C5: сходимость — окно через 4 с и через 8 с одинаково', () => {
       for (const scenario of CAMERA_SCENARIOS) {

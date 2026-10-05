@@ -17,17 +17,19 @@ import { buildSelect } from '../labShared.js';
 import { worldToScreen, type Camera } from '../render/camera.js';
 import { Effects } from '../render/effects.js';
 import { FFA_OWN_COLOR, FFA_OTHER_COLOR, FfaRenderer } from '../render/ffaRenderer.js';
+import { FLOOR_FRAME_BUDGET_MS } from '../render/floorChunks.js';
 import { StampDecals } from '../render/stampDecals.js';
 import { makeCanvas } from '../render/view.js';
 import { defaultSettings } from '../settings.js';
 import { FFA_FRAMES, FFA_SPRITE_PROBE, type FfaStandFrame, type StandTank } from './ffaFrames.js';
+import { checkFloor } from './floorChecks.js';
 import { waitForFonts } from './fonts.js';
 import { installSeededRandom } from './seededRandom.js';
 
 // Стенд кадров толпы (`/?lab=frames&set=ffa`): именованные кадры настоящим рендером толпы через те же камеру,
 // правила эффектов и рисование, что игра, в замороженное время — эталоны визуальной регрессии.
-// `window.tanksFfaFrames`: `frames`, `ready()`, `show(frameId, screenId)`, `snapshot()`. `?seed=` — случайность
-// каждого показа с этого зерна.
+// `window.tanksFfaFrames`: `frames`, `ready()`, `show(frameId, screenId)`, `snapshot()`, `floorChecks()` — сверки
+// пола кусками. `?seed=` — случайность каждого показа с этого зерна.
 
 const MS_PER_S = 1000;
 const FRAME_MS = 16;
@@ -72,6 +74,15 @@ function fullGameZone(size: FfaSize): ZonePlan {
   return createFfaMatch(ffaMap(size), setups, 1, DEFAULT_RULES).world.zonePlan;
 }
 
+// Часы пола стенда: каждый кусок стоит полбюджета кадра — за кадр ровно два на любой машине, кадры повторяемы.
+function chunkCostClock(): () => number {
+  let elapsedMs = 0;
+  return () => {
+    elapsedMs += FLOOR_FRAME_BUDGET_MS / 2;
+    return elapsedMs;
+  };
+}
+
 function makeTarget(screen: FxScreen, isOwnPaletteOnly: boolean): StandTarget {
   const { canvas, ctx } = makeCanvas(1, 1);
   canvas.style.width = `${String(screen.width)}px`;
@@ -90,6 +101,7 @@ function makeTarget(screen: FxScreen, isOwnPaletteOnly: boolean): StandTarget {
     ffaMap(FFA_SPRITE_PROBE.size),
     () => ({ width: screen.width, height: screen.height, pixelRatio: screen.pixelRatio }),
     palette,
+    chunkCostClock(),
   );
   const target: StandTarget = {
     screen,
@@ -174,6 +186,10 @@ function playFrame(target: StandTarget, frame: FfaStandFrame, zone: ZonePlan): v
     effects.update(FRAME_S, view.tanks);
     if (steps - step > DRAWN_FRAMES) {
       continue;
+    }
+    const isFloorRestart = frame.floorFrames !== null && steps - step === frame.floorFrames - 1;
+    if (isFloorRestart) {
+      renderer.clearFloor();
     }
     renderer.draw({
       view,
@@ -308,6 +324,7 @@ export function showFfaFrameStand(root: HTMLElement): void {
         }
         return shown.toDataURL(PNG_TYPE);
       },
+      floorChecks: checkFloor,
     },
   });
 }

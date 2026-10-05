@@ -105,6 +105,8 @@ class FakeSocket implements SocketLike {
 
 class RecordingRenderer implements FfaRendererLike {
   readonly screen = SCREEN;
+  floorChunks = 0;
+  floorMemoryMb = 0;
   last: FfaDrawInput | null = null;
 
   draw(input: FfaDrawInput): void {
@@ -935,6 +937,14 @@ describe('экраны вокруг боя', () => {
     const admin = makeGame('', true);
     enterFight(admin, arena([tank(ME, 600, 650)]));
     expect(admin.renderer.last?.isFullReadout).toBe(true);
+  });
+
+  it('отладка показывает куски пола и их память от рендера', () => {
+    const harness = makeGame();
+    enterFight(harness, arena([tank(ME, 600, 650)]));
+    harness.renderer.floorChunks = 41;
+    harness.renderer.floorMemoryMb = 33.5;
+    expect(harness.state()).toMatchObject({ floorChunks: 41, floorMemoryMb: 33.5 });
   });
 });
 

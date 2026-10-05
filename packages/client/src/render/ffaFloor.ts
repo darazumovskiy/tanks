@@ -67,8 +67,10 @@ const WALL_STRIPE_THICKNESS = 8;
 const FIELD_EDGE_COLOR = '#4a5059';
 const FIELD_EDGE_WIDTH = 6;
 
-// Подложка — всё поле этим рецептом в четверть точки на единицу: лежит под полом всегда.
+// Подложка и тон пола — всё поле в четверть точки на единицу.
 export const UNDERLAY_SCALE = 0.25;
+// Точка тона за краем области: растяжение у края берёт соседние точки тона, а не повторённый край.
+const SHADE_MARGIN_PX = 1;
 
 const SALT_BLOBS = 0x51ab;
 const SALT_SPECKS = 0x5bec;
@@ -112,7 +114,10 @@ function drawBlobs(g: CanvasRenderingContext2D, map: FfaMap, area: FloorArea): v
         blob.addColorStop(0, `rgba(0,0,0,${String(alpha)})`);
         blob.addColorStop(1, 'rgba(0,0,0,0)');
         g.fillStyle = blob;
-        g.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+        // За радиусом градиент прозрачен: круг вместо квадрата не тратит заливку на пустые углы.
+        g.beginPath();
+        g.arc(x, y, radius, 0, Math.PI * 2);
+        g.fill();
       }
     }
   }
@@ -245,29 +250,28 @@ function drawWallStripe(g: CanvasRenderingContext2D, wall: FfaMap['walls'][numbe
   g.restore();
 }
 
-// Область `area` пола в координатах поля; холст уже переведён в координаты поля с масштабом `scale` точек на
-// единицу. Рисуется только по полю: кромку за краем пол не закрывает. hasSpecks — крапинки; без них — только
-// подложка, где они мельче точки.
-function drawFfaFloor(
+function clipToField(g: CanvasRenderingContext2D, map: FfaMap): void {
+  g.beginPath();
+  g.rect(0, 0, map.width, map.height);
+  g.clip();
+}
+
+function fieldArea(map: FfaMap): FloorArea {
+  return { x: 0, y: 0, width: map.width, height: map.height };
+}
+
+function underlayCanvas(map: FfaMap): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  return makeCanvas(Math.ceil(map.width * UNDERLAY_SCALE), Math.ceil(map.height * UNDERLAY_SCALE));
+}
+
+// Детали поверх тона: крапинки, сетка, пунктир областей, стены с тенью, край поля.
+function drawDetails(
   g: CanvasRenderingContext2D,
   map: FfaMap,
   area: FloorArea,
   scale: number,
-  hasSpecks = true,
+  hasSpecks: boolean,
 ): void {
-  g.save();
-  g.beginPath();
-  g.rect(0, 0, map.width, map.height);
-  g.clip();
-  const centerX = map.width / 2;
-  const centerY = map.height / 2;
-  const outer = GRADIENT_OUTER_SHARE * Math.hypot(centerX, centerY);
-  const background = g.createRadialGradient(centerX, centerY, GRADIENT_INNER_RADIUS, centerX, centerY, outer);
-  background.addColorStop(0, GRADIENT_CENTER_COLOR);
-  background.addColorStop(1, GRADIENT_EDGE_COLOR);
-  g.fillStyle = background;
-  g.fillRect(area.x, area.y, area.width, area.height);
-  drawBlobs(g, map, area);
   if (hasSpecks) {
     drawSpecks(g, map, area);
   }
@@ -277,14 +281,63 @@ function drawFfaFloor(
   g.strokeStyle = FIELD_EDGE_COLOR;
   g.lineWidth = FIELD_EDGE_WIDTH;
   g.strokeRect(FIELD_EDGE_WIDTH / 2, FIELD_EDGE_WIDTH / 2, map.width - FIELD_EDGE_WIDTH, map.height - FIELD_EDGE_WIDTH);
+}
+
+// Тон пола — фоновый градиент и тёмные пятна. Он плавный, поэтому рисуется один раз на всё поле в разрешении
+// подложки, а под кусок растягивается: градиенты — самая дорогая часть рецепта.
+export function createFfaShade(map: FfaMap): HTMLCanvasElement {
+  const { canvas, ctx } = underlayCanvas(map);
+  ctx.scale(UNDERLAY_SCALE, UNDERLAY_SCALE);
+  clipToField(ctx, map);
+  const centerX = map.width / 2;
+  const centerY = map.height / 2;
+  const outer = GRADIENT_OUTER_SHARE * Math.hypot(centerX, centerY);
+  const background = ctx.createRadialGradient(centerX, centerY, GRADIENT_INNER_RADIUS, centerX, centerY, outer);
+  background.addColorStop(0, GRADIENT_CENTER_COLOR);
+  background.addColorStop(1, GRADIENT_EDGE_COLOR);
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, map.width, map.height);
+  drawBlobs(ctx, map, fieldArea(map));
+  return canvas;
+}
+
+// Область `area` пола полным рецептом: тон растянут, детали — в разрешении холста; холст уже переведён в координаты
+// поля с масштабом `scale` точек на единицу. Рисуется только по полю: кромку за краем пол не закрывает.
+export function drawFfaFloor(
+  g: CanvasRenderingContext2D,
+  map: FfaMap,
+  area: FloorArea,
+  scale: number,
+  shade: HTMLCanvasElement,
+): void {
+  g.save();
+  clipToField(g, map);
+  const left = Math.max(0, Math.floor(area.x * UNDERLAY_SCALE) - SHADE_MARGIN_PX);
+  const top = Math.max(0, Math.floor(area.y * UNDERLAY_SCALE) - SHADE_MARGIN_PX);
+  const right = Math.min(shade.width, Math.ceil((area.x + area.width) * UNDERLAY_SCALE) + SHADE_MARGIN_PX);
+  const bottom = Math.min(shade.height, Math.ceil((area.y + area.height) * UNDERLAY_SCALE) + SHADE_MARGIN_PX);
+  g.drawImage(
+    shade,
+    left,
+    top,
+    right - left,
+    bottom - top,
+    left / UNDERLAY_SCALE,
+    top / UNDERLAY_SCALE,
+    (right - left) / UNDERLAY_SCALE,
+    (bottom - top) / UNDERLAY_SCALE,
+  );
+  drawDetails(g, map, area, scale, true);
   g.restore();
 }
 
-// Подложка: всё поле рецептом при четверти точки на единицу — на карте 50 около 4 МБ. Крапинка не крупнее трёх
-// единиц здесь меньше точки и не видна — подложка рисуется без крапинок.
-export function createFfaUnderlay(map: FfaMap): HTMLCanvasElement {
-  const { canvas, ctx } = makeCanvas(Math.ceil(map.width * UNDERLAY_SCALE), Math.ceil(map.height * UNDERLAY_SCALE));
+// Подложка: тон и детали всего поля при четверти точки на единицу — на карте 50 около 4 МБ. Крапинка не крупнее
+// трёх единиц здесь меньше точки и не видна — подложка рисуется без крапинок.
+export function createFfaUnderlay(map: FfaMap, shade: HTMLCanvasElement): HTMLCanvasElement {
+  const { canvas, ctx } = underlayCanvas(map);
+  ctx.drawImage(shade, 0, 0);
   ctx.scale(UNDERLAY_SCALE, UNDERLAY_SCALE);
-  drawFfaFloor(ctx, map, { x: 0, y: 0, width: map.width, height: map.height }, UNDERLAY_SCALE, false);
+  clipToField(ctx, map);
+  drawDetails(ctx, map, fieldArea(map), UNDERLAY_SCALE, false);
   return canvas;
 }

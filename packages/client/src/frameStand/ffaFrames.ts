@@ -2,8 +2,8 @@ import { MUZZLE_OFFSET, type FfaSize, type Point } from '@tanks/shared/engine';
 import type { FfaSnapshotEvent } from '@tanks/shared/protocol';
 import type { FrameScreenId } from './model.js';
 
-// Кадры эталонов толпы на карте 50: пол-подложка, толпа из 12 танков, зона в начале сжатия с кромкой, кольцо
-// неуязвимости при тряске, рисунок танка цвета вне палитры. Положения подобраны мимо стен карты.
+// Кадры эталонов толпы на карте 50: пол кусками поверх подложки, толпа из 12 танков, зона в начале сжатия с кромкой,
+// кольцо неуязвимости при тряске, рисунок танка цвета вне палитры. Положения подобраны мимо стен карты.
 
 export interface StandTank {
   id: number;
@@ -52,6 +52,8 @@ export interface FfaStandFrame {
   crop: StandCrop;
   // Палитра рендера — только свой цвет: рисунок чужого танка создаётся при первом танке этого цвета.
   isOwnPaletteOnly: boolean;
+  // Пол кусками собирается с нуля за столько последних кадров, как после перестановки камеры; null — пол готов.
+  floorFrames: number | null;
 }
 
 const PHONE: readonly FrameScreenId[] = ['phone'];
@@ -64,6 +66,12 @@ const SHIELD_LEFT_S = 2.2;
 const ZONE_EARLY_SHRINK_S = 48.8;
 
 const OWN: StandTank = { id: ME, name: 'Дима', x: 1450, y: 1000, heading: 0, turret: 0 };
+// Стык четырёх кусков, через который проходит угловая стена с тенью; камера сдвинута на доли единицы.
+const SEAM = { x: 1024, y: 512 };
+const SEAM_CAMERA_SHIFT = { x: 0.37, y: 0.61 };
+// После перестановки камеры прошло два кадра; часы стенда дают по два новых куска за кадр — готов квадрат 2 × 2 у
+// центра окна.
+const PENDING_FLOOR_FRAMES = 2;
 
 function bulletAhead(tank: StandTank, distance: number): StandBullet {
   const reach = MUZZLE_OFFSET + distance;
@@ -121,19 +129,44 @@ const BASE: Omit<FfaStandFrame, 'id' | 'title' | 'screens' | 'tanks'> = {
   events: [],
   crop: null,
   isOwnPaletteOnly: false,
+  floorFrames: null,
 };
 
 export const FFA_FRAMES: readonly FfaStandFrame[] = [
   {
     ...BASE,
     id: 'floor-50',
-    title: 'пол-подложка карты 50 вокруг точки',
+    title: 'пол карты 50 кусками поверх подложки вокруг точки',
     screens: BOTH,
     myId: null,
     focus: { x: 1300, y: 900 },
     tanks: [],
     hasKits: false,
     zoneTimeS: null,
+  },
+  {
+    ...BASE,
+    id: 'floor-seam',
+    title: 'стык четырёх кусков при дробном положении камеры: стена с тенью через шов',
+    screens: BOTH,
+    myId: null,
+    focus: { x: SEAM.x + SEAM_CAMERA_SHIFT.x, y: SEAM.y + SEAM_CAMERA_SHIFT.y },
+    tanks: [],
+    hasKits: false,
+    zoneTimeS: null,
+    crop: { kind: 'focus', x: SEAM.x, y: SEAM.y },
+  },
+  {
+    ...BASE,
+    id: 'floor-pending',
+    title: 'перестановка камеры: готовы четыре куска у центра, остальное — подложка',
+    screens: PHONE,
+    myId: null,
+    focus: { x: 1800, y: 760 },
+    tanks: [],
+    hasKits: false,
+    zoneTimeS: null,
+    floorFrames: PENDING_FLOOR_FRAMES,
   },
   {
     ...BASE,

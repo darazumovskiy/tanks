@@ -172,6 +172,29 @@ function hunt(shooter: TestClient, snapshot: FfaSnapshotMessage, shooterId: numb
   shooter.input(enemy?.isAlive === true ? aimAt(me, enemy) : fidget());
 }
 
+// Снимки у теста отстают от сервера, а команда действует до следующей: башня, повёрнутая по снимку, проскочит цель.
+// Поэтому башня поворачивается шагами и каждый раз останавливается; направление проверяется по снимку после остановки.
+// Снаряд от соперника (угол больше прямого) долетает до края поля, а не гибнет на чужом танке.
+async function turnAway(shooter: Entered, enemyId: number): Promise<void> {
+  const deadline = Date.now() + SCRIPT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const stopSeq = shooter.client.input(STILL);
+    const stopped = await waitFor(shooter.client, MessageType.FfaSnapshot, (message) => message.ackSeq >= stopSeq);
+    const me = tankOf(stopped, shooter.welcome.playerId);
+    const enemy = tankOf(stopped, enemyId);
+    if (me === undefined || enemy === undefined) {
+      throw new Error('нет танков в снимке');
+    }
+    const toEnemy = Math.atan2(enemy.y - me.y, enemy.x - me.x);
+    if (Math.abs(normalizeAngle(me.turret - toEnemy)) > Math.PI / 2) {
+      return;
+    }
+    const turnSeq = shooter.client.input({ ...STILL, turretTurn: 1 });
+    await waitFor(shooter.client, MessageType.FfaSnapshot, (message) => message.ackSeq >= turnSeq);
+  }
+  throw new Error('башня не отвернулась от соперника');
+}
+
 async function fightPair(statsA: Stats = DEFAULT_STATS, statsB: Stats = DEFAULT_STATS): Promise<[Entered, Entered]> {
   const a = await enter('ffa10', { nickname: 'А', stats: statsA });
   const b = await enter('ffa10', { nickname: 'Б', stats: statsB });
@@ -345,16 +368,9 @@ describe('бой', () => {
   it('выстрел: рождение у всех, отскок от края со скоростью после отскока, гибель', async () => {
     await startApp();
     const [a, b] = await fightPair();
-    // Стреляет от соперника: снаряд долетит до края поля, а не погибнет на чужом танке.
-    const born = await waitFor(b.client, MessageType.FfaSnapshot, (snapshot) => {
-      const me = tankOf(snapshot, a.welcome.playerId);
-      const enemy = tankOf(snapshot, b.welcome.playerId);
-      if (me !== undefined && enemy !== undefined) {
-        a.client.input(aimAt(me, { x: 2 * me.x - enemy.x, y: 2 * me.y - enemy.y }));
-        a.client.takeQueued();
-      }
-      return snapshot.births.length > 0;
-    });
+    await turnAway(a, b.welcome.playerId);
+    a.client.input({ ...STILL, isFiring: true });
+    const born = await waitFor(b.client, MessageType.FfaSnapshot, (snapshot) => snapshot.births.length > 0);
     a.client.input(STILL);
     const birth = born.births[0];
     expect(birth?.owner).toBe(a.welcome.playerId);
@@ -630,15 +646,9 @@ describe('бездействие', () => {
       8000,
     );
     expect(cleared.self.idleTicksLeft).toBeNull();
-    const error = await waitFor(
-      idle.client,
-      MessageType.Error,
-      () => {
-        keepBusy();
-        return true;
-      },
-      15_000,
-    );
+    // Очередь второго больше не сбрасывается: состав без вышедшего приходит ему в тот же тик, что ошибка — первому.
+    // Второй последний раз сменил команду позже первого — выйдет за бездействие позже, когда состав уже у него.
+    const error = await waitFor(idle.client, MessageType.Error, () => true, 15_000);
     expect(error.code).toBe(ErrorCode.Idle);
     expect(await idle.client.closed()).toBe(true);
     const roster = await waitFor(busy.client, MessageType.FfaRoster, (message) => message.players.length === 1, 8000);

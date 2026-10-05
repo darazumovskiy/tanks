@@ -59,6 +59,8 @@ export interface FfaGameOptions {
 
 export interface FfaRendererLike {
   readonly screen: FfaScreen;
+  readonly floorChunks: number;
+  readonly floorMemoryMb: number;
   draw(input: FfaDrawInput): void;
 }
 
@@ -320,6 +322,8 @@ export class FfaGame {
       feed: [...session.feed],
       spectating: this.spectating,
       isAutoFiring: this.input.isAutoFiring,
+      floorChunks: this.renderer.floorChunks,
+      floorMemoryMb: this.renderer.floorMemoryMb,
       fps: this.fps,
       worstFrameMs: this.worstFrameMs,
     };

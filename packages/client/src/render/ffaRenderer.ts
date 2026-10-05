@@ -6,8 +6,8 @@ import { aimLineStyleById } from './aimLineStyles.js';
 import { isInView, type Camera } from './camera.js';
 import type { Effects, FxBullet } from './effects.js';
 import { FieldRenderer, type FieldScene, type SceneTank } from './field.js';
-import { createFfaUnderlay, UNDERLAY_SCALE } from './ffaFloor.js';
 import { ScreenLayers, screenOf, type DebugReadout } from './screenLayers.js';
+import { TiledFloor } from './tiledFloor.js';
 import { rgba, SIDE_COLORS } from './view.js';
 
 // Свой танк и свои снаряды — акцент, все чужие — цвет противника; бот — тот же цвет с отметкой у ника.
@@ -86,7 +86,7 @@ export class FfaRenderer {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly field: FieldRenderer;
   private readonly layers: ScreenLayers;
-  private readonly underlay: HTMLCanvasElement;
+  private readonly floor: TiledFloor;
   private pixelRatio = 1;
 
   constructor(
@@ -96,6 +96,7 @@ export class FfaRenderer {
     private readonly map: FfaMap,
     private readonly viewport: () => Viewport = windowViewport,
     palette: readonly string[] = FFA_PALETTE,
+    floorClock: () => number = () => performance.now(),
   ) {
     const ctx = canvas.getContext('2d');
     if (ctx === null) {
@@ -104,7 +105,7 @@ export class FfaRenderer {
     this.ctx = ctx;
     this.field = new FieldRenderer(ctx, effects, palette);
     this.layers = new ScreenLayers(ctx, effects, settings);
-    this.underlay = createFfaUnderlay(map);
+    this.floor = new TiledFloor(map, floorClock);
     this.resize();
     window.addEventListener('resize', () => {
       this.resize();
@@ -113,6 +114,19 @@ export class FfaRenderer {
 
   get screen(): FfaScreen {
     return { width: this.canvas.width, height: this.canvas.height, pixelRatio: this.pixelRatio };
+  }
+
+  get floorChunks(): number {
+    return this.floor.chunkCount;
+  }
+
+  get floorMemoryMb(): number {
+    return this.floor.memoryMb;
+  }
+
+  // Следующий кадр собирает пол кусками с нуля, как после перестановки камеры.
+  clearFloor(): void {
+    this.floor.clear();
   }
 
   draw(input: FfaDrawInput): void {
@@ -145,8 +159,8 @@ export class FfaRenderer {
     return {
       field: { width: map.width, height: map.height },
       borderWidth: BORDER_WIDTH,
-      floor: (ctx) => {
-        this.drawUnderlay(ctx, camera);
+      floor: (ctx, floorCamera) => {
+        this.floor.draw(ctx, floorCamera);
       },
       zone: {
         x: map.width / 2,
@@ -185,31 +199,6 @@ export class FfaRenderer {
       label,
       isBot,
     };
-  }
-
-  // Только часть подложки под окном камеры с запасом на тряску.
-  private drawUnderlay(ctx: CanvasRenderingContext2D, camera: Camera): void {
-    const { width, height } = this.underlay;
-    const left = Math.max(0, Math.floor((camera.x - CULL_MARGIN) * UNDERLAY_SCALE));
-    const top = Math.max(0, Math.floor((camera.y - CULL_MARGIN) * UNDERLAY_SCALE));
-    const right = Math.min(width, Math.ceil((camera.x + camera.width + CULL_MARGIN) * UNDERLAY_SCALE));
-    const bottom = Math.min(height, Math.ceil((camera.y + camera.height + CULL_MARGIN) * UNDERLAY_SCALE));
-    if (right <= left || bottom <= top) {
-      return;
-    }
-    const sourceWidth = right - left;
-    const sourceHeight = bottom - top;
-    ctx.drawImage(
-      this.underlay,
-      left,
-      top,
-      sourceWidth,
-      sourceHeight,
-      left / UNDERLAY_SCALE,
-      top / UNDERLAY_SCALE,
-      sourceWidth / UNDERLAY_SCALE,
-      sourceHeight / UNDERLAY_SCALE,
-    );
   }
 
   private drawShields(ctx: CanvasRenderingContext2D, tanks: readonly FfaViewTank[], myId: number | null): void {

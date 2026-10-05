@@ -36,6 +36,7 @@ export default defineConfig({
         'packages/client/src/duelPresenter.ts',
         'packages/client/src/ffa/{session,ffaPrediction,ffaCamera,fxPolicy}.ts',
         'packages/client/src/render/stampDecals.ts',
+        'packages/client/src/render/floorChunks.ts',
         'packages/client/src/fxLab/{scenes,styleParams,paramPanel,contactSheet}.ts',
         'packages/client/src/clientInfo.ts',
         'packages/client/src/telemetry.ts',
@@ -71,6 +72,12 @@ export default defineConfig({
           lines: 95,
         },
         'packages/client/src/{ffa/session,ffa/ffaPrediction,ffa/ffaCamera,ffa/fxPolicy,render/stampDecals}.ts': {
+          statements: 95,
+          branches: 90,
+          functions: 95,
+          lines: 95,
+        },
+        'packages/client/src/render/floorChunks.ts': {
           statements: 95,
           branches: 90,
           functions: 95,

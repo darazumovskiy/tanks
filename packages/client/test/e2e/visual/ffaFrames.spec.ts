@@ -10,11 +10,21 @@ interface FfaFrameInfo {
   screens: string[];
 }
 
+interface FloorCheckReport {
+  redrawDiff: number;
+  junctionDiff: number;
+  holes: number;
+  borderCovered: number;
+  screensChecked: number;
+  shakenHoles: number;
+}
+
 interface FfaFramesApi {
   frames: FfaFrameInfo[];
   ready: () => Promise<void>;
   show: (frameId: string, screenId: string) => void;
   snapshot: () => string;
+  floorChecks: () => FloorCheckReport;
 }
 
 declare global {
@@ -35,6 +45,8 @@ const PHONE: BrowserContextOptions = {
 const DESKTOP: BrowserContextOptions = { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 };
 const EXPECTED_FRAMES: FfaFrameInfo[] = [
   { id: 'floor-50', screens: ['phone', 'desktop'] },
+  { id: 'floor-seam', screens: ['phone', 'desktop'] },
+  { id: 'floor-pending', screens: ['phone'] },
   { id: 'crowd-50', screens: ['phone'] },
   { id: 'zone-50', screens: ['phone'] },
   { id: 'shield-shake', screens: ['phone'] },
@@ -77,6 +89,22 @@ test('кадры толпы совпадают с эталонами в любо
   expect(frames).toEqual(EXPECTED_FRAMES);
   await snapshotFrames(page, frames);
   await snapshotFrames(page, [...frames].reverse());
+  await context.close();
+});
+
+// Четыре разрешения; на экране — четыре масштаба, стык кусков и оба угла поля, по шесть дробных сдвигов камеры;
+// полная отрисовка с дробной тряской, пока куски не готовы. Стык — до 1/255: Chromium тестов без видеокарты.
+test('пол кусками: кусок дважды одинаков, стык равен цельной отрисовке, нет щелей и дыр под тряской, кромка открыта', async ({
+  browser,
+}) => {
+  const context = await browser.newContext(DESKTOP);
+  const page = await context.newPage();
+  await page.goto(`${server.baseUrl}/?lab=frames&set=ffa&seed=${String(SEED)}`);
+  await page.waitForFunction(() => 'tanksFfaFrames' in window);
+  await page.evaluate(() => window.tanksFfaFrames.ready());
+  const report = await page.evaluate(() => window.tanksFfaFrames.floorChecks());
+  expect(report).toMatchObject({ redrawDiff: 0, holes: 0, borderCovered: 0, screensChecked: 72, shakenHoles: 0 });
+  expect(report.junctionDiff).toBeLessThanOrEqual(1);
   await context.close();
 });
 
