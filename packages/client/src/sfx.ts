@@ -11,7 +11,30 @@ interface Audio {
   noise: AudioBuffer;
 }
 
+// Сколько секунд звучит каждый звук: от начала до остановки последнего источника в его синтезе ниже.
+export const SOUND_DURATIONS: Readonly<Record<SoundName, number>> = {
+  shot: 0.21,
+  ricochet: 0.21,
+  impact: 0.13,
+  hit: 0.23,
+  zoneTick: 0.11,
+  death: 1.45,
+  clash: 0.35,
+  pickup: 0.33,
+  beep: 0.17,
+  go: 0.45,
+  alarm: 0.83,
+  win: 0.67,
+};
+
+// Прозвучавший звук: его можно заглушить раньше конца.
+export interface Voice {
+  stop(): void;
+}
+
 const DUEL_PAN_LIMIT = 0.8;
+// Заглушённый звук гаснет за доли секунды, а не обрывается щелчком.
+const VOICE_RELEASE_S = 0.02;
 
 // Панорама дуэли — по месту на поле: всё поле видно, левый край слева.
 function duelPan(x: number): number {
@@ -116,80 +139,97 @@ export class Sfx {
     oscillator.stop(t + duration + 0.05);
   }
 
-  // pan — от −1 (слева) до 1 (справа); volume — множитель громкости звука.
-  play(name: SoundName, pan = 0, volume = 1): void {
+  // pan — от −1 (слева) до 1 (справа); volume — множитель громкости звука. null — звук не прозвучал: выключен,
+  // вкладка скрыта или звук ещё не разблокирован.
+  play(name: SoundName, pan = 0, volume = 1): Voice | null {
     const audio = this.audio;
     if (audio === null || this.isMuted || this.isHidden()) {
-      return;
+      return null;
     }
+    const output = this.synth(audio, name, pan, volume);
+    return {
+      stop: (): void => {
+        output.gain.setTargetAtTime(0, audio.ctx.currentTime, VOICE_RELEASE_S);
+      },
+    };
+  }
+
+  // Выход звука — общий узел громкости и панорамы всех его источников.
+  private synth(audio: Audio, name: SoundName, pan: number, volume: number): GainNode {
     const t = audio.ctx.currentTime;
     switch (name) {
       case 'shot': {
         const o = this.out(audio, pan, 0.32 * volume);
         this.noiseBurst(audio, o, t, 0.14, 'lowpass', 2600, 400);
         this.tone(audio, o, t, 0.16, 'sine', 140, 45);
-        break;
+        return o;
       }
       case 'ricochet': {
         const o = this.out(audio, pan, 0.12 * volume);
         this.tone(audio, o, t, 0.16, 'sine', 2600 + Math.random() * 600, 1300);
         this.noiseBurst(audio, o, t, 0.05, 'highpass', 3000, 5000);
-        break;
+        return o;
       }
-      case 'impact':
-        this.noiseBurst(audio, this.out(audio, pan, 0.12 * volume), t, 0.08, 'bandpass', 1200, 500, 2);
-        break;
+      case 'impact': {
+        const o = this.out(audio, pan, 0.12 * volume);
+        this.noiseBurst(audio, o, t, 0.08, 'bandpass', 1200, 500, 2);
+        return o;
+      }
       case 'hit': {
         const o = this.out(audio, pan, 0.35 * volume);
         this.noiseBurst(audio, o, t, 0.18, 'bandpass', 1400, 400, 1.5);
         this.tone(audio, o, t, 0.12, 'square', 190, 90, 0.4);
-        break;
+        return o;
       }
-      case 'zoneTick':
-        this.tone(audio, this.out(audio, pan, 0.05 * volume), t, 0.06, 'sawtooth', 260, 200);
-        break;
+      case 'zoneTick': {
+        const o = this.out(audio, pan, 0.05 * volume);
+        this.tone(audio, o, t, 0.06, 'sawtooth', 260, 200);
+        return o;
+      }
       case 'death': {
         const o = this.out(audio, pan, 0.7 * volume);
         this.noiseBurst(audio, o, t, 1.4, 'lowpass', 1800, 90);
         this.tone(audio, o, t, 0.9, 'sine', 90, 28);
         this.noiseBurst(audio, o, t + 0.05, 0.5, 'bandpass', 700, 200, 1);
-        break;
+        return o;
       }
       case 'clash': {
         const o = this.out(audio, pan, 0.2 * volume);
         this.tone(audio, o, t, 0.3, 'triangle', 1700, 1500);
         this.tone(audio, o, t, 0.25, 'triangle', 2550, 2300, 0.6);
-        break;
+        return o;
       }
       case 'pickup': {
         const o = this.out(audio, pan, 0.18 * volume);
         [660, 880, 1320].forEach((frequency, index) => {
           this.tone(audio, o, t + index * 0.07, 0.14, 'sine', frequency, frequency);
         });
-        break;
+        return o;
       }
-      case 'beep':
-        this.tone(audio, this.out(audio, pan, 0.2 * volume), t, 0.12, 'sine', 880, 880);
-        break;
+      case 'beep': {
+        const o = this.out(audio, pan, 0.2 * volume);
+        this.tone(audio, o, t, 0.12, 'sine', 880, 880);
+        return o;
+      }
       case 'go': {
         const o = this.out(audio, pan, 0.25 * volume);
         this.tone(audio, o, t, 0.4, 'sawtooth', 660, 1320, 0.5);
         this.tone(audio, o, t, 0.4, 'sine', 1320, 1320);
-        break;
+        return o;
       }
       case 'alarm': {
         const o = this.out(audio, pan, 0.14 * volume);
         for (let i = 0; i < 3; i++) {
           this.tone(audio, o, t + i * 0.28, 0.22, 'sawtooth', 330, 220);
         }
-        break;
+        return o;
       }
       case 'win': {
         const o = this.out(audio, pan, 0.2 * volume);
         [523, 659, 784, 1046].forEach((frequency, index) => {
           this.tone(audio, o, t + index * 0.09, 0.35, 'triangle', frequency, frequency);
         });
-        break;
+        return o;
       }
     }
   }

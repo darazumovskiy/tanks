@@ -14,7 +14,8 @@ const CROSSING: AimLineEnemy = { x: 700, y: 450, heading: Math.PI / 2, speed: 15
 const SWEEP_STEP = 0.0005;
 
 function input(turret: number, enemy: AimLineEnemy | null, overrides: Partial<ZoneFireInput> = {}): ZoneFireInput {
-  return { field: POLYGON, shooter: { ...SHOOTER, turret }, bulletSpeed: BULLET_SPEED, enemy, ...overrides };
+  const targets = enemy === null ? [] : [enemy];
+  return { field: POLYGON, shooter: { ...SHOOTER, turret }, bulletSpeed: BULLET_SPEED, targets, ...overrides };
 }
 
 function angleTo(point: { x: number; y: number }): number {
@@ -72,6 +73,14 @@ describe('isShotInZone', () => {
 
   it('без противника — не в зоне', () => {
     expect(isShotInZone(input(0, null))).toBe(false);
+  });
+
+  it('несколько целей: в зоне, если путь проходит по любой из них, в каком бы порядке они ни пришли', () => {
+    const aside: AimLineEnemy = { x: 500, y: 750, heading: 0, speed: 0 };
+    const far: AimLineEnemy = { ...STANDING, x: SHOOTER.x + 700 };
+    expect(isShotInZone(input(0, null, { targets: [aside, STANDING] }))).toBe(true);
+    expect(isShotInZone(input(0, null, { targets: [STANDING, aside] }))).toBe(true);
+    expect(isShotInZone(input(0, null, { targets: [aside, far], field: OPEN_FIELD }))).toBe(false);
   });
 
   it('дуло в стене — не в зоне', () => {

@@ -63,7 +63,7 @@
 |---|---|
 | `packages/shared/src/engine/trajectory.ts` | `traceShot` — отрезки пути; `isTraceReturning(segments, shooter, target)` — возврат в свой корпус с учётом противника на первом отрезке; `isShotReturning(walls, shooter, turret, bulletSpeed, target)` — то же от стрелка; `TANK_HIT_RADIUS` |
 | `packages/shared/src/engine/lead.ts` | `leadPoint(shooter, target, velocity, bulletSpeed)` — точка упреждения, общая для клиента и следующих помощников |
-| `packages/client/src/aimLine.ts` | `computeAimLine({ walls, shooter, bulletSpeed, enemy, hasLeadHint })` → `{ segments, state, mark, isReturning }`; `enemyLeadPoint` — точка упреждения по `heading` и `speed` противника, общая с огнём по цели ([touch-controls.md](touch-controls.md)); `AIM_LINE_TAIL`, `LEAD_MIN_SPEED` |
+| `packages/client/src/aimLine.ts` | `computeAimLine({ field, shooter, bulletSpeed, targets, hasLeadHint })` → `{ segments, state, mark, isReturning }`: цели — живые танки в кадре, дуэль передаёт противника или пусто, бой толпы — всех чужих в окне ([ffa-client.md](ffa-client.md)); «на нём» — первый танк, в который входит путь; `firstTargetOnPath` — этот танк для предохранителя и отладки толпы; `enemyLeadPoint` — точка упреждения по `heading` и `speed` противника, общая с огнём по цели ([touch-controls.md](touch-controls.md)); `AIM_LINE_TAIL`, `LEAD_MIN_SPEED` |
 | `packages/client/src/admin.ts` | `resolveAdminMode(search, storage)` — разбор `?admin` и память на устройстве |
 | `packages/client/src/settings.ts` | `hasAimLine`, `hasLeadHint`; `isAdminOnly` у поля; `SettingsStore(storage, defaults, { isAdmin })` обнуляет админские поля без права, `store.isAdmin` |
 | `packages/client/src/settingsPanel.ts` | Группа «Для настройки» с админскими флажками — только при `store.isAdmin` |

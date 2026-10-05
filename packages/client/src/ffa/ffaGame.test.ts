@@ -3,6 +3,7 @@ import {
   createWorld,
   DEFAULT_RULES,
   DEFAULT_STATS,
+  deriveStats,
   ffaMap,
   ffaViewReach,
   FFA,
@@ -10,6 +11,7 @@ import {
   makeTank,
   normalizeAngle,
   stepWorld,
+  TANK_HIT_RADIUS,
   type Action,
   type FfaPlayerState,
   type Tank,
@@ -34,10 +36,11 @@ import type { SocketLike } from '../net.js';
 import { Effects } from '../render/effects.js';
 import type { FfaDrawInput } from '../render/ffaRenderer.js';
 import { StampDecals } from '../render/stampDecals.js';
-import { defaultSettings } from '../settings.js';
-import { Sfx } from '../sfx.js';
+import { enemyLeadPoint } from '../aimLine.js';
+import { defaultSettings, type Settings } from '../settings.js';
+import { Sfx, SOUND_DURATIONS } from '../sfx.js';
 import { Telemetry } from '../telemetry.js';
-import { installFakeAudio, type SoundOutput } from '../testing/fakeAudio.js';
+import { installFakeAudio, type FakeAudio } from '../testing/fakeAudio.js';
 import { snapshotOf } from '../testing/ffaServer.js';
 import { shownText } from '../testing/hudText.js';
 import { FfaGame, type FfaRendererLike, type TokenStore } from './ffaGame.js';
@@ -140,7 +143,7 @@ let clock = 0;
 let pendingFrame: ((now: number) => void) | null = null;
 
 // Страница боя как в index.html: холст, корень интерфейса толпы и панель настроек — соседи.
-function makeGame(storedToken = '', isAdmin = false, isTouch = false): Harness {
+function makeGame(storedToken = '', isAdmin = false, isTouch = false, settings: Partial<Settings> = {}): Harness {
   document.body.innerHTML = '';
   const stage = document.createElement('div');
   const canvas = document.createElement('canvas');
@@ -170,7 +173,7 @@ function makeGame(storedToken = '', isAdmin = false, isTouch = false): Harness {
       stats: DEFAULT_STATS,
       canvas,
       hud,
-      settings: { ...defaultSettings(), hasRicochetGuard: false },
+      settings: { ...defaultSettings(), hasRicochetGuard: false, ...settings },
       isTouchDevice: isTouch,
       isAdmin,
       telemetry: new Telemetry(CLIENT_INFO, { beacon: () => true }),
@@ -370,7 +373,7 @@ function setHidden(isHidden: boolean): void {
   document.dispatchEvent(new Event('visibilitychange'));
 }
 
-let audio: { outputs: SoundOutput[]; restore: () => void };
+let audio: FakeAudio;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -1496,5 +1499,229 @@ describe('интерфейс матча', () => {
     harness.frames(1);
     click(harness, '.ffa-fatal', 'На главную');
     expect(harness.calls).toEqual(['home']);
+  });
+});
+
+describe('помощники боя', () => {
+  interface ArrowState {
+    id: number;
+  }
+
+  it('стрелки на живых чужих за кадром и линия «на нём» с номером цели в отладке; без линии — стрелки остаются', () => {
+    const harness = makeGame();
+    enterFight(
+      harness,
+      arena([tank(ME, 300, 1000), tank(8, 500, 700), tank(ENEMY, 700, 1000), tank(6, 2200, 200), tank(7, 2200, 1200)]),
+    );
+    harness.frames(2);
+    expect((harness.state().arrows as ArrowState[]).map((arrow) => arrow.id)).toEqual([7, 6]);
+    expect(harness.state().aimLine).toEqual({ state: 'onTarget', targetId: ENEMY });
+    expect(harness.renderer.last?.aimLine?.state).toBe('onTarget');
+    expect(harness.renderer.last?.arrows.map((arrow) => arrow.id)).toEqual([7, 6]);
+
+    const lineOff = makeGame('', false, false, { hasAimLine: false });
+    enterFight(lineOff, arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000), tank(6, 2200, 200)]));
+    lineOff.frames(2);
+    expect(lineOff.state().aimLine).toBeNull();
+    expect((lineOff.state().arrows as ArrowState[]).map((arrow) => arrow.id)).toEqual([6]);
+  });
+
+  it('линия без цели на пути — «ничего» без номера; свой танк подбит — ни линии, ни стрелок', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1200), tank(6, 2200, 200)]);
+    enterFight(harness, world);
+    harness.frames(2);
+    expect(harness.state().aimLine).toEqual({ state: 'none', targetId: null });
+    const own = world.tanks.find((candidate) => candidate.id === ME);
+    if (own !== undefined) {
+      own.isAlive = false;
+      own.hp = 0;
+    }
+    world.tick++;
+    harness.socket().receive(snapshotOf(world, { state: 'wreck', killerId: ENEMY }));
+    harness.frames(2);
+    expect(harness.state().aimLine).toBeNull();
+    expect(harness.state().arrows).toEqual([]);
+    expect(harness.renderer.last?.aimLine).toBeNull();
+  });
+
+  it('отсчёт со своим живым танком — ни линии, ни стрелок; начался бой — появились', () => {
+    const harness = makeGame();
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster([ME, ENEMY, 6]));
+    socket.receive(state(FfaPhase.Countdown, 90));
+    socket.receive(matchStart());
+    socket.receive(snapshotOf(arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000), tank(6, 2200, 200)])));
+    harness.frames(2);
+    expect(harness.state()).toMatchObject({ screen: 'countdown', aimLine: null, arrows: [] });
+    expect(harness.renderer.last?.aimLine).toBeNull();
+    expect(harness.renderer.last?.arrows).toEqual([]);
+    socket.receive(state(FfaPhase.Fight, 3600));
+    harness.frames(2);
+    expect(harness.state()).toMatchObject({ screen: 'fight', aimLine: { state: 'onTarget', targetId: ENEMY } });
+    expect((harness.state().arrows as ArrowState[]).map((arrow) => arrow.id)).toEqual([6]);
+  });
+
+  it('зритель — ни линии, ни стрелок: враги в кадре цели и за ним', () => {
+    const harness = makeGame();
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster([ME, ENEMY, 6, 7]));
+    socket.receive(state(FfaPhase.Fight, 600));
+    socket.receive(matchStart());
+    const world = arena([tank(ENEMY, 300, 1000), tank(6, 700, 1000), tank(7, 2200, 200)]);
+    socket.receive(snapshotOf(world, { state: 'spectator', killerId: ENEMY }));
+    harness.frames(2);
+    expect(harness.state()).toMatchObject({ screen: 'spectator', aimLine: null, arrows: [] });
+    expect(harness.renderer.last?.aimLine).toBeNull();
+    expect(harness.renderer.last?.arrows).toEqual([]);
+  });
+
+  // Башня вверх: окно камеры сдвинуто вверх на 126 и кончается в 576 над танком; оба врага ближе предела огня по цели.
+  it('огонь по цели открыт по живому чужому в окне камеры; враг на пути за окном огня не открывает', () => {
+    const fired = (enemyY: number): boolean => {
+      const harness = makeGame('', false, false, { hasZoneFire: true });
+      enterFight(harness, arena([tank(ME, 1800, 1000, -Math.PI / 2), tank(ENEMY, 1800, enemyY)]));
+      harness.game.toggleAutoFire();
+      harness.frames(6);
+      return harness.socket().inputs.some((input) => input.action.isFiring);
+    };
+    expect(fired(600)).toBe(true);
+    expect(fired(400)).toBe(false);
+  });
+
+  // Выстрел в край карты вернётся в свой корпус; враг между танком и краем примет снаряд на себя.
+  it('предохранитель при выключенной линии учитывает первый танк на пути: враг перед стеной — выстрел не сдержан', () => {
+    const shoot = (tanks: Tank[]): { isFiring: boolean; isGuarded: boolean } => {
+      const harness = makeGame('', false, false, { hasRicochetGuard: true, hasAimLine: false });
+      enterFight(harness, arena(tanks));
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
+      harness.frames(6);
+      window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space' }));
+      return {
+        isFiring: harness.socket().inputs.some((input) => input.action.isFiring),
+        isGuarded: harness.renderer.last?.controls.isShotGuarded ?? false,
+      };
+    };
+    expect(shoot([tank(ME, 260, 1000, Math.PI), tank(ENEMY, 120, 1000)])).toEqual({ isFiring: true, isGuarded: false });
+    expect(shoot([tank(ME, 260, 1000, Math.PI), tank(ENEMY, 260, 400)])).toEqual({ isFiring: false, isGuarded: true });
+  });
+
+  it('«упреждаю» в толпе не показывается даже с флажком упреждения', () => {
+    const harness = makeGame('', false, false, { hasLeadHint: true });
+    const crossing = tank(ENEMY, 700, 900, Math.PI / 2);
+    crossing.speed = 150;
+    const world = arena([tank(ME, 300, 1000), crossing]);
+    enterFight(harness, world);
+    harness.frames(2);
+    const seen = snapshotOf(world).tanks.find((candidate) => candidate.id === ENEMY);
+    if (seen === undefined) {
+      throw new Error('врага нет в снимке');
+    }
+    const lead = enemyLeadPoint({ x: 300, y: 1000 }, seen, deriveStats(DEFAULT_STATS).bulletSpeed);
+    expect(Math.abs((lead?.y ?? 0) - 1000)).toBeLessThan(TANK_HIT_RADIUS);
+    expect(Math.abs(seen.y - 1000)).toBeGreaterThan(TANK_HIT_RADIUS);
+    expect(harness.state().aimLine).toEqual({ state: 'none', targetId: null });
+  });
+});
+
+describe('звук толпы', () => {
+  const SHOT_GAIN = 0.32;
+
+  function gains(): number[] {
+    return audio.outputs.map((output) => output.gain);
+  }
+
+  function unlockedGame(): Harness {
+    const harness = makeGame();
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyQ' }));
+    return harness;
+  }
+
+  // Башня вправо: точка камеры — в 240 правее танка.
+  it('свой танк на поле — громкость от него; вне кадра — тишина', () => {
+    const harness = unlockedGame();
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1200)]);
+    enterFight(harness, world);
+    step(world);
+    harness.socket().receive(
+      snapshotOf(world, {
+        events: [event('shot', ENEMY, 300, 1000), event('shot', ENEMY, 540, 1000), event('shot', ENEMY, 2200, 200)],
+      }),
+    );
+    expect(gains()).toEqual([SHOT_GAIN, SHOT_GAIN * (1 - (0.75 * 240) / 918)]);
+  });
+
+  it('свой танк подбит — громкость от точки камеры', () => {
+    const harness = unlockedGame();
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1200)]);
+    enterFight(harness, world);
+    const own = world.tanks.find((candidate) => candidate.id === ME);
+    if (own !== undefined) {
+      own.isAlive = false;
+      own.hp = 0;
+    }
+    step(world);
+    harness.socket().receive(snapshotOf(world, { state: 'wreck', killerId: ENEMY }));
+    harness.frames(1);
+    const center = harness.state().viewCenter as { x: number; y: number };
+    step(world);
+    harness.socket().receive(
+      snapshotOf(world, {
+        state: 'wreck',
+        killerId: ENEMY,
+        events: [event('shot', ENEMY, center.x, center.y), event('shot', ENEMY, center.x - 459, center.y)],
+      }),
+    );
+    expect(gains()).toEqual([SHOT_GAIN, SHOT_GAIN * 0.625]);
+  });
+
+  it('зритель — громкость от цели, а не от точки камеры', () => {
+    const harness = unlockedGame();
+    const world = arena([tank(ENEMY, 1400, 650)]);
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster([ME, ENEMY]));
+    socket.receive(state(FfaPhase.Fight, 600));
+    socket.receive(matchStart());
+    for (let index = 0; index < 4; index++) {
+      step(world);
+      socket.receive(snapshotOf(world, { state: 'spectator', killerId: ENEMY }));
+    }
+    harness.frames(10);
+    expect(harness.state().spectating).toBe(ENEMY);
+    const center = harness.state().viewCenter as { x: number; y: number };
+    expect(center.x).toBeCloseTo(1640, 0);
+    step(world);
+    socket.receive(
+      snapshotOf(world, {
+        state: 'spectator',
+        killerId: ENEMY,
+        events: [event('shot', 6, 1400, 650), event('shot', 6, center.x, center.y)],
+      }),
+    );
+    expect(gains()).toEqual([SHOT_GAIN, SHOT_GAIN * (1 - (0.75 * Math.hypot(center.x - 1400, center.y - 650)) / 918)]);
+  });
+
+  it('не больше 8 голосов: девятый чужой молчит, свой вытесняет самый старый чужой; отзвучавшие освобождают место', () => {
+    const harness = unlockedGame();
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1200)]);
+    enterFight(harness, world);
+    step(world);
+    const others = Array.from({ length: 12 }, () => event('shot', ENEMY, 700, 1200));
+    harness.socket().receive(snapshotOf(world, { events: others }));
+    expect(audio.outputs).toHaveLength(8);
+    expect(harness.state().voices).toBe(8);
+    step(world);
+    harness.socket().receive(snapshotOf(world, { events: [event('shot', ME, 300, 1000)] }));
+    expect(audio.outputs).toHaveLength(9);
+    expect(audio.released).toEqual([audio.outputs[0]]);
+    expect(harness.state().voices).toBe(8);
+    clock += SOUND_DURATIONS.shot * 1000;
+    expect(harness.state().voices).toBe(0);
   });
 });

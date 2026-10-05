@@ -256,7 +256,12 @@ export class Game {
     const bulletSpeed = me.stats.bulletSpeed;
     const isInZone =
       this.options.settings.hasZoneFire &&
-      isShotInZone({ field, shooter: { x: me.x, y: me.y, turret: me.turret }, bulletSpeed, enemy });
+      isShotInZone({
+        field,
+        shooter: { x: me.x, y: me.y, turret: me.turret },
+        bulletSpeed,
+        targets: enemy === null ? [] : [enemy],
+      });
     return { isReturning: isShotReturning(field, me, me.turret, bulletSpeed, enemy), isInZone };
   }
 

@@ -52,7 +52,7 @@
 
 | Файл | Роль |
 |---|---|
-| `packages/client/src/zoneFire.ts` | `isShotInZone({ walls, shooter, bulletSpeed, enemy })` — чистая функция на `traceShot` и `leadPoint`: капсула корпус → упреждение, дистанция, расстояние между отрезками; `ZONE_FIRE_MAX_RANGE` |
+| `packages/client/src/zoneFire.ts` | `isShotInZone({ field, shooter, bulletSpeed, targets })` — чистая функция на `traceShot` и `leadPoint`: капсула корпус → упреждение, дистанция, расстояние между отрезками; в зоне — если путь заходит в зону любой цели (дуэль передаёт видимого противника или пусто); `ZONE_FIRE_MAX_RANGE` |
 | `packages/client/src/aimLine.ts` | `enemyLeadPoint(shooter, enemy, bulletSpeed)` — точка упреждения или `null` ниже порога скорости; общая для линии и зоны |
 | `packages/client/src/touch.ts` | `takePendingFire()` → `'none' | 'stick' | 'tap'`: тап отличим от выброса стика между чтениями |
 | `packages/client/src/input.ts` | `read(me, shot: ShotContext)`, `ShotContext { isReturning, isInZone }`; зона применяется к стику, авто-огню и выбросу стика, тап и мышь с пробелом — без зоны; `isZoneFiring` |

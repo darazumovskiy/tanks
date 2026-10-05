@@ -21,13 +21,17 @@ export interface AimLineEnemy extends Point {
   speed: number;
 }
 
-export interface AimLineInput {
+export interface AimPathInput {
+  shooter: Point;
+  bulletSpeed: number;
+  // Живые чужие танки в кадре; пусто — целей нет, линия без состояний.
+  targets: readonly AimLineEnemy[];
+  hasLeadHint: boolean;
+}
+
+export interface AimLineInput extends AimPathInput {
   field: Field;
   shooter: Point & { turret: number };
-  bulletSpeed: number;
-  // Живой противник в кадре; `null` — цели нет, линия без состояний.
-  enemy: AimLineEnemy | null;
-  hasLeadHint: boolean;
 }
 
 // Засечка на пути: где снаряд входит в круг цели, и направление пути в этой точке.
@@ -92,36 +96,80 @@ export function enemyLeadPoint(shooter: Point, enemy: AimLineEnemy, bulletSpeed:
   return leadPoint(shooter, enemy, velocity, bulletSpeed);
 }
 
-function leadTarget(input: AimLineInput): Point | null {
-  const { enemy } = input;
-  if (!input.hasLeadHint || enemy === null) {
+interface SegmentHit<T> {
+  target: T;
+  mark: AimMark;
+}
+
+// Из точек, в круг которых входит отрезок, — та, куда он входит раньше всех: её корпус принимает снаряд первым.
+// Отрезка нет (хвоста после отскока нет) — точки нет.
+function firstOnSegment<T extends Point>(segment: ShotSegment | null, targets: readonly T[]): SegmentHit<T> | null {
+  if (segment === null) {
     return null;
   }
-  return enemyLeadPoint(input.shooter, enemy, input.bulletSpeed);
+  let first: SegmentHit<T> | null = null;
+  let firstDistance = Infinity;
+  for (const target of targets) {
+    if (!isSegmentWithin(segment, target, TANK_HIT_RADIUS)) {
+      continue;
+    }
+    const mark = entryMark(segment, target, TANK_HIT_RADIUS);
+    const distance = Math.hypot(mark.x - segment.x1, mark.y - segment.y1);
+    if (distance < firstDistance) {
+      first = { target, mark };
+      firstDistance = distance;
+    }
+  }
+  return first;
+}
+
+// Первый танк на пути снаряда — на первом отрезке, иначе на хвосте после отскока; `null` — путь ни в кого не входит.
+export function firstTargetOnPath<T extends Point>(path: readonly ShotSegment[], targets: readonly T[]): T | null {
+  const [first, returning] = path;
+  if (first === undefined) {
+    return null;
+  }
+  const onFirst = firstOnSegment(first, targets);
+  if (onFirst !== null) {
+    return onFirst.target;
+  }
+  return firstOnSegment(tailOf(returning), targets)?.target ?? null;
+}
+
+function leadPoints(input: AimPathInput): Point[] {
+  if (!input.hasLeadHint) {
+    return [];
+  }
+  return input.targets.flatMap((target) => enemyLeadPoint(input.shooter, target, input.bulletSpeed) ?? []);
+}
+
+export function computeAimLine(input: AimLineInput): AimLine {
+  const { field, shooter, bulletSpeed } = input;
+  return aimLineOnPath(traceShot(field, shooter, shooter.turret, bulletSpeed).segments, input);
 }
 
 // Упреждение считается по прямой, поэтому проверяется только на первом отрезке: после отскока путь длиннее
-// прямой и формула не годится.
-export function computeAimLine(input: AimLineInput): AimLine {
-  const { field, shooter, bulletSpeed, enemy } = input;
-  const { segments } = traceShot(field, shooter, shooter.turret, bulletSpeed);
-  const first = segments[0];
+// прямой и формула не годится. Цель на первом отрезке принимает снаряд на себя — возврат в свой корпус не грозит.
+export function aimLineOnPath(path: readonly ShotSegment[], input: AimPathInput): AimLine {
+  const { shooter, targets } = input;
+  const [first, returning] = path;
   if (first === undefined) {
     return EMPTY;
   }
-  if (enemy !== null && isSegmentWithin(first, enemy, TANK_HIT_RADIUS)) {
-    const mark = entryMark(first, enemy, TANK_HIT_RADIUS);
-    return { segments: [cutAt(first, mark)], state: 'onTarget', mark, isReturning: false };
+  const onFirst = firstOnSegment(first, targets);
+  if (onFirst !== null) {
+    return { segments: [cutAt(first, onFirst.mark)], state: 'onTarget', mark: onFirst.mark, isReturning: false };
   }
-  const tail = tailOf(segments[1]);
+  const tail = tailOf(returning);
   const shown = tail === null ? [first] : [first, tail];
-  const isReturning = isTraceReturning(segments, shooter, enemy);
-  if (enemy !== null && tail !== null && isSegmentWithin(tail, enemy, TANK_HIT_RADIUS)) {
-    return { segments: shown, state: 'onTarget', mark: entryMark(tail, enemy, TANK_HIT_RADIUS), isReturning };
+  const isReturning = isTraceReturning(path, shooter, null);
+  const onTail = firstOnSegment(tail, targets);
+  if (onTail !== null) {
+    return { segments: shown, state: 'onTarget', mark: onTail.mark, isReturning };
   }
-  const lead = leadTarget(input);
-  if (lead !== null && isSegmentWithin(first, lead, TANK_HIT_RADIUS)) {
-    return { segments: shown, state: 'lead', mark: entryMark(first, lead, TANK_HIT_RADIUS), isReturning };
+  const lead = firstOnSegment(first, leadPoints(input));
+  if (lead !== null) {
+    return { segments: shown, state: 'lead', mark: lead.mark, isReturning };
   }
   return { segments: shown, state: 'none', mark: null, isReturning };
 }

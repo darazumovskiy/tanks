@@ -3,7 +3,8 @@ import type { FfaSnapshotEvent } from '@tanks/shared/protocol';
 import type { FrameScreenId } from './model.js';
 
 // Кадры эталонов толпы на карте 50: пол кусками поверх подложки, толпа из 12 танков, зона в начале сжатия с кромкой,
-// кольцо неуязвимости при тряске, рисунок танка цвета вне палитры. Положения подобраны мимо стен карты.
+// кольцо неуязвимости при тряске, рисунок танка цвета вне палитры, стрелки и линия выстрела. Положения подобраны мимо
+// стен карты.
 
 export interface StandTank {
   id: number;
@@ -54,6 +55,8 @@ export interface FfaStandFrame {
   isOwnPaletteOnly: boolean;
   // Пол кусками собирается с нуля за столько последних кадров, как после перестановки камеры; null — пол готов.
   floorFrames: number | null;
+  // Линия выстрела своего танка и стрелки на врагов за кадром, как в бою.
+  hasHelpers: boolean;
 }
 
 const PHONE: readonly FrameScreenId[] = ['phone'];
@@ -131,6 +134,7 @@ export const BASE: Omit<FfaStandFrame, 'id' | 'title' | 'screens' | 'tanks'> = {
   crop: null,
   isOwnPaletteOnly: false,
   floorFrames: null,
+  hasHelpers: false,
 };
 
 export const CROWD_FRAME: FfaStandFrame = {
@@ -147,6 +151,64 @@ export const CROWD_FRAME: FfaStandFrame = {
     bulletAhead(CROWD[11] ?? OWN, 90),
   ],
 };
+
+// Помощники боя: стрелки на врагов за кадром и линия выстрела по любому танку в окне. Свой танк смотрит вправо
+// по свободной полосе y = 1000; окно камеры телефона — x 890…2490, y 630…1370.
+const HELPERS: Omit<FfaStandFrame, 'id' | 'title' | 'tanks'> = { ...BASE, screens: PHONE, hasHelpers: true };
+
+const HELPER_FRAMES: readonly FfaStandFrame[] = [
+  {
+    ...HELPERS,
+    id: 'arrows-one',
+    title: 'одна стрелка: враг за кадром слева внизу; враг в кадре — без стрелки',
+    tanks: [OWN, { id: 2, name: 'Вася', x: 700, y: 1500, heading: 0.3, turret: 0.3 }, CROWD[4] ?? OWN],
+  },
+  {
+    ...HELPERS,
+    id: 'arrows-three',
+    title: 'три стрелки на ближайших за кадром, ближе — крупнее; четвёртый дальше — без стрелки',
+    tanks: [
+      OWN,
+      { id: 2, name: 'Вася', x: 1300, y: 1700, heading: -1.2, turret: -1.2 },
+      { id: 3, name: 'Петя', x: 400, y: 400, heading: 0.6, turret: 0.6 },
+      { id: 4, name: 'Оля', x: 2900, y: 900, heading: 3, turret: 3 },
+      { id: 5, name: 'Гена', x: 4200, y: 2400, heading: 2.5, turret: 2.5 },
+      { id: 6, name: 'Маша', x: 2000, y: 800, heading: 2, turret: 2.4 },
+    ],
+  },
+  {
+    ...HELPERS,
+    id: 'arrows-edge',
+    title:
+      'враг у самого края за кадром — стрелка у края; у верхнего края — ниже табло; враг у края в кадре — без стрелки',
+    tanks: [
+      OWN,
+      { id: 2, name: 'Вася', x: 2505, y: 1050, heading: Math.PI, turret: Math.PI },
+      { id: 3, name: 'Петя', x: 1800, y: 615, heading: 1.6, turret: 1.6 },
+      { id: 4, name: 'Оля', x: 900, y: 900, heading: 0, turret: 0.2 },
+    ],
+  },
+  {
+    ...HELPERS,
+    id: 'aim-one',
+    title: 'линия выстрела «на нём» на танке на пути, второй танк в кадре мимо линии',
+    tanks: [
+      OWN,
+      { id: 2, name: 'Вася', x: 1900, y: 1012, heading: Math.PI, turret: Math.PI - 0.1 },
+      { id: 3, name: 'Петя', x: 2150, y: 1220, heading: -2, turret: 2.8 },
+    ],
+  },
+  {
+    ...HELPERS,
+    id: 'aim-two',
+    title: 'два танка на линии выстрела — «на нём» на ближнем, линия кончается на его корпусе',
+    tanks: [
+      OWN,
+      { id: 2, name: 'Вася', x: 2250, y: 995, heading: Math.PI, turret: Math.PI },
+      { id: 3, name: 'Петя', x: 1820, y: 1010, heading: 2.6, turret: 2.9, isBot: true },
+    ],
+  },
+];
 
 export const FFA_FRAMES: readonly FfaStandFrame[] = [
   {
@@ -230,6 +292,7 @@ export const FFA_FRAMES: readonly FfaStandFrame[] = [
     crop: { kind: 'focus', x: OWN.x + 60, y: OWN.y },
     isOwnPaletteOnly: true,
   },
+  ...HELPER_FRAMES,
 ];
 
 // Пробный кадр до первого снимка: оба цвета танков на каждом рендере стенда.

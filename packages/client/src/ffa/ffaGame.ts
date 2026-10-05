@@ -2,7 +2,8 @@ import {
   DT,
   ffaMap,
   IDLE_ACTION,
-  isShotReturning,
+  isTraceReturning,
+  traceShot,
   type Action,
   type FfaMap,
   type FfaSize,
@@ -20,10 +21,12 @@ import {
   type FfaSnapshotMessage,
   type FfaWelcomeMessage,
 } from '@tanks/shared/protocol';
+import { aimLineOnPath, firstTargetOnPath, type AimLine } from '../aimLine.js';
+import { AudioMix, mixedSound } from '../audioMix.js';
 import { DiagLog } from '../diag.js';
 import { InputReader, type ShotContext } from '../input.js';
 import { NetClient, websocketUrl, type DisconnectReason, type SocketLike } from '../net.js';
-import { isInView, screenToWorld } from '../render/camera.js';
+import { isInView, screenToWorld, type Camera } from '../render/camera.js';
 import { Effects } from '../render/effects.js';
 import {
   FFA_OTHER_COLOR,
@@ -34,10 +37,12 @@ import {
 } from '../render/ffaRenderer.js';
 import { StampDecals } from '../render/stampDecals.js';
 import type { Settings } from '../settings.js';
-import { Sfx } from '../sfx.js';
+import { Sfx, SOUND_DURATIONS } from '../sfx.js';
 import type { Telemetry } from '../telemetry.js';
+import { isPathInZone } from '../zoneFire.js';
+import { edgeArrows, visibleEnemies, type EdgeArrow } from './arrows.js';
 import { FfaCamera, type FfaAim, type FfaFraming } from './ffaCamera.js';
-import { FfaPrediction, type FfaFrameView } from './ffaPrediction.js';
+import { FfaPrediction, type FfaFrameView, type FfaViewTank } from './ffaPrediction.js';
 import { FfaFxPolicy } from './fxPolicy.js';
 import { FfaHud } from './hud/hud.js';
 import { feedText, FfaSession, type FfaScreen as SessionScreen } from './session.js';
@@ -100,6 +105,15 @@ const SECOND_MS = 1000;
 const VIEW_MARGIN = 100;
 const EMPTY_VIEW: FfaFrameView = { tanks: [], bullets: [], kits: [], zoneRadius: 0 };
 
+// Помощники кадра: линия выстрела с номером танка «на нём» и стрелки на врагов за кадром.
+interface FieldHelpers {
+  aimLine: AimLine | null;
+  aimTargetId: number | null;
+  arrows: EdgeArrow[];
+}
+
+const NO_HELPERS: FieldHelpers = { aimLine: null, aimTargetId: null, arrows: [] };
+
 function sessionTokens(storage: Storage): TokenStore {
   return {
     read: (size) => storage.getItem(`${TOKEN_KEY_PREFIX}${String(size)}`) ?? '',
@@ -124,6 +138,7 @@ export class FfaGame {
   private readonly input: InputReader;
   private readonly camera = new FfaCamera();
   private readonly fxPolicy = new FfaFxPolicy();
+  private readonly audioMix = new AudioMix(SOUND_DURATIONS);
   private readonly diag: DiagLog;
   private readonly hud: FfaHud;
   private session: FfaSession;
@@ -131,6 +146,7 @@ export class FfaGame {
   private prediction: FfaPrediction | null = null;
   private framing: FfaFraming | null = null;
   private frameView: FfaFrameView = EMPTY_VIEW;
+  private helpers: FieldHelpers = NO_HELPERS;
   private seq = 0;
   private accumulator = 0;
   private lastFrame: number;
@@ -296,6 +312,12 @@ export class FfaGame {
       score: score === null ? null : { ...score },
       feed: session.hud(this.deps.now(), this.hud.layout).feed.map(feedText),
       spectating: session.spectating,
+      arrows: this.helpers.arrows.map((arrow) => ({ ...arrow })),
+      aimLine:
+        this.helpers.aimLine === null
+          ? null
+          : { state: this.helpers.aimLine.state, targetId: this.helpers.aimTargetId },
+      voices: this.audioMix.activeCount(this.deps.now()),
       isAutoFiring: this.input.isAutoFiring,
       floorChunks: this.renderer.floorChunks,
       floorMemoryMb: this.renderer.floorMemoryMb,
@@ -405,6 +427,8 @@ export class FfaGame {
       return;
     }
     const myId = this.session.playerId;
+    const listener = this.listener();
+    const now = this.deps.now();
     this.effects.onSnapshot(
       message.tick,
       message.tanks.filter((tank) => isInView(camera, tank)),
@@ -420,7 +444,9 @@ export class FfaGame {
       }
       const sound = this.fxPolicy.soundFor(event, camera, message.tick);
       if (sound !== null) {
-        this.sfx.play(sound.name, sound.pan, sound.volume);
+        this.audioMix.play(mixedSound(event, sound.name, myId), listener, now, (volume) =>
+          this.sfx.play(sound.name, sound.pan, sound.volume * volume),
+        );
       }
     }
   }
@@ -512,10 +538,37 @@ export class FfaGame {
     this.inputsThisSecond++;
   }
 
+  // Громкость звука — от своего танка на поле; у зрителя — от его цели; иначе (подбит, ждёт) — от точки камеры.
+  private listener(): Point {
+    const me = this.prediction?.me ?? null;
+    if (me !== null && this.ownTankInPlay() !== null) {
+      return me;
+    }
+    const target = this.frameView.tanks.find((tank) => tank.id === this.session.spectating);
+    if (this.session.screen() === 'spectator' && target !== undefined) {
+      return target;
+    }
+    return this.framing?.viewCenter ?? { x: this.map.width / 2, y: this.map.height / 2 };
+  }
+
+  // Цели помощников — живые чужие в окне камеры последнего кадра: то, что игрок видит. Цель предохранителя
+  // считается и при выключенной линии.
   private shotContext(me: Tank): ShotContext {
-    const isReturning =
-      this.options.settings.hasRicochetGuard && isShotReturning(this.map, me, me.turret, me.stats.bulletSpeed, null);
-    return { isReturning, isInZone: false };
+    const { settings } = this.options;
+    const targets = this.lastFrameTargets();
+    const bulletSpeed = me.stats.bulletSpeed;
+    const path = traceShot(this.map, me, me.turret, bulletSpeed).segments;
+    const isReturning = settings.hasRicochetGuard && isTraceReturning(path, me, firstTargetOnPath(path, targets));
+    const isInZone = settings.hasZoneFire && isPathInZone(path, { shooter: me, bulletSpeed, targets });
+    return { isReturning, isInZone };
+  }
+
+  private lastFrameTargets(): FfaViewTank[] {
+    const camera = this.framing?.camera ?? null;
+    if (camera === null) {
+      return [];
+    }
+    return visibleEnemies(this.frameView.tanks, this.session.playerId, camera);
   }
 
   private stepInput(elapsed: number): void {
@@ -623,6 +676,7 @@ export class FfaGame {
     this.framing = framing;
     this.frameView = view;
     const { camera } = framing;
+    this.helpers = this.fieldHelpers(view, screen, camera);
     this.effects.update(
       elapsed / SECOND_MS,
       view.tanks.filter((tank) => isInView(camera, tank, VIEW_MARGIN)),
@@ -633,6 +687,8 @@ export class FfaGame {
       camera,
       zonePlan: this.session.match?.zone ?? null,
       labelOf: (id) => ({ label: this.session.nameOf(id), isBot: this.session.isBot(id) }),
+      aimLine: this.helpers.aimLine,
+      arrows: this.helpers.arrows,
       controls: {
         sticks: hasFieldControls ? this.input.stickStates : [],
         isShotGuarded: this.input.isShotGuarded,
@@ -654,6 +710,27 @@ export class FfaGame {
     });
     this.hud.render(this.session.hud(now, this.hud.layout), now);
     this.writeSummary(now);
+  }
+
+  // Стрелки и линия — только в бою, пока свой танк на поле; упреждение в толпе не показывается.
+  private fieldHelpers(view: FfaFrameView, screen: SessionScreen, camera: Camera): FieldHelpers {
+    const me = this.prediction?.me ?? null;
+    if (me === null || !me.isAlive || screen !== 'fight') {
+      return NO_HELPERS;
+    }
+    const myId = this.session.playerId;
+    const arrows = edgeArrows({ me, myId, tanks: view.tanks, camera, pixelRatio: this.renderer.screen.pixelRatio });
+    if (!this.options.settings.hasAimLine) {
+      return { aimLine: null, aimTargetId: null, arrows };
+    }
+    const targets = visibleEnemies(view.tanks, myId, camera);
+    const bulletSpeed = me.stats.bulletSpeed;
+    const path = traceShot(this.map, me, me.turret, bulletSpeed).segments;
+    const aimLine = aimLineOnPath(path, { shooter: me, bulletSpeed, targets, hasLeadHint: false });
+    if (aimLine.state !== 'onTarget') {
+      return { aimLine, aimTargetId: null, arrows };
+    }
+    return { aimLine, aimTargetId: firstTargetOnPath(path, targets)?.id ?? null, arrows };
   }
 
   private showFieldControls(isVisible: boolean): void {

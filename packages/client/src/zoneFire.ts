@@ -4,12 +4,16 @@ import { enemyLeadPoint, type AimLineEnemy } from './aimLine.js';
 // Дальше попадания по журналам почти не случаются — выстрел вдаль не считается выстрелом по цели.
 export const ZONE_FIRE_MAX_RANGE = 650;
 
-export interface ZoneFireInput {
+export interface ZonePathInput {
+  shooter: Point;
+  bulletSpeed: number;
+  // Живые чужие танки в кадре; пусто — целей нет, зоны нет.
+  targets: readonly AimLineEnemy[];
+}
+
+export interface ZoneFireInput extends ZonePathInput {
   field: Field;
   shooter: Point & { turret: number };
-  bulletSpeed: number;
-  // Живой противник в кадре; `null` — цели нет, зоны нет.
-  enemy: AimLineEnemy | null;
 }
 
 function pointToSegmentDistance(point: Point, segment: ShotSegment): number {
@@ -51,22 +55,31 @@ function segmentDistance(a: ShotSegment, b: ShotSegment): number {
   );
 }
 
+function isInRange(enemy: Point, shooter: Point): boolean {
+  return Math.hypot(enemy.x - shooter.x, enemy.y - shooter.y) <= ZONE_FIRE_MAX_RANGE;
+}
+
+export function isShotInZone(input: ZoneFireInput): boolean {
+  const { field, shooter, bulletSpeed } = input;
+  if (!input.targets.some((enemy) => isInRange(enemy, shooter))) {
+    return false;
+  }
+  return isPathInZone(traceShot(field, shooter, shooter.turret, bulletSpeed).segments, input);
+}
+
 // Зона — капсула от корпуса противника до точки упреждения радиусом в корпус; у стоящего она вырождается в круг.
 // Первый отрезок пути кончается на преграде, поэтому за стеной до капсулы он не дотянется — прямая видимость
-// проверяется той же геометрией.
-export function isShotInZone(input: ZoneFireInput): boolean {
-  const { field, shooter, bulletSpeed, enemy } = input;
-  if (enemy === null) {
-    return false;
-  }
-  if (Math.hypot(enemy.x - shooter.x, enemy.y - shooter.y) > ZONE_FIRE_MAX_RANGE) {
-    return false;
-  }
-  const first = traceShot(field, shooter, shooter.turret, bulletSpeed).segments[0];
+// проверяется той же геометрией. Выстрел открыт, если путь заходит в зону любой цели.
+export function isPathInZone(path: readonly ShotSegment[], input: ZonePathInput): boolean {
+  const { shooter, bulletSpeed } = input;
+  const first = path[0];
   if (first === undefined) {
     return false;
   }
-  const lead = enemyLeadPoint(shooter, enemy, bulletSpeed) ?? enemy;
-  const corridor: ShotSegment = { x1: enemy.x, y1: enemy.y, x2: lead.x, y2: lead.y };
-  return segmentDistance(first, corridor) < TANK_HIT_RADIUS;
+  const inRange = input.targets.filter((enemy) => isInRange(enemy, shooter));
+  return inRange.some((enemy) => {
+    const lead = enemyLeadPoint(shooter, enemy, bulletSpeed) ?? enemy;
+    const corridor: ShotSegment = { x1: enemy.x, y1: enemy.y, x2: lead.x, y2: lead.y };
+    return segmentDistance(first, corridor) < TANK_HIT_RADIUS;
+  });
 }

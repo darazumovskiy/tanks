@@ -135,7 +135,7 @@ export class DuelPresenter {
       field: view.round.map,
       shooter: { x: me.x, y: me.y, turret: me.turret },
       bulletSpeed: view.round.tanks[mySide].stats.bulletSpeed,
-      enemy: frame.visibleEnemy,
+      targets: frame.visibleEnemy === null ? [] : [frame.visibleEnemy],
       hasLeadHint: this.settings.hasLeadHint,
     });
   }

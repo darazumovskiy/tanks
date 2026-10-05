@@ -57,6 +57,11 @@ const CANVAS_FRAMES: Omit<FfaFrameInfo, 'kind'>[] = [
   { id: 'zone-50', screens: ['phone'] },
   { id: 'shield-shake', screens: ['phone'] },
   { id: 'art-color', screens: ['phone'] },
+  { id: 'arrows-one', screens: ['phone'] },
+  { id: 'arrows-three', screens: ['phone'] },
+  { id: 'arrows-edge', screens: ['phone'] },
+  { id: 'aim-one', screens: ['phone'] },
+  { id: 'aim-two', screens: ['phone'] },
 ];
 const PAGE_FRAMES: Omit<FfaFrameInfo, 'kind'>[] = [
   { id: 'hud-connecting', screens: ['phone'] },

@@ -9,6 +9,8 @@ import {
   type FfaSize,
   type ZonePlan,
 } from '@tanks/shared/engine';
+import { computeAimLine, type AimLine } from '../aimLine.js';
+import { edgeArrows, visibleEnemies, type EdgeArrow } from '../ffa/arrows.js';
 import { FfaCamera, type FfaAim } from '../ffa/ffaCamera.js';
 import type { FfaFrameView, FfaViewTank } from '../ffa/ffaPrediction.js';
 import { FfaFxPolicy } from '../ffa/fxPolicy.js';
@@ -202,6 +204,30 @@ function viewAt(frame: FfaStandFrame, zone: ZonePlan, t: number): FfaFrameView {
   };
 }
 
+// Линия выстрела и стрелки кадра — теми же функциями, что в бою: цели — живые чужие в окне камеры.
+function helpersOf(
+  frame: FfaStandFrame,
+  view: FfaFrameView,
+  camera: Camera,
+  pixelRatio: number,
+): { aimLine: AimLine | null; arrows: EdgeArrow[] } {
+  const me = view.tanks.find((tank) => tank.id === frame.myId);
+  if (!frame.hasHelpers || me === undefined) {
+    return { aimLine: null, arrows: [] };
+  }
+  const targets = visibleEnemies(view.tanks, frame.myId, camera);
+  return {
+    aimLine: computeAimLine({
+      field: ffaMap(frame.size),
+      shooter: { x: me.x, y: me.y, turret: me.turret },
+      bulletSpeed: BULLET_SPEED,
+      targets,
+      hasLeadHint: false,
+    }),
+    arrows: edgeArrows({ me, myId: frame.myId, tanks: view.tanks, camera, pixelRatio }),
+  };
+}
+
 function framingInput(frame: FfaStandFrame): { focus: { x: number; y: number }; aim: FfaAim } {
   const own = frame.tanks.find((tank) => tank.id === frame.myId);
   if (own === undefined) {
@@ -250,6 +276,7 @@ function playFrame(target: StandTarget, frame: FfaStandFrame, zone: ZonePlan): v
       camera: framing.camera,
       zonePlan: frame.zoneTimeS === null ? null : zone,
       labelOf: (id) => labels.get(id) ?? { label: '', isBot: false },
+      ...helpersOf(frame, view, framing.camera, renderer.screen.pixelRatio),
       controls: { sticks: [], isShotGuarded: false, isZoneFiring: false, isReversing: false },
       readout: { ...READOUT, gameTick: Math.round((frame.zoneTimeS ?? 0) * TICK_RATE) },
       isFullReadout: false,

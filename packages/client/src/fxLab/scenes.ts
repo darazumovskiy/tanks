@@ -167,7 +167,7 @@ export function buildSceneFrame(scene: FxScene, bulletBack = 0): SceneFrame {
     field: round.map,
     shooter: { x: me.x, y: me.y, turret: me.turret },
     bulletSpeed: me.stats.bulletSpeed,
-    enemy: scene.enemy === null ? null : { ...scene.enemy },
+    targets: scene.enemy === null ? [] : [{ ...scene.enemy }],
     hasLeadHint: scene.hasLeadHint,
   });
   return { view, aimLine };

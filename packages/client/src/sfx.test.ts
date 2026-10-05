@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SnapshotEvent } from '@tanks/shared/protocol';
-import { Sfx } from './sfx.js';
-import { installFakeAudio, type SoundOutput } from './testing/fakeAudio.js';
+import { Sfx, SOUND_DURATIONS, type SoundName } from './sfx.js';
+import { installFakeAudio, type FakeAudio } from './testing/fakeAudio.js';
 
 // Громкость выстрела и панорама дуэли до перевода `play` на панораму и громкость.
 const SHOT_GAIN = 0.32;
@@ -12,7 +12,7 @@ function event(kind: SnapshotEvent['kind'], x: number): SnapshotEvent {
 }
 
 describe('Sfx', () => {
-  let audio: { outputs: SoundOutput[]; restore: () => void };
+  let audio: FakeAudio;
   let isHidden: boolean;
   let sfx: Sfx;
 
@@ -54,7 +54,25 @@ describe('Sfx', () => {
 
   it('выключенный звук молчит', () => {
     sfx.toggle();
-    sfx.play('shot');
+    expect(sfx.play('shot')).toBeNull();
     expect(audio.outputs).toHaveLength(0);
+  });
+
+  it('прозвучавший звук глушится раньше конца; не прозвучавший — не голос', () => {
+    const voice = sfx.play('death', 0.3, 0.5);
+    sfx.play('shot');
+    voice?.stop();
+    expect(audio.released).toEqual([audio.outputs[0]]);
+    isHidden = true;
+    expect(sfx.play('shot')).toBeNull();
+    expect(new Sfx(() => false).play('shot')).toBeNull();
+  });
+
+  it('таблица длительностей совпадает с синтезом: звук длится до остановки последнего источника', () => {
+    for (const name of Object.keys(SOUND_DURATIONS) as SoundName[]) {
+      audio.stops.length = 0;
+      sfx.play(name);
+      expect(Math.max(...audio.stops), name).toBeCloseTo(SOUND_DURATIONS[name], 6);
+    }
   });
 });

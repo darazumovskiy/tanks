@@ -1,4 +1,6 @@
 import type { FfaMap, Kit, ZonePlan } from '@tanks/shared/engine';
+import type { AimLine } from '../aimLine.js';
+import type { EdgeArrow } from '../ffa/arrows.js';
 import type { FfaFrameView, FfaViewBullet, FfaViewTank } from '../ffa/ffaPrediction.js';
 import type { Settings } from '../settings.js';
 import type { StickState } from '../touch.js';
@@ -6,7 +8,7 @@ import { aimLineStyleById } from './aimLineStyles.js';
 import { isInView, type Camera } from './camera.js';
 import type { Effects, FxBullet } from './effects.js';
 import { FieldRenderer, type FieldScene, type SceneTank } from './field.js';
-import { ScreenLayers, screenOf, type DebugReadout } from './screenLayers.js';
+import { ScreenLayers, screenOf, type DebugReadout, type Screen } from './screenLayers.js';
 import { ShieldRings, type ShieldRing } from './shieldRings.js';
 import { TiledFloor } from './tiledFloor.js';
 import { BODY_FONT, rgba, SIDE_COLORS } from './view.js';
@@ -36,6 +38,19 @@ const SHIELD_HINT_FONT_PX = 12;
 const SHIELD_HINT_GAP_PX = 14;
 const SHIELD_HINT_OUTLINE_PX = 3;
 const SHIELD_HINT_ALPHA = 0.9;
+// Стрелка на врага за кадром — черновой вид: узкий наконечник с вырезом сзади, длина вдвое больше ширины, чтобы
+// направление читалось и у мелкой. Цвет чужих, высветленный к белому: роль та же, а яркостью стрелка отделяется
+// от бирюзовых снарядов и стен; тёмная обводка держит контраст на любом фоне. Размер в точках экрана растёт
+// с интерфейсом; наибольшая с обводкой (интерфейс 1,5) — 18 точек от центра, под неё рамка стрелок.
+const ARROW = {
+  size: 10.5,
+  tail: 0.75,
+  halfWidth: 0.42,
+  notch: 0.35,
+  color: '#c1eaec',
+  outlineColor: 'rgba(7,8,10,0.85)',
+  outlineWidth: 1.5,
+} as const;
 const TEXT_COLOR = '#f4f1e8';
 const TEXT_OUTLINE_COLOR = '#07080a';
 const TEXT_OUTLINE_ALPHA = 0.7;
@@ -61,6 +76,9 @@ export interface FfaDrawInput {
   zonePlan: Readonly<ZonePlan> | null;
   labelOf: (id: number) => FfaTankLabel;
   controls: FfaControls;
+  // Линия выстрела своего танка; null — линии нет: выключена или своего танка нет на поле.
+  aimLine: AimLine | null;
+  arrows: readonly EdgeArrow[];
   readout: DebugReadout;
   // Полная строка отладки — только админу; игрок видит игру и таймкод.
   isFullReadout: boolean;
@@ -92,6 +110,15 @@ function smoothstep(value: number): number {
 
 function colorOf(id: number, myId: number | null): string {
   return id === myId ? FFA_OWN_COLOR : FFA_OTHER_COLOR;
+}
+
+// Силуэт стрелки остриём по оси x в текущем преобразовании.
+function traceArrow(ctx: CanvasRenderingContext2D, size: number): void {
+  ctx.moveTo(size, 0);
+  ctx.lineTo(-size * ARROW.tail, -size * ARROW.halfWidth);
+  ctx.lineTo(-size * ARROW.notch, 0);
+  ctx.lineTo(-size * ARROW.tail, size * ARROW.halfWidth);
+  ctx.closePath();
 }
 
 // Кадр толпы: общий рендер поля с полом большой карты, следами-отметками и кольцом неуязвимости поверх танков,
@@ -154,6 +181,7 @@ export class FfaRenderer {
     });
     const screen = screenOf(this.canvas, this.pixelRatio);
     this.ctx.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
+    this.drawArrows(input.arrows, screen);
     this.layers.drawAnnouncements(screen);
     this.layers.drawFlash(screen);
     if (input.isFullReadout) {
@@ -189,13 +217,44 @@ export class FfaRenderer {
       bullets: view.bullets
         .filter((bullet) => isInView(camera, bullet, CULL_MARGIN))
         .map((bullet: FfaViewBullet): FxBullet => ({ ...bullet, color: colorOf(bullet.owner, myId) })),
-      aimLine: null,
+      aimLine: input.aimLine,
       ownTankId: myId,
       isShotGuarded: input.controls.isShotGuarded,
       fieldLayer: (ctx) => {
         this.drawShields(ctx, visible, myId, this.shields.update(visible, myId, input.frameMs), camera.scale);
       },
     };
+  }
+
+  private drawArrows(arrows: readonly EdgeArrow[], screen: Screen): void {
+    const { ctx } = this;
+    for (const arrow of arrows) {
+      const size = ARROW.size * screen.u * arrow.scale;
+      const outline = ARROW.outlineWidth * screen.u;
+      const bound = size + outline;
+      ctx.save();
+      ctx.translate(arrow.x, arrow.y);
+      ctx.rotate(arrow.angle);
+      ctx.globalAlpha = arrow.alpha;
+      // Обводка — только снаружи силуэта: под полупрозрачной заливкой она съела бы мелкую дальнюю стрелку.
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(-bound, -bound, bound * 2, bound * 2);
+      traceArrow(ctx, size);
+      ctx.clip('evenodd');
+      ctx.beginPath();
+      traceArrow(ctx, size);
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = outline * 2;
+      ctx.strokeStyle = ARROW.outlineColor;
+      ctx.stroke();
+      ctx.restore();
+      ctx.beginPath();
+      traceArrow(ctx, size);
+      ctx.fillStyle = ARROW.color;
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   private sceneTank(tank: FfaViewTank, input: FfaDrawInput): SceneTank {
