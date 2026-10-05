@@ -86,7 +86,7 @@ export interface MovementTotals {
   reverseTicks: number;
   idleTicks: number;
   silentTicks: number;
-  overwrittenInputs: number;
+  batchedInputs: number;
   speedSum: number;
   speedSamples: number;
   histogram: AxisHistogram;
@@ -99,7 +99,7 @@ export function emptyMovement(): MovementTotals {
     reverseTicks: 0,
     idleTicks: 0,
     silentTicks: 0,
-    overwrittenInputs: 0,
+    batchedInputs: 0,
     speedSum: 0,
     speedSamples: 0,
     histogram: emptyHistogram(),
@@ -112,7 +112,7 @@ export function addMovement(into: MovementTotals, from: MovementTotals): void {
   into.reverseTicks += from.reverseTicks;
   into.idleTicks += from.idleTicks;
   into.silentTicks += from.silentTicks;
-  into.overwrittenInputs += from.overwrittenInputs;
+  into.batchedInputs += from.batchedInputs;
   into.speedSum += from.speedSum;
   into.speedSamples += from.speedSamples;
   mergeHistogram(into.histogram, from.histogram);
@@ -159,7 +159,7 @@ export function analyzeMovement(round: ParsedRound, side: Side): MovementTotals 
     if (cur.isSilent[side]) {
       totals.silentTicks++;
     }
-    totals.overwrittenInputs += Math.max(0, cur.inputs[side] - 1);
+    totals.batchedInputs += Math.max(0, cur.inputs[side] - 1);
     totals.speedSum += speedOf(prev, cur, side).speed;
     totals.speedSamples++;
     bump(totals.histogram.throttle, axisBucket(action.throttle));

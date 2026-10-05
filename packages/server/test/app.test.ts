@@ -547,6 +547,7 @@ describe('журнал игры', () => {
     expect(text).toMatch(/tick rt=\d+ ph=f .*a0=1\.00,0\.00,0\.00,1 ack0=1 in0=1 /);
     expect(text).toContain(`input stale side=0 seq=${String(seq)} last=${String(seq)}`);
     expect(text).toMatch(/input limit side=0 seq=\d+/);
+    expect(text).toMatch(/input overflow side=0 seq=\d+\n/);
     expect(text).toMatch(/ev kind=shot side=0 x=\d+\.\d y=450\.0 v=/);
     expect(text).toContain('leave side=1 nick=Боб');
   });

@@ -99,7 +99,7 @@ export interface MovementSummary {
   bumps: number;
   bumps_per_min: number | null;
   silent_ticks: number;
-  overwritten_inputs: number;
+  batched_inputs: number;
   dropped_inputs: number;
 }
 
@@ -497,7 +497,7 @@ export function analyzeGame(game: ParsedGame, devices: DeviceIndex, tzHours: num
       bumps: humanShooting.bumps,
       bumps_per_min: perMinute(humanShooting.bumps),
       silent_ticks: movement.silentTicks,
-      overwritten_inputs: movement.overwrittenInputs,
+      batched_inputs: movement.batchedInputs,
       dropped_inputs: game.droppedInputs[human],
     },
     hist: histogram,

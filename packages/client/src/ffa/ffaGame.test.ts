@@ -408,7 +408,11 @@ describe('вход и отсчёт', () => {
     socket.receive(snapshotOf(world));
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW' }));
     harness.frames(6);
-    expect(harness.state()).toMatchObject({ screen: 'countdown', me: { x: 500, y: 600 } });
+    expect(harness.state()).toMatchObject({
+      screen: 'countdown',
+      me: { x: 500, y: 600 },
+      others: [{ id: ENEMY, x: 900, y: 600, isAlive: true }],
+    });
     expect(socket.inputs[0]).toMatchObject({ seq: 1, action: { throttle: 1 } });
     expect(socket.inputs.map((input) => input.seq)).toEqual([1, 2, 3]);
     window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyW' }));

@@ -90,7 +90,7 @@ describe('движение и динамика', () => {
       idle_pct: 0,
       mean_speed: 0,
       silent_ticks: 1,
-      overwritten_inputs: 2,
+      batched_inputs: 2,
       dropped_inputs: 1,
     });
     expect(game.hist).toEqual({ throttle: { '±1': 30 }, turn: { '0.3–0.7': 30 }, turretTurn: { '|v|<0.3': 30 } });

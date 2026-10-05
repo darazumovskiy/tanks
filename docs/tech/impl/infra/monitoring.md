@@ -33,7 +33,7 @@ Vector держит очереди на диске (по 256 МБ на приё�
 | `tanks_rooms`, `tanks_connections` | gauge | комнат и сокетов сейчас |
 | `tanks_messages_total{direction="in"\|"out"}` | counter | сообщений по сокетам |
 | `tanks_bytes_total{direction="in"\|"out"}` | counter | байт по сокетам |
-| `tanks_inputs_dropped_total{reason="stale"\|"limit"}` | counter | команд отброшено как устаревшие или сверх лимита за тик |
+| `tanks_inputs_dropped_total{reason="stale"\|"limit"\|"overflow"\|"backlog"}` | counter | команд отброшено как устаревшие, сверх лимита в секунду, из переполненной очереди или слито из стойкого запаса |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total`, `process_start_time_seconds` | gauge/counter | процесс |
 
 Подсчёт — инкремент числа или запись в гистограмму `perf_hooks.createHistogram` (микросекунды); аллокаций и вызовов наружу внутри тика нет. Текст собирается только при запросе ручки. Сообщения и байты считаются только по сокетам: подключения ботов внутри процесса сетью не являются.

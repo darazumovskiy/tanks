@@ -82,6 +82,7 @@ afterEach(async () => {
   }
   await app?.close();
   app = null;
+  unconfirmedTurns.clear();
 });
 
 interface Entered {
@@ -162,14 +163,25 @@ function aimAt(me: FfaTankSnapshot, target: { x: number; y: number }): Action {
   return { ...fidget(), turretTurn, isFiring: Math.abs(diff) < AIM_TOLERANCE };
 }
 
-// Стрелок наводится на живую цель; цели нет — ёрзает, чтобы его не выкинуло за бездействие.
+const unconfirmedTurns = new Map<TestClient, { seq: number; turretTurn: number }[]>();
+
+// Стрелок наводится на живую цель; цели нет — ёрзает, чтобы его не выкинуло за бездействие. Башню он доворачивает
+// от места, куда её приведут уже отправленные, но ещё не применённые команды, — как настоящий клиент: иначе команда,
+// ждущая в очереди сервера, проворачивает башню мимо цели.
 function hunt(shooter: TestClient, snapshot: FfaSnapshotMessage, shooterId: number, targetId: number): void {
   const me = tankOf(snapshot, shooterId);
   const enemy = tankOf(snapshot, targetId);
   if (me === undefined) {
     return;
   }
-  shooter.input(enemy?.isAlive === true ? aimAt(me, enemy) : fidget());
+  const unconfirmed = (unconfirmedTurns.get(shooter) ?? []).filter((entry) => entry.seq > snapshot.ackSeq);
+  const turret = unconfirmed.reduce(
+    (angle, entry) => normalizeAngle(angle + entry.turretTurn * TURRET_RATE * DT),
+    me.turret,
+  );
+  const action = enemy?.isAlive === true ? aimAt({ ...me, turret }, enemy) : fidget();
+  const seq = shooter.input(action);
+  unconfirmedTurns.set(shooter, [...unconfirmed, { seq, turretTurn: action.turretTurn }]);
 }
 
 // Снимки у теста отстают от сервера, а команда действует до следующей: башня, повёрнутая по снимку, проскочит цель.

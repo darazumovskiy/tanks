@@ -16,3 +16,8 @@ export function ffaViewCenter(tank: Point & { turret: number }): Point {
   const reach = ffaViewReach(tank.turret);
   return { x: tank.x + reach * Math.cos(tank.turret), y: tank.y + reach * Math.sin(tank.turret) };
 }
+
+// Окно обзора толпы — W × H вокруг точки обзора, края входят.
+export function isInFfaView(center: Point, x: number, y: number): boolean {
+  return Math.abs(x - center.x) <= FFA.viewWidth / 2 && Math.abs(y - center.y) <= FFA.viewHeight / 2;
+}

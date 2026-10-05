@@ -1,6 +1,8 @@
 import {
   deriveStats,
   DT,
+  ffaViewCenter,
+  isInFfaView,
   normalizeAngle,
   zoneRadiusAt,
   type Action,
@@ -24,7 +26,7 @@ import {
 import { CrowdBrain } from './brain.js';
 import { CROWD_PROFILES, type CrowdLevel, type CrowdProfile } from './profile.js';
 import { Targeting, type TargetBook } from './targets.js';
-import { crowdView, isInView, type CrowdTank, type Frame } from './view.js';
+import { crowdView, type CrowdTank, type Frame } from './view.js';
 
 export interface CrowdBotOptions {
   level: CrowdLevel;
@@ -217,15 +219,16 @@ export class CrowdBot {
   // Танк стрелка мог уже исчезнуть с поля — снаряд живёт дольше подбитого танка; такой стрелок тоже не виден.
   private attackersOf(message: FfaSnapshotMessage, frame: Frame, myId: number): number[] {
     const me = frame.tanks.find((tank) => tank.id === myId);
+    const center = me === undefined ? null : ffaViewCenter(me);
     const attackers: number[] = [];
     for (const event of message.events) {
       const isHitByOther = event.kind === 'hit' && event.tank === myId && event.by !== null && event.by !== myId;
-      if (!isHitByOther || me === undefined) {
+      if (!isHitByOther || center === null) {
         continue;
       }
       this.counters.damageTaken += event.value;
       const shooter = frame.tanks.find((tank) => tank.id === event.by);
-      if (shooter === undefined || !isInView(me, shooter.x, shooter.y)) {
+      if (shooter === undefined || !isInFfaView(center, shooter.x, shooter.y)) {
         this.counters.offscreenDamage += event.value;
       }
       if (shooter !== undefined) {
@@ -266,17 +269,17 @@ export class CrowdBot {
     if (myId === null || plan === null) {
       return null;
     }
-    const attackers = this.attackersOf(message, frame, myId);
+    const fresh: Frame = {
+      ...frame,
+      tanks: frame.tanks.map((tank) => (tank.id === myId ? this.predictedSelf(tank) : tank)),
+    };
+    const attackers = this.attackersOf(message, fresh, myId);
     const isFighting = this.phase === FfaPhase.Fight && message.self.state === 'alive';
     // Пока истории меньше задержки реакции — самый старый из имеющихся снимков.
     let delayed = frame;
     for (const oldest of this.history.slice(0, 1)) {
       delayed = oldest;
     }
-    const fresh: Frame = {
-      ...frame,
-      tanks: frame.tanks.map((tank) => (tank.id === myId ? this.predictedSelf(tank) : tank)),
-    };
     const view = crowdView({
       myId,
       fresh,

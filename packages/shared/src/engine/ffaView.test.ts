@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FFA } from './constants.js';
-import { ffaViewCenter, ffaViewReach } from './ffaView.js';
+import { ffaViewCenter, ffaViewReach, isInFfaView } from './ffaView.js';
 
 const SIDE = FFA.viewAheadSide * FFA.viewWidth;
 const DOWN = FFA.viewAheadDown * FFA.viewHeight;
@@ -65,5 +65,37 @@ describe('точка обзора толпы', () => {
       previous = reach;
     }
     expect(largestJump).toBeLessThan(CONTINUITY_TOLERANCE);
+  });
+});
+
+describe('окно обзора толпы', () => {
+  const center = { x: 1000, y: 700 };
+  const halfWidth = FFA.viewWidth / 2;
+  const halfHeight = FFA.viewHeight / 2;
+
+  it('W × H вокруг точки обзора: края входят, шаг за край — нет', () => {
+    for (const [dx, dy] of [
+      [halfWidth, halfHeight],
+      [-halfWidth, -halfHeight],
+      [halfWidth, -halfHeight],
+      [0, 0],
+    ] as const) {
+      expect(isInFfaView(center, center.x + dx, center.y + dy)).toBe(true);
+    }
+    for (const [dx, dy] of [
+      [halfWidth + 1, 0],
+      [-halfWidth - 1, 0],
+      [0, halfHeight + 1],
+      [0, -halfHeight - 1],
+    ] as const) {
+      expect(isInFfaView(center, center.x + dx, center.y + dy)).toBe(false);
+    }
+  });
+
+  it('окно идёт за точкой обзора: танк впереди по башне дальше половины окна от танка — в окне, сзади ближе — нет', () => {
+    const tank = { x: 1000, y: 700, turret: 0 };
+    const viewCenter = ffaViewCenter(tank);
+    expect(isInFfaView(viewCenter, tank.x + halfWidth + SIDE / 2, tank.y)).toBe(true);
+    expect(isInFfaView(viewCenter, tank.x - halfWidth + SIDE / 2, tank.y)).toBe(false);
   });
 });

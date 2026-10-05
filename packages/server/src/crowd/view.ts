@@ -1,4 +1,11 @@
-import { FFA, type BattleMap, type DerivedStats, type Kit, type Point } from '@tanks/shared/engine';
+import {
+  ffaViewCenter,
+  isInFfaView,
+  type BattleMap,
+  type DerivedStats,
+  type Kit,
+  type Point,
+} from '@tanks/shared/engine';
 
 export interface CrowdTank {
   id: number;
@@ -39,7 +46,7 @@ export interface CrowdZone extends Point {
 }
 
 // Что видит мозг на своём ходу: свой танк, зона и аптечки — свежие; противники и снаряды — с задержкой реакции
-// и только в окне обзора. attackers — кто попал в бота на этом снимке.
+// и только в окне обзора вокруг точки обзора своего танка. attackers — кто попал в бота на этом снимке.
 export interface CrowdView {
   tick: number;
   map: BattleMap;
@@ -49,10 +56,6 @@ export interface CrowdView {
   kits: Kit[];
   zone: CrowdZone;
   attackers: number[];
-}
-
-export function isInView(me: Point, x: number, y: number): boolean {
-  return Math.abs(x - me.x) <= FFA.viewWidth / 2 && Math.abs(y - me.y) <= FFA.viewHeight / 2;
 }
 
 export interface ViewSource {
@@ -71,14 +74,15 @@ export function crowdView(source: ViewSource): CrowdView | null {
   if (me?.isAlive !== true) {
     return null;
   }
+  const center = ffaViewCenter(me);
   return {
     tick: source.fresh.tick,
     map: source.map,
     me,
     enemies: source.delayed.tanks.filter(
-      (tank) => tank.id !== source.myId && tank.isAlive && isInView(me, tank.x, tank.y),
+      (tank) => tank.id !== source.myId && tank.isAlive && isInFfaView(center, tank.x, tank.y),
     ),
-    bullets: source.delayed.bullets.filter((bullet) => isInView(me, bullet.x, bullet.y)),
+    bullets: source.delayed.bullets.filter((bullet) => isInFfaView(center, bullet.x, bullet.y)),
     kits: source.kits,
     zone: source.zone,
     attackers: source.attackers,

@@ -4,7 +4,7 @@ import { connect, createServer, type Server, type Socket } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
-import { DEFAULT_STATS, FFA, ffaMap } from '@tanks/shared/engine';
+import { DEFAULT_STATS, FFA, ffaMap, ffaViewCenter } from '@tanks/shared/engine';
 import {
   FfaPhase,
   MessageType,
@@ -28,7 +28,8 @@ const QUICK: FfaOptions = {
   lobbyQuietTicks: 5,
   matchSeconds: 20,
 };
-// Запас окна обзора на задержку реакции: за 12 тиков танк проезжает меньше 80.
+// Запас окна обзора вокруг точки обзора стрелка на задержку реакции: за 12 тиков танк проезжает меньше 80, а
+// точка обзора на выстреле смещена к цели — башня на неё наведена.
 const VIEW_MARGIN = 80;
 
 const apps: App[] = [];
@@ -216,12 +217,14 @@ describe('рой ботов через сокет', () => {
         for (const birth of message.births.filter((candidate) => bots.has(candidate.owner))) {
           botShots++;
           const shooter = message.tanks.find((tank) => tank.id === birth.owner);
+          const center = shooter === undefined ? null : ffaViewCenter(shooter);
           const isSeen = message.tanks.some(
             (tank) =>
               tank.id !== birth.owner &&
-              shooter !== undefined &&
-              Math.abs(tank.x - shooter.x) <= FFA.viewWidth / 2 + VIEW_MARGIN &&
-              Math.abs(tank.y - shooter.y) <= FFA.viewHeight / 2 + VIEW_MARGIN,
+              tank.isAlive &&
+              center !== null &&
+              Math.abs(tank.x - center.x) <= FFA.viewWidth / 2 + VIEW_MARGIN &&
+              Math.abs(tank.y - center.y) <= FFA.viewHeight / 2 + VIEW_MARGIN,
           );
           if (!isSeen) {
             blindShots.push(`${String(birth.owner)} на тике ${String(message.tick)}`);

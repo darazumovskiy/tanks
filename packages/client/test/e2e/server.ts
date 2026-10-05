@@ -20,7 +20,8 @@ function inheritedEnv(): NodeJS.ProcessEnv {
 }
 
 // Собранный игровой сервер как отдельный процесс — тот же бинарник, что едет на боевую машину.
-// extraEnv — переменные окружения поверх обязательных (например, серверная ручка `WALL_SLIDE`).
+// extraEnv — переменные окружения поверх обязательных (серверная ручка `WALL_SLIDE`, переключатели общей игры
+// `FFA_MINIMUM`, `FFA_MATCH_SECONDS` и прочие).
 export class GameServer {
   private child: ChildProcess | null = null;
   private port = 0;
@@ -30,6 +31,14 @@ export class GameServer {
 
   get baseUrl(): string {
     return `http://127.0.0.1:${String(this.port)}`;
+  }
+
+  get listenPort(): number {
+    return this.port;
+  }
+
+  get wsUrl(): string {
+    return `ws://127.0.0.1:${String(this.port)}/ws`;
   }
 
   // Файл появляется с первым сбросом буфера; до того — пустая строка.

@@ -1,7 +1,7 @@
 import { createHistogram, type RecordableHistogram } from 'node:perf_hooks';
 
 export type Direction = 'in' | 'out';
-export type DropReason = 'stale' | 'limit';
+export type DropReason = 'stale' | 'limit' | 'overflow' | 'backlog';
 
 export interface InputDropCounter {
   countDroppedInput(reason: DropReason): void;
@@ -81,7 +81,7 @@ export function createMetrics(): Metrics {
   let lateTicks = 0;
   const messages: Record<Direction, number> = { in: 0, out: 0 };
   const bytes: Record<Direction, number> = { in: 0, out: 0 };
-  const dropped: Record<DropReason, number> = { stale: 0, limit: 0 };
+  const dropped: Record<DropReason, number> = { stale: 0, limit: 0, overflow: 0, backlog: 0 };
 
   return {
     recordTick(durationMs, isLate): void {
@@ -127,7 +127,7 @@ export function createMetrics(): Metrics {
         out.value('tanks_bytes_total', bytes[direction], { direction });
       }
       out.header('tanks_inputs_dropped_total', 'counter', 'команд отброшено');
-      for (const reason of ['stale', 'limit'] as const) {
+      for (const reason of ['stale', 'limit', 'overflow', 'backlog'] as const) {
         out.value('tanks_inputs_dropped_total', dropped[reason], { reason });
       }
       const cpu = process.cpuUsage();

@@ -301,6 +301,9 @@ export class FfaGame {
             },
       tanks: prediction?.tanksOnField.length ?? 0,
       tanksInView: camera === null ? 0 : view.tanks.filter((tank) => isInView(camera, tank)).length,
+      others: view.tanks
+        .filter((tank) => tank.id !== session.playerId)
+        .map((tank) => ({ id: tank.id, x: tank.x, y: tank.y, isAlive: tank.isAlive })),
       bullets: view.bullets.length,
       pending: prediction?.pendingCount ?? 0,
       correctionPx: prediction?.lastCorrectionPx ?? 0,

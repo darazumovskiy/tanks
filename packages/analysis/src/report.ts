@@ -188,9 +188,9 @@ function byLevelDevice(groups: readonly Group[]): string {
     const bumps = sum(summaries.map((g) => g.movement.bumps));
     const aimTimeMedian = median(aimTimes);
     const rtt = medianOf(summaries.map((g) => g.client.rtt_median));
-    const overwritten = sum(summaries.map((g) => g.movement.overwritten_inputs));
+    const batched = sum(summaries.map((g) => g.movement.batched_inputs));
     const silent = sum(summaries.map((g) => g.movement.silent_ticks));
-    const overwrittenText = fightTicks === 0 ? EMPTY : String(Math.round((PER_THOUSAND * overwritten) / fightTicks));
+    const batchedText = fightTicks === 0 ? EMPTY : String(Math.round((PER_THOUSAND * batched) / fightTicks));
     return [
       level,
       device,
@@ -212,7 +212,7 @@ function byLevelDevice(groups: readonly Group[]): string {
       fmt(pct(shotRows.filter((row) => row.hasLineOfSight).length, shotRows.length)),
       fmt(median(shotRows.map((row) => row.distance))),
       `${String(selfHits)} (${fmt(pct(selfHits, shotsHuman))}% выстр., ${fmt(pct(selfDamage, damageTaken))}% урона)`,
-      `rtt ${fmt(rtt)} мс, перезап. ${overwrittenText}/1000 тиков, молч. ${String(silent)}`,
+      `rtt ${fmt(rtt)} мс, пачкой ${batchedText}/1000 тиков, молч. ${String(silent)}`,
     ];
   });
   return mdTable(
@@ -431,7 +431,7 @@ function qualitySection(results: readonly GameAnalysis[]): string {
       r.in_flight_bullets,
       r.device_source ?? EMPTY,
       r.movement.silent_ticks,
-      r.movement.overwritten_inputs,
+      r.movement.batched_inputs,
       r.movement.dropped_inputs,
     ];
   });
@@ -449,7 +449,7 @@ function qualitySection(results: readonly GameAnalysis[]): string {
       'Снарядов в полёте при конце раунда',
       'Устройство найдено по',
       'Тиков молчания',
-      'Перезаписанных команд',
+      'Команд пачкой',
       'Отброшенных команд',
     ],
     rows,

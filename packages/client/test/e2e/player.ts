@@ -35,6 +35,50 @@ export interface DebugState {
   camera: { x: number; y: number; height: number };
 }
 
+export type FfaScreen =
+  | 'connecting'
+  | 'lobby'
+  | 'countdown'
+  | 'fight'
+  | 'dead'
+  | 'spectator'
+  | 'results'
+  | 'idle'
+  | 'replaced'
+  | 'update'
+  | 'error';
+
+// Срез `debugState()` боя толпы в той части, которой пользуются сценарии.
+export interface FfaDebugState {
+  screen: FfaScreen;
+  playerId: number | null;
+  phase: number | null;
+  matchIndex: number;
+  players: number;
+  capacity: number;
+  isFinal: boolean;
+  self: { state: string; ticksLeft: number; killerId: number | null; idleTicksLeft: number | null } | null;
+  me: (TankState & { shieldLeft: number }) | null;
+  tanks: number;
+  others: { id: number; x: number; y: number; isAlive: boolean }[];
+  bullets: number;
+  camera: { x: number; y: number; width: number; height: number } | null;
+  viewCenter: Point | null;
+  score: { place: number; total: number; kills: number; deaths: number } | null;
+  feed: string[];
+  spectating: number | null;
+  isAutoFiring: boolean;
+}
+
+export interface PlayerOptions {
+  isTouch?: boolean;
+  userAgent?: string;
+  settings?: Record<string, unknown>;
+  query?: string;
+  // Записи `sessionStorage` до загрузки страницы — например, пропуск общей игры.
+  session?: Record<string, string>;
+}
+
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
 const SETTINGS_KEY = 'tanks.settings';
@@ -97,13 +141,40 @@ export class Player {
     readonly name: string,
   ) {}
 
-  static async open(
+  static open(
     browser: Browser,
     baseUrl: string,
     roomCode: string,
     name: string,
     stats: string,
-    options: { isTouch?: boolean; userAgent?: string; settings?: Record<string, unknown>; query?: string } = {},
+    options: PlayerOptions = {},
+  ): Promise<Player> {
+    return Player.openPage(browser, `${baseUrl}/d/${roomCode}${options.query ?? ''}`, name, stats, options);
+  }
+
+  // Общий бой по прямой ссылке `/ffa/<размер>`.
+  static openFfa(
+    browser: Browser,
+    baseUrl: string,
+    size: number,
+    name: string,
+    stats: string,
+    options: PlayerOptions = {},
+  ): Promise<Player> {
+    return Player.openPage(browser, `${baseUrl}/ffa/${String(size)}${options.query ?? ''}`, name, stats, options);
+  }
+
+  // Главная с розданными очками танка: кнопки входа в бой доступны.
+  static openHome(browser: Browser, baseUrl: string, name: string, stats: string): Promise<Player> {
+    return Player.openPage(browser, `${baseUrl}/`, name, stats);
+  }
+
+  private static async openPage(
+    browser: Browser,
+    url: string,
+    name: string,
+    stats: string,
+    options: PlayerOptions = {},
   ): Promise<Player> {
     const touchOptions = options.isTouch === true ? { hasTouch: true, isMobile: true, viewport: PHONE_VIEWPORT } : {};
     const agentOptions = options.userAgent === undefined ? {} : { userAgent: options.userAgent };
@@ -113,13 +184,19 @@ export class Player {
     if (options.settings !== undefined) {
       entries[SETTINGS_KEY] = JSON.stringify(options.settings);
     }
-    await context.addInitScript((stored: Record<string, string>) => {
-      for (const [key, value] of Object.entries(stored)) {
-        localStorage.setItem(key, value);
-      }
-    }, entries);
+    await context.addInitScript(
+      (stored: { local: Record<string, string>; session: Record<string, string> }) => {
+        for (const [key, value] of Object.entries(stored.local)) {
+          localStorage.setItem(key, value);
+        }
+        for (const [key, value] of Object.entries(stored.session)) {
+          sessionStorage.setItem(key, value);
+        }
+      },
+      { local: entries, session: options.session ?? {} },
+    );
     const page = await context.newPage();
-    await page.goto(`${baseUrl}/d/${roomCode}${options.query ?? ''}`);
+    await page.goto(url);
     return new Player(context, page, name);
   }
 
@@ -151,6 +228,62 @@ export class Player {
       const game = (window as unknown as { tanksGame?: { debugState(): unknown } }).tanksGame;
       return (game?.debugState() ?? null) as DebugState | null;
     });
+  }
+
+  ffaState(): Promise<FfaDebugState | null> {
+    return this.page.evaluate(() => {
+      const game = (window as unknown as { tanksGame?: { debugState(): { mode?: string } } }).tanksGame;
+      const state = game?.debugState() ?? null;
+      return (state?.mode === 'ffa' ? state : null) as FfaDebugState | null;
+    });
+  }
+
+  // Ждёт состояния боя толпы, для которого `isReady` истинно, и возвращает его.
+  waitForFfa(isReady: (state: FfaDebugState) => boolean, timeoutMs: number, what: string): Promise<FfaDebugState> {
+    return until(
+      async () => {
+        const state = await this.ffaState();
+        return state !== null && isReady(state) ? state : null;
+      },
+      timeoutMs,
+      `${this.name}: ${what}`,
+    );
+  }
+
+  waitForScreen(screen: FfaScreen, timeoutMs: number): Promise<FfaDebugState> {
+    return this.waitForFfa((state) => state.screen === screen, timeoutMs, `экран ${screen}`);
+  }
+
+  // Видимый текст слоя интерфейса толпы (класс слоя — `ffa-lobby`, `ffa-death`, `ffa-connection`…).
+  ffaLayer(className: string): Locator {
+    return this.page.locator(`#ffa-hud .ffa-layer.is-shown.${className}`);
+  }
+
+  ffaButton(label: string): Locator {
+    return this.page.locator('#ffa-hud .ffa-layer.is-shown button', { hasText: label });
+  }
+
+  // Мышь в бою толпы: точка прицела лежит на луче из танка в сторону курсора от центра экрана, поэтому башня
+  // доворачивается на угол смещения курсора.
+  async aimFfaAngle(angle: number, timeoutMs = 5_000): Promise<FfaDebugState> {
+    const viewport = this.page.viewportSize() ?? { width: 0, height: 0 };
+    const reach = Math.min(viewport.width, viewport.height) / 3;
+    await this.page.mouse.move(
+      viewport.width / 2 + reach * Math.cos(angle),
+      viewport.height / 2 + reach * Math.sin(angle),
+    );
+    return this.waitForFfa(
+      (state) => state.me !== null && Math.abs(normalizeAngle(angle - state.me.turret)) < TURRET_TOLERANCE,
+      timeoutMs,
+      `башня не довернулась на ${angle.toFixed(2)}`,
+    );
+  }
+
+  // Держит клавишу заданное время — как человек.
+  async holdKey(code: string, ms: number): Promise<void> {
+    await this.setKey(code, true);
+    await sleep(ms);
+    await this.setKey(code, false);
   }
 
   waitForBattle(timeoutMs = 15_000): Promise<DebugState> {

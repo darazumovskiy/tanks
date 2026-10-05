@@ -38,7 +38,7 @@ import {
 } from '@tanks/shared/protocol';
 import { randomBytes, randomInt } from 'node:crypto';
 import { LOG_SOURCE_SERVER, type GameLog } from './gameLog.js';
-import { createInputChannel, offerInput, takeAction, type InputChannel } from './inputs.js';
+import { clearInput, createInputChannel, offerInput, takeAction, type InputChannel } from './inputs.js';
 import type { InputDropCounter } from './metrics.js';
 import { randomGameId, sanitizeNickname, sanitizeStats, type Connection, type Seat } from './room.js';
 
@@ -180,7 +180,7 @@ export class FfaGame {
       nickname: sanitizeNickname(nickname),
       stats: sanitizeStats(stats),
       isBot,
-      input: createInputChannel(),
+      input: createInputChannel(this.tick),
       appliedAction: { ...IDLE_ACTION },
       idleTicks: 0,
       offlineTicks: 0,
@@ -212,8 +212,9 @@ export class FfaGame {
     }
     player.connection = connection;
     player.offlineTicks = 0;
-    // Новый клиент считает номера команд с единицы; бездействие до обрыва не переносится.
-    player.input = createInputChannel();
+    // Новый клиент считает номера команд с единицы, недоигранная очередь старого ему не достаётся; бездействие до
+    // обрыва не переносится.
+    player.input = createInputChannel(this.tick);
     player.appliedAction = { ...IDLE_ACTION };
     player.idleTicks = 0;
     this.writeLog(`rejoin id=${String(player.id)}`);
@@ -252,10 +253,9 @@ export class FfaGame {
   private seatFor(player: GamePlayer, connection: FfaConnection): Seat {
     return {
       input: (seq, action) => {
-        const drop = offerInput(player.input, seq, action, this.tick, this.options.maxInputsPerSecond);
-        if (drop !== null) {
-          this.dropCounter.countDroppedInput(drop);
-          this.writeLog(`input ${drop} id=${String(player.id)} seq=${String(seq)}`);
+        for (const drop of offerInput(player.input, seq, action, this.tick, this.options.maxInputsPerSecond)) {
+          this.dropCounter.countDroppedInput(drop.reason);
+          this.writeLog(`input ${drop.reason} id=${String(player.id)} seq=${String(drop.seq)}`);
         }
       },
       ping: (clientTime) => {
@@ -341,6 +341,7 @@ export class FfaGame {
     this.bullets.reset();
     for (const player of this.players) {
       player.idleTicks = 0;
+      clearInput(player.input, this.tick);
     }
     this.stage = { phase: FfaPhase.Countdown, match, ticksLeft: this.options.countdownTicks };
     this.hasDamageSinceScore = false;

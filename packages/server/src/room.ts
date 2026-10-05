@@ -145,7 +145,7 @@ export class Room {
       connection,
       nickname: sanitizeNickname(nickname),
       stats: sanitizeStats(stats),
-      input: createInputChannel(),
+      input: createInputChannel(this.tick),
     };
     this.players[side] = player;
     this.sendTo(player, { type: MessageType.Welcome, side, roomCode: this.code });
@@ -171,13 +171,10 @@ export class Room {
   }
 
   private acceptInput(player: Player, seq: number, action: Action): void {
-    const drop = offerInput(player.input, seq, action, this.tick, this.options.maxInputsPerSecond);
-    if (drop === 'stale') {
-      this.dropCounter.countDroppedInput('stale');
-      this.writeLog(`input stale side=${String(player.side)} seq=${String(seq)} last=${String(player.input.lastSeq)}`);
-    } else if (drop === 'limit') {
-      this.dropCounter.countDroppedInput('limit');
-      this.writeLog(`input limit side=${String(player.side)} seq=${String(seq)}`);
+    for (const drop of offerInput(player.input, seq, action, this.tick, this.options.maxInputsPerSecond)) {
+      this.dropCounter.countDroppedInput(drop.reason);
+      const last = drop.reason === 'stale' ? ` last=${String(player.input.lastSeq)}` : '';
+      this.writeLog(`input ${drop.reason} side=${String(player.side)} seq=${String(drop.seq)}${last}`);
     }
   }
 
@@ -295,7 +292,7 @@ export class Room {
     duel.phase = 'countdown';
     duel.phaseTicksLeft = this.options.countdownTicks;
     for (const player of duel.players) {
-      clearInput(player.input);
+      clearInput(player.input, this.tick);
     }
     this.writeLog(
       `round start idx=${String(this.roundIndex)} map=${String(plan.mapIndex)} score=${String(this.score[0])}:${String(this.score[1])}`,

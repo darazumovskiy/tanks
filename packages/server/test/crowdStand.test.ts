@@ -1,6 +1,14 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { DEFAULT_RULES, ffaMap, TICK_RATE, type Action, type FfaSize } from '@tanks/shared/engine';
-import { decode, EventFlag, FfaPhase, MessageType, quantizeAction, type ServerMessage } from '@tanks/shared/protocol';
+import { DEFAULT_RULES, FFA, ffaMap, ffaViewCenter, TICK_RATE, type Action, type FfaSize } from '@tanks/shared/engine';
+import {
+  decode,
+  EventFlag,
+  FfaPhase,
+  MessageType,
+  quantizeAction,
+  type FfaTankSnapshot,
+  type ServerMessage,
+} from '@tanks/shared/protocol';
 import { CrowdBot } from '../src/crowd/bot.js';
 import { crowdPyramid, type CrowdLevel } from '../src/crowd/profile.js';
 import { TargetBook } from '../src/crowd/targets.js';
@@ -20,6 +28,8 @@ const MAX_TICKS = 20_000;
 const STAND_TIMEOUT_MS = 120_000;
 // Команда доходит до сервера через два тика — как на боевом сервере при пинге ~53 мс.
 const INPUT_DELAY_TICKS = 2;
+// Запас окна огня, как в swarm.test.ts: бот видит противника с задержкой реакции, а снимок выстрела — свежий.
+const VIEW_MARGIN = 80;
 
 const MATCH_SEEDS = [0x51a7, 0x51a8, 0x51a9];
 
@@ -59,6 +69,25 @@ interface StandResult {
   visibleMax: number;
   damageTaken: number;
   offscreenDamage: number;
+  shots: number;
+  blindShots: string[];
+  widestShot: number;
+}
+
+// На сколько окно обзора вокруг точки обзора стрелка должно быть шире, чтобы в нём оказался другой живой танк; 0 —
+// уже в окне.
+function windowOverrun(shooter: FfaTankSnapshot, tanks: readonly FfaTankSnapshot[]): number {
+  const center = ffaViewCenter(shooter);
+  let best = Infinity;
+  for (const tank of tanks) {
+    if (tank.id === shooter.id || !tank.isAlive) {
+      continue;
+    }
+    const overX = Math.abs(tank.x - center.x) - FFA.viewWidth / 2;
+    const overY = Math.abs(tank.y - center.y) - FFA.viewHeight / 2;
+    best = Math.min(best, Math.max(0, overX, overY));
+  }
+  return best;
 }
 
 function isSameAction(a: Action, b: Action): boolean {
@@ -125,6 +154,9 @@ function runStand(count: number): StandResult {
     visibleMax: 0,
     damageTaken: 0,
     offscreenDamage: 0,
+    shots: 0,
+    blindShots: [],
+    widestShot: 0,
   };
   const levelOf = new Map<number, CrowdLevel>();
   crowdPyramid(count).forEach((level, index) => {
@@ -199,6 +231,20 @@ function runStand(count: number): StandResult {
     if (message.type !== MessageType.FfaSnapshot) {
       return;
     }
+    for (const birth of message.births) {
+      const shooter = message.tanks.find((tank) => tank.id === birth.owner);
+      if (shooter === undefined) {
+        continue;
+      }
+      result.shots++;
+      const overrun = windowOverrun(shooter, message.tanks);
+      result.widestShot = Math.max(result.widestShot, overrun);
+      if (overrun > VIEW_MARGIN) {
+        result.blindShots.push(
+          `${String(birth.owner)} на тике ${String(message.tick)}: за окном на ${overrun.toFixed(0)}`,
+        );
+      }
+    }
     for (const event of message.events) {
       if (event.kind !== 'hit' || (event.flags & EventFlag.Zone) !== 0) {
         continue;
@@ -268,6 +314,14 @@ describe('стенд толпы: 30 ботов по пирамиде, два м�
       `одна команда подряд — до ${String(Math.max(...result.bots.map((entry) => entry.maxSameTicks)))} тиков`,
     );
     expect(idle.map((entry) => entry.bot.nickname)).toEqual([]);
+  });
+
+  it('каждый выстрел бота — когда в окне вокруг его точки обзора есть другой танк (запас 80)', () => {
+    console.log(
+      `выстрелов ${String(result.shots)}; дальше всех за окном — ${result.widestShot.toFixed(0)} при запасе ${String(VIEW_MARGIN)}`,
+    );
+    expect(result.shots).toBeGreaterThan(0);
+    expect(result.blindShots).toEqual([]);
   });
 
   it('урон по себе — меньше 10 % урона снарядами', () => {

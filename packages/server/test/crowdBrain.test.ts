@@ -3,6 +3,8 @@ import {
   createWorld,
   DEFAULT_RULES,
   deriveStats,
+  FFA,
+  ffaViewReach,
   IDLE_ACTION,
   makeTank,
   stepWorld,
@@ -133,6 +135,16 @@ describe('мозг толпы на крафтовых видах', () => {
     const fromTwo = brainOf(DODGER).tick(viewOf(me, { bullets: [FROM_WEST, NORTH_OF_ME] }), null);
     expect(fromOne.throttle).toBeGreaterThan(0.5);
     expect(fromTwo.throttle).toBeLessThan(-0.5);
+  });
+
+  it('уход кормой вперёд, пока корма не довернулась к направлению ухода, — ползком назад с доворотом', () => {
+    const me = crowdTank(ME, 800, 450, { heading: (-20 * Math.PI) / 180 });
+    const fromBelow = bullet(103, 2, 900, 700, 0, -500);
+    const fromRight = bullet(104, 2, 1050, 500, -500, 0);
+    const action = brainOf(DODGER).tick(viewOf(me, { bullets: [fromBelow, fromRight] }), null);
+    expect(action.throttle).toBeLessThan(0);
+    expect(action.throttle).toBeGreaterThan(-0.5);
+    expect(action.turn).toBe(1);
   });
 
   it('под перекрёстным огнём на настоящем движке бот уходит без попаданий; стоящий — получает урон', () => {
@@ -347,9 +359,9 @@ describe('выбор цели', () => {
 
   it('ближайший в окне; вне окна и подбитый — не цель', () => {
     const near = crowdTank(2, 1400, 450);
-    const outside = crowdTank(3, 800 + 900, 450);
+    const behind = crowdTank(3, 800 - 600, 450);
     const wreck = crowdTank(4, 900, 450, { isAlive: false });
-    const frame: Frame = { tick: 0, tanks: [me, near, outside, wreck], bullets: [] };
+    const frame: Frame = { tick: 0, tanks: [me, near, behind, wreck], bullets: [] };
     const view = crowdView({
       myId: ME,
       fresh: frame,
@@ -419,6 +431,37 @@ describe('выбор цели', () => {
 });
 
 describe('вид бота', () => {
+  it('окно — W × H вокруг точки обзора: впереди по башне видно дальше половины окна, сзади — ближе', () => {
+    const halfWidth = FFA.viewWidth / 2;
+    const halfHeight = FFA.viewHeight / 2;
+    const reachRight = ffaViewReach(0);
+    const reachDown = ffaViewReach(Math.PI / 2);
+    const at = (dx: number, dy: number, id: number): CrowdTank => crowdTank(id, 2600 + dx, 1450 + dy);
+    const visibleIds = (turret: number, tanks: CrowdTank[], bullets: CrowdBullet[] = []): number[][] => {
+      const frame: Frame = { tick: 0, tanks: [crowdTank(ME, 2600, 1450, { turret }), ...tanks], bullets };
+      const view = crowdView({
+        myId: ME,
+        fresh: frame,
+        delayed: frame,
+        map: WIDE,
+        kits: [],
+        zone: WIDE_ZONE,
+        attackers: [],
+      });
+      return [view?.enemies.map((tank) => tank.id) ?? [], view?.bullets.map((shot) => shot.id) ?? []];
+    };
+    const right = [at(halfWidth + reachRight - 1, 0, 2), at(halfWidth + reachRight + 1, 0, 3)];
+    const left = [at(-halfWidth + reachRight - 1, 0, 4), at(-halfWidth + reachRight + 1, 0, 5)];
+    expect(visibleIds(0, [...right, ...left])).toEqual([[2, 5], []]);
+    const down = [at(0, halfHeight + reachDown - 1, 6), at(0, -halfHeight + reachDown - 1, 7)];
+    expect(visibleIds(Math.PI / 2, down)).toEqual([[6], []]);
+    const bullets = [
+      bullet(8, 2, 2600 + halfWidth + 100, 1450, 0, 0),
+      bullet(9, 2, 2600 - halfWidth + 100, 1450, 0, 0),
+    ];
+    expect(visibleIds(0, [], bullets)).toEqual([[], [8]]);
+  });
+
   it('противник и снаряды — из запаздывающего снимка, свой танк — из свежего; снаряд вне окна не виден', () => {
     const fresh: Frame = {
       tick: 5,
@@ -428,7 +471,7 @@ describe('вид бота', () => {
     const delayed: Frame = {
       tick: 2,
       tanks: [crowdTank(ME, 800, 450), crowdTank(2, 1100, 450)],
-      bullets: [bullet(7, 2, 1000, 450, -500, 0), bullet(8, 2, 1800, 450, -500, 0)],
+      bullets: [bullet(7, 2, 1000, 450, -500, 0), bullet(8, 2, 1900, 450, -500, 0)],
     };
     const view = crowdView({ myId: ME, fresh, delayed, map: OPEN, kits: [], zone: WIDE_ZONE, attackers: [] });
     expect(view?.me.x).toBe(820);
@@ -627,6 +670,24 @@ describe('бот толпы на сообщениях сервера', () => {
     bot.receive(snapshot(4, { events }));
     const counters = bot.takeCounters();
     expect(counters).toMatchObject({ snapshots: 2, gaps: 2, damageTaken: 46, offscreenDamage: 26 });
+  });
+
+  it('урон из-за экрана — по окну вокруг точки обзора: впереди по башне дальше половины окна виден, сзади ближе — нет', () => {
+    const bot = botOf(1);
+    enter(bot);
+    const ahead = 1300;
+    const behindClose = -400 + 100;
+    const tanksFacing = (turret: number): FfaTankSnapshot[] => [
+      tankSnapshot(ME, 400, 450, { turret }),
+      tankSnapshot(2, ahead, 450),
+      tankSnapshot(3, behindClose, 450),
+    ];
+    bot.receive(snapshot(1, { tanks: tanksFacing(0), ackSeq: 1 }));
+    bot.receive(snapshot(2, { tanks: tanksFacing(0), ackSeq: 2, events: [hit(2, 10), hit(3, 20)] }));
+    expect(bot.takeCounters()).toMatchObject({ damageTaken: 30, offscreenDamage: 20 });
+    bot.receive(snapshot(3, { tanks: tanksFacing(Math.PI), ackSeq: 3 }));
+    bot.receive(snapshot(4, { tanks: tanksFacing(Math.PI), ackSeq: 4, events: [hit(2, 10), hit(3, 20)] }));
+    expect(bot.takeCounters()).toMatchObject({ damageTaken: 30, offscreenDamage: 10 });
   });
 
   it('попавший противник становится целью сразу, хотя другой ближе; незнакомый танк в составе не ломает вид', () => {

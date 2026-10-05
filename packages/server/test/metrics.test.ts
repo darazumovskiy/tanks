@@ -26,6 +26,8 @@ const EXPECTED_SERIES = [
   'tanks_bytes_total{direction="out"}',
   'tanks_inputs_dropped_total{reason="stale"}',
   'tanks_inputs_dropped_total{reason="limit"}',
+  'tanks_inputs_dropped_total{reason="overflow"}',
+  'tanks_inputs_dropped_total{reason="backlog"}',
   'process_resident_memory_bytes',
   'process_cpu_seconds_total',
   'process_start_time_seconds',
