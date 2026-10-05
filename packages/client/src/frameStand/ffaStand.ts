@@ -279,7 +279,6 @@ function playFrame(target: StandTarget, frame: FfaStandFrame, zone: ZonePlan): v
       ...helpersOf(frame, view, framing.camera, renderer.screen.pixelRatio),
       controls: { sticks: [], isShotGuarded: false, isZoneFiring: false, isReversing: false },
       readout: { ...READOUT, gameTick: Math.round((frame.zoneTimeS ?? 0) * TICK_RATE) },
-      isFullReadout: false,
       frameMs: FRAME_MS,
       frameTimes: [],
     });

@@ -143,7 +143,7 @@ let clock = 0;
 let pendingFrame: ((now: number) => void) | null = null;
 
 // Страница боя как в index.html: холст, корень интерфейса толпы и панель настроек — соседи.
-function makeGame(storedToken = '', isAdmin = false, isTouch = false, settings: Partial<Settings> = {}): Harness {
+function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings> = {}): Harness {
   document.body.innerHTML = '';
   const stage = document.createElement('div');
   const canvas = document.createElement('canvas');
@@ -175,7 +175,6 @@ function makeGame(storedToken = '', isAdmin = false, isTouch = false, settings: 
       hud,
       settings: { ...defaultSettings(), hasRicochetGuard: false, ...settings },
       isTouchDevice: isTouch,
-      isAdmin,
       telemetry: new Telemetry(CLIENT_INFO, { beacon: () => true }),
       onAutoFireChange: (isOn) => autoFire.push(isOn),
       onFieldControlsChange: (isVisible) => fieldControls.push(isVisible),
@@ -956,13 +955,15 @@ describe('экраны вокруг боя', () => {
     expect(statusText(harness)).toContain('1-й из 3');
   });
 
-  it('строка отладки: игроку — только игра и таймкод, админу — полная', () => {
-    const player = makeGame();
-    enterFight(player, arena([tank(ME, 600, 650)]));
-    expect(player.renderer.last?.isFullReadout).toBe(false);
-    const admin = makeGame('', true);
-    enterFight(admin, arena([tank(ME, 600, 650)]));
-    expect(admin.renderer.last?.isFullReadout).toBe(true);
+  it('строка отладки у игрока без админ-режима: игра, кадры за секунду и худший кадр', () => {
+    const harness = makeGame();
+    enterFight(harness, arena([tank(ME, 600, 650)]));
+    const secondOfFrames = Math.ceil(1000 / FRAME_MS) + 1;
+    harness.frames(secondOfFrames);
+    const readout = harness.renderer.last?.readout;
+    expect(readout?.gameId).toBe('K7QX');
+    expect(readout?.fps).toBeGreaterThan(0);
+    expect(readout?.worstFrameMs).toBeGreaterThanOrEqual(FRAME_MS - 1);
   });
 
   it('отладка показывает куски пола и их память от рендера', () => {
@@ -1146,7 +1147,7 @@ describe('интерфейс матча', () => {
       [true, 3],
       [false, 4],
     ] as const) {
-      const harness = makeGame('', false, isTouch);
+      const harness = makeGame('', isTouch);
       const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
       enterFight(harness, world);
       const deaths = [
@@ -1280,7 +1281,7 @@ describe('интерфейс матча', () => {
   });
 
   it('U9 зритель: за убийцей; касание — следующий по таблице; цель погибла — следующий; живых нет — центр карты', () => {
-    const harness = makeGame('', false, true);
+    const harness = makeGame('', true);
     const world = arena([tank(ENEMY, 1400, 650), tank(6, 500, 300), tank(7, 1700, 1000)]);
     const socket = harness.socket();
     socket.open();
@@ -1523,7 +1524,7 @@ describe('помощники боя', () => {
     expect(harness.renderer.last?.aimLine?.state).toBe('onTarget');
     expect(harness.renderer.last?.arrows.map((arrow) => arrow.id)).toEqual([7, 6]);
 
-    const lineOff = makeGame('', false, false, { hasAimLine: false });
+    const lineOff = makeGame('', false, { hasAimLine: false });
     enterFight(lineOff, arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000), tank(6, 2200, 200)]));
     lineOff.frames(2);
     expect(lineOff.state().aimLine).toBeNull();
@@ -1587,7 +1588,7 @@ describe('помощники боя', () => {
   // Башня вверх: окно камеры сдвинуто вверх на 126 и кончается в 576 над танком; оба врага ближе предела огня по цели.
   it('огонь по цели открыт по живому чужому в окне камеры; враг на пути за окном огня не открывает', () => {
     const fired = (enemyY: number): boolean => {
-      const harness = makeGame('', false, false, { hasZoneFire: true });
+      const harness = makeGame('', false, { hasZoneFire: true });
       enterFight(harness, arena([tank(ME, 1800, 1000, -Math.PI / 2), tank(ENEMY, 1800, enemyY)]));
       harness.game.toggleAutoFire();
       harness.frames(6);
@@ -1600,7 +1601,7 @@ describe('помощники боя', () => {
   // Выстрел в край карты вернётся в свой корпус; враг между танком и краем примет снаряд на себя.
   it('предохранитель при выключенной линии учитывает первый танк на пути: враг перед стеной — выстрел не сдержан', () => {
     const shoot = (tanks: Tank[]): { isFiring: boolean; isGuarded: boolean } => {
-      const harness = makeGame('', false, false, { hasRicochetGuard: true, hasAimLine: false });
+      const harness = makeGame('', false, { hasRicochetGuard: true, hasAimLine: false });
       enterFight(harness, arena(tanks));
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
       harness.frames(6);
@@ -1615,7 +1616,7 @@ describe('помощники боя', () => {
   });
 
   it('«упреждаю» в толпе не показывается даже с флажком упреждения', () => {
-    const harness = makeGame('', false, false, { hasLeadHint: true });
+    const harness = makeGame('', false, { hasLeadHint: true });
     const crossing = tank(ENEMY, 700, 900, Math.PI / 2);
     crossing.speed = 150;
     const world = arena([tank(ME, 300, 1000), crossing]);

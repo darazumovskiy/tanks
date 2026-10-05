@@ -56,7 +56,6 @@ export interface FfaGameOptions {
   hud: HTMLElement;
   settings: Readonly<Settings>;
   isTouchDevice: boolean;
-  isAdmin: boolean;
   telemetry: Telemetry;
   onAutoFireChange: (isOn: boolean) => void;
   // Кнопки управления боем нужны, только пока свой танк на поле.
@@ -707,7 +706,6 @@ export class FfaGame {
         correctionPx: this.prediction?.lastCorrectionPx ?? 0,
         isMuted: this.sfx.isMuted,
       },
-      isFullReadout: this.options.isAdmin,
       frameMs: elapsed,
       frameTimes: this.frameTimes,
     });

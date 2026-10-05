@@ -276,7 +276,11 @@ describe('рой ботов через сокет', () => {
     expect(report.brainMs.median).not.toBeNull();
     expect(report.serverTickMaxMs).not.toBeNull();
     expect(report.visibleBullets.average).not.toBeNull();
-    expect(formatReport(report)).toContain('8/8 в игре · бой');
+    expect(report.games).toHaveLength(1);
+    const game = report.games[0];
+    expect(game?.id).toMatch(/^[A-Z0-9]{4}$/);
+    expect(game?.gameTick).toBeGreaterThan(0);
+    expect(formatReport(report)).toContain(`8/8 в игре · ${game?.id ?? ''} `);
   }, 60_000);
 
   it('28 ботов в ffa30 — одна игра, уровни пирамидой; в лобби тишина дольше порога соединения не рвёт', async () => {
@@ -285,6 +289,10 @@ describe('рой ботов через сокет', () => {
     await until(() => swarm.bots().every((bot) => bot.isOnline), 'все 28 в игре');
     await sleep(600);
     expect(swarm.bots().every((bot) => bot.isOnline)).toBe(true);
+    const lobby = swarm.report();
+    expect(lobby.games).toHaveLength(1);
+    expect(lobby.games[0]?.gameTick).toBeNull();
+    expect(formatReport(lobby)).toContain(`28/28 в игре · ${lobby.games[0]?.id ?? ''} · лобби`);
     const watcher = await observer(port, 'ffa30');
     const roster = await watcher.nextOfType(MessageType.FfaRoster);
     const counts = new Map<string, number>();
@@ -387,7 +395,7 @@ describe('рой ботов через сокет', () => {
     await probe.close();
     const swarm = startSwarm(port, { count: 2 });
     const empty = swarm.report();
-    expect(empty).toMatchObject({ online: 0, phase: null, serverTickMaxMs: null, offscreenShare: null });
+    expect(empty).toMatchObject({ online: 0, games: [], phase: null, serverTickMaxMs: null, offscreenShare: null });
     expect(empty.pingMs.median).toBeNull();
     expect(formatReport(empty)).toContain('нет игры');
     await sleep(150);
@@ -444,10 +452,11 @@ describe('рой ботов через сокет', () => {
 });
 
 describe('отчёт роя', () => {
-  function reportOf(phase: FfaPhase | null, matchTick = 0): SwarmReport {
+  function reportOf(phase: FfaPhase | null, matchTick = 0, games: SwarmReport['games'] = []): SwarmReport {
     return {
       online: 3,
       total: 4,
+      games,
       phase,
       matchTick,
       bytesPerSecond: { average: 81_920, max: 90_000 },
@@ -470,6 +479,19 @@ describe('отчёт роя', () => {
     expect(formatReport(reportOf(FfaPhase.Lobby))).toContain('· лобби ·');
     expect(formatReport(reportOf(FfaPhase.Countdown))).toContain('· отсчёт ·');
     expect(formatReport(reportOf(FfaPhase.Results))).toContain('· итоги ·');
+  });
+
+  it('игра — номером и таймкодом, как внизу экрана игрока; до первого снимка — только номер; несколько игр — через запятую', () => {
+    const fight = reportOf(FfaPhase.Fight, 72 * 30, [{ id: 'BNRS', gameTick: 99 * 30 + 12 }]);
+    expect(formatReport(fight)).toMatch(/^3\/4 в игре · BNRS 01:39 · бой 1:12 · /);
+    expect(formatReport(reportOf(FfaPhase.Lobby, 0, [{ id: 'BNRS', gameTick: null }]))).toMatch(
+      /^3\/4 в игре · BNRS · лобби · /,
+    );
+    const two = [
+      { id: 'BNRS', gameTick: 30 },
+      { id: 'K7MF', gameTick: null },
+    ];
+    expect(formatReport(reportOf(FfaPhase.Fight, 30, two))).toMatch(/^3\/4 в игре · BNRS 00:01, K7MF · бой/);
   });
 
   it('адрес здоровья сервера — из адреса сокета; ответ без длительности тика — прочерк', async () => {

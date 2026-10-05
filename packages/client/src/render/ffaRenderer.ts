@@ -81,8 +81,6 @@ export interface FfaDrawInput {
   aimLine: AimLine | null;
   arrows: readonly EdgeArrow[];
   readout: DebugReadout;
-  // Полная строка отладки — только админу; игрок видит игру и таймкод.
-  isFullReadout: boolean;
   frameMs: number;
   frameTimes: readonly number[];
 }
@@ -185,11 +183,7 @@ export class FfaRenderer {
     this.drawArrows(input.arrows, screen);
     this.layers.drawAnnouncements(screen);
     this.layers.drawFlash(screen);
-    if (input.isFullReadout) {
-      this.layers.drawDebug(input.readout, screen);
-    } else {
-      this.layers.drawGameStamp(input.readout, screen);
-    }
+    this.layers.drawDebug(input.readout, screen);
     this.layers.drawFrameGraph(input.frameTimes, screen);
     const { controls } = input;
     this.layers.drawSticks(controls.sticks, controls.isZoneFiring, controls.isReversing, screen);

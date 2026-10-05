@@ -112,6 +112,8 @@
 | [Effekseer](https://github.com/effekseer/EffekseerForWebGL/), [Spine](https://github.com/esotericsoftware/spine-runtimes/blob/HEAD/spine-ts/README.md) | нет / частично | Низкая |
 | [PixiJS + pixi-filters](https://github.com/pixijs/filters) | переход на WebGL | План Б, если Canvas-bloom упрётся в кадры на телефоне |
 
+**Анимация из видео** (ролик «Игра с GPT-6 Astra за 24 часа», 2026-09-15; разбор — в [3d-pipeline.md](3d-pipeline.md)). Персонаж генерируется в позе покоя на зелёном фоне; агент пишет самодостаточный промпт на каждое действие; видеомодель [Seedance 2.5](https://fal.ai/models/bytedance/seedance-2.5/image-to-video) оживляет картинку как первый кадр (можно задать и последний; 4–30 с; 480p ~$0,22 за секунду; есть `seed`; звук выключается); агент режет видео на кадры, убирает зелёный фон, выравнивает размер и положение, собирает спрайт-лист и делает страницу превью — персонаж, действие, фон тёмный, светлый или прозрачный, отражение. Плавнее, чем покадровая генерация картинок. Танку как жёсткому телу это не нужно; годится для покадровых эффектов — взрыва, огня, дыма — на чёрном фоне под аддитивное смешение, как альтернатива готовым CC0-листам.
+
 ### Интерфейс и оценка
 
 - [Radix custom palette](https://www.radix-ui.com/colors/docs/overview/custom-palettes): 12-шаговая шкала от `#e8825a` + тёмная тема + alpha — готовые состояния hover/pressed/disabled. [Lucide](https://github.com/lucide-icons/lucide), [Phosphor](https://phosphoricons.com/) — иконки. [Figma MCP](https://github.com/figma/mcp-server-guide/blob/HEAD/README.md) — макеты до кода; для 5–6 экранов дуэли можно сразу в код.

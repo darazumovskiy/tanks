@@ -73,11 +73,11 @@ export class CrowdBot {
   playerId: number | null = null;
   phase: FfaPhase | null = null;
   matchTick = 0;
+  gameId = '';
   private readonly map: FfaMap;
   private readonly brain: CrowdBrain;
   private readonly targeting: Targeting;
   private readonly mirror: BulletMirror;
-  private gameId = '';
   private seq = 0;
   private roster = new Map<number, DerivedStats>();
   private zonePlan: ZonePlan | null = null;
@@ -97,6 +97,10 @@ export class CrowdBot {
 
   get nickname(): string {
     return this.options.nickname;
+  }
+
+  get gameTick(): number | null {
+    return this.lastGameTick;
   }
 
   // Новое соединение: вход с пропуском (пусто — новым игроком), номера команд — с единицы.

@@ -351,7 +351,6 @@ async function startFfa(size: FfaSize): Promise<void> {
     hud: byId('ffa-hud', HTMLElement),
     settings: store.value,
     isTouchDevice: hasTouch,
-    isAdmin,
     telemetry,
     onAutoFireChange: autoFire.reflect,
     onFieldControlsChange: (isVisible) => {
