@@ -58,7 +58,10 @@ export interface FfaOptions {
   maxInputsPerSecond: number;
   minimum: Readonly<Record<FfaSize, number>>;
   mapFor: (size: FfaSize) => FfaMap;
+  matchSeed: () => number;
 }
+
+const SEED_LIMIT = 2 ** 31;
 
 export const DEFAULT_FFA_OPTIONS: FfaOptions = {
   countdownTicks: 3 * TICK_RATE,
@@ -71,6 +74,7 @@ export const DEFAULT_FFA_OPTIONS: FfaOptions = {
   maxInputsPerSecond: 90,
   minimum: { 10: 7, 30: 20, 50: 35 },
   mapFor: ffaMap,
+  matchSeed: () => randomInt(SEED_LIMIT),
 };
 
 interface GamePlayer {
@@ -95,7 +99,6 @@ type Stage =
 type LeaveReason = 'offline' | 'idle';
 
 const TOKEN_BYTES = 12;
-const SEED_LIMIT = 2 ** 31;
 const SCORE_INTERVAL_TICKS = TICK_RATE;
 
 function isSameAction(a: Action, b: Action): boolean {
@@ -332,7 +335,7 @@ export class FfaGame {
 
   private startCountdown(): void {
     this.matchIndex++;
-    const seed = randomInt(SEED_LIMIT);
+    const seed = this.options.matchSeed();
     const setups = this.players.map((player) => ({ id: player.id, name: player.nickname, stats: player.stats }));
     const match = createFfaMatch(this.map, setups, seed, this.rules, this.options.matchSeconds);
     this.bullets.reset();

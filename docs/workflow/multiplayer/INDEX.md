@@ -33,6 +33,9 @@
 | `shared/src/engine/ffa.ts`, `spawn.ts`, `ffaMaps.ts`, `random.ts` | Матч, выбор точки возрождения, карты 10/30/50, генератор с сидом |
 | `shared/src/protocol/messages.ts`, `codec.ts`, `ffaRoom.ts`, `ffaEvents.ts`, `bullets.ts` | Сообщения и кодек v6, коды `ffa10/30/50`, события снимка, снаряды: разница на сервере и зеркало у клиента |
 | `server/src/ffaGame.ts`, `roomManager.ts`, `inputs.ts`, `app.ts` | Общая игра, подбор, приём команд, маршрут кодов |
-| `server/src/bots/` | Мозг «Охотник» и профили уровней — основа сетевых ботов |
+| `server/src/bots/` | Лестница дуэли — заморожена, отпечаток в `server/test/ladder.test.ts` |
+| `server/src/crowd/` | Боты толпы: профили и пирамида, мозг, выбор цели, вид, бот без транспорта |
+| `server/src/swarm/` | Сетевой рой: `swarm.ts`, точка входа `main.ts` (`npm run swarm`) |
+| `server/test/crowdBrain.test.ts`, `crowdStand.test.ts`, `swarm.test.ts` | Мозг на крафтовых видах, стенд толпы на 30 ботов, рой через сокет |
 | `server/test/ffa.test.ts`; `shared/src/engine/ffa.test.ts`, `spawn.test.ts`, `ffaMaps.test.ts`; `shared/src/protocol/bullets.test.ts` | Тесты общей игры, матча, карт и снарядов |
 | `client/src/game.ts`, `prediction.ts`, `render/` | Клиент — пока только дуэль |

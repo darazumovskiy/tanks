@@ -18,8 +18,11 @@ export const KIT = { radius: 16, heal: 50, firstSpawn: 15, respawn: 20 } as cons
 export const ZONE = { startShrink: 60, endShrink: 100, finalRadius: 170, damagePerSecond: 20 } as const;
 // Зона начинает сжиматься с круга, описанного вокруг поля, с запасом.
 export const ZONE_START_MARGIN = 60;
-// Сжатие зоны — доли длительности матча: при 120 с это 45–105 с.
+// Сжатие зоны — доли длительности матча: при 120 с это 45–105 с. Окно обзора — прямоугольник вокруг своего
+// танка: дальше него в бою толпы не видят ни камера, ни боты.
 export const FFA = {
+  viewWidth: 1600,
+  viewHeight: 900,
   matchSeconds: 120,
   respawnSeconds: 4,
   wreckSeconds: 2,

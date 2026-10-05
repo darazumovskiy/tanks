@@ -40,6 +40,7 @@ export default defineConfig({
       exclude: [
         '**/*.test.ts',
         'packages/server/src/main.ts',
+        'packages/server/src/swarm/main.ts',
         'packages/analysis/src/main.ts',
         'packages/analysis/src/logFixture.ts',
       ],
