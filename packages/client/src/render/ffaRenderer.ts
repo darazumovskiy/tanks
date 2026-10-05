@@ -5,6 +5,7 @@ import type { FfaFrameView, FfaViewBullet, FfaViewTank } from '../ffa/ffaPredict
 import type { Settings } from '../settings.js';
 import type { StickState } from '../touch.js';
 import { aimLineStyleById } from './aimLineStyles.js';
+import { TANK_ART_SCALE } from './art.js';
 import { isInView, type Camera } from './camera.js';
 import type { Effects, FxBullet } from './effects.js';
 import { FieldRenderer, type FieldScene, type SceneTank } from './field.js';
@@ -25,7 +26,7 @@ const MAX_PIXEL_RATIO = 4;
 
 // Кольцо неуязвимости — черновой вид: ореол и ядро цветом танка; у своего ядро — дуга остатка по часовой с
 // верха поверх бледного полного кольца.
-const SHIELD_RADIUS = 38;
+const SHIELD_RADIUS = 38 * TANK_ART_SCALE;
 const SHIELD_HALO_WIDTH = 7;
 const SHIELD_HALO_ALPHA = 0.18;
 const SHIELD_CORE_WIDTH = 2;

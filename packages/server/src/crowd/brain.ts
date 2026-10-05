@@ -5,6 +5,8 @@ import {
   MUZZLE_OFFSET,
   normalizeAngle,
   REVERSE_FACTOR,
+  TANK_HIT_RADIUS,
+  TANK_RADIUS,
   TICK_RATE,
   type Action,
   type BattleMap,
@@ -14,13 +16,13 @@ import type { CrowdProfile } from './profile.js';
 import type { CrowdBullet, CrowdTank, CrowdView } from './view.js';
 
 const CELL = 25;
-// Радиус танка с запасом: клетка сетки и отрезок пути считаются свободными на таком удалении от стен.
-const PAD = 26;
+// Клетка сетки и отрезок пути считаются свободными на таком удалении от стен.
+const PAD = TANK_RADIUS + 2;
 const NEAREST_FREE_RADIUS = 6;
 const REPLAN_TICKS = 10;
 const MIN_REPLAN_GAP_TICKS = 3;
 const GOAL_SHIFT = 100;
-const WAYPOINT_SKIP_PAD = 24;
+const WAYPOINT_SKIP_PAD = TANK_RADIUS;
 const WAYPOINT_REACHED = 14;
 const REVERSE_ANGLE = 2.2;
 const STEER_GAIN = 3;
@@ -36,7 +38,7 @@ const THREAT_HORIZON_S = 0.9;
 const THREAT_STEP_S = 0.1;
 // Ехать как ехал — только с таким запасом до снарядов: модель кандидатов не знает разгона, а уход, едва
 // ставший безопасным по инерции, иначе бросался бы, и танк возвращался под снаряд.
-const SAFE_MISS = 60;
+const SAFE_MISS = TANK_HIT_RADIUS + 31;
 // Выбранный уход держится столько тиков: без этого бот метался бы между равными кандидатами.
 const DODGE_HOLD_TICKS = 9;
 const DODGE_DIRECTIONS = 8;

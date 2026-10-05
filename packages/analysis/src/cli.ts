@@ -66,6 +66,9 @@ export function runCli(argv: readonly string[], print: (line: string) => void): 
     print(`${id}: нет game start или раундов — пропуск`);
   }
   print(`Игр разобрано: ${String(result.games.length)}`);
+  if (result.ffaGames.length > 0) {
+    print(`Боёв толпы прогнано: ${String(result.ffaGames.length)}`);
+  }
   print(result.reportPath);
   return EXIT_OK;
 }

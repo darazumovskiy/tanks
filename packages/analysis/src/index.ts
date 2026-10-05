@@ -1,9 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { analyzeFfaLog, type FfaGameSummary } from './ffaGames.js';
 import { analyzeGame, type GameAnalysis } from './game.js';
 import { listGameIds, parseGameLog, readDeviceIndex } from './logParser.js';
 import { buildReport, localSortKey } from './report.js';
 
+export type { FfaGameSummary, FfaMatchSummary } from './ffaGames.js';
 export type { GameAnalysis, GameSummary, RoundSummary } from './game.js';
 
 const DEFAULT_TZ_HOURS = 3;
@@ -22,10 +24,11 @@ export interface AnalyzeResult {
   reportPath: string;
   jsonPath: string;
   games: GameAnalysis[];
+  ffaGames: FfaGameSummary[];
   skipped: string[];
 }
 
-// Папка журналов → отчёт и JSON; skipped — файлы без `game start` или без раундов.
+// Папка журналов → отчёт и JSON; бои толпы прогоняются движком; skipped — файлы без `game start` или без раундов.
 export function analyzeLogs(logDir: string, options: AnalyzeOptions = {}): AnalyzeResult {
   const outDir = options.outDir ?? join(logDir, '..', DEFAULT_OUT_DIR_NAME);
   const tzHours = options.tzHours ?? DEFAULT_TZ_HOURS;
@@ -33,12 +36,19 @@ export function analyzeLogs(logDir: string, options: AnalyzeOptions = {}): Analy
   mkdirSync(outDir, { recursive: true });
   const devices = readDeviceIndex(logDir);
   const games: GameAnalysis[] = [];
+  const ffaGames: FfaGameSummary[] = [];
   const skipped: string[] = [];
   for (const id of listGameIds(logDir)) {
     if (only !== null && !only.has(id)) {
       continue;
     }
-    const parsed = parseGameLog(id, readFileSync(join(logDir, `${id}.log`), 'utf8'));
+    const text = readFileSync(join(logDir, `${id}.log`), 'utf8');
+    const ffa = analyzeFfaLog(id, text);
+    if (ffa !== null) {
+      ffaGames.push(ffa);
+      continue;
+    }
+    const parsed = parseGameLog(id, text);
     if (parsed === null) {
       skipped.push(id);
       continue;
@@ -56,6 +66,6 @@ export function analyzeLogs(logDir: string, options: AnalyzeOptions = {}): Analy
       JSON_INDENT,
     ),
   );
-  writeFileSync(reportPath, buildReport(games, tzHours));
-  return { reportPath, jsonPath, games, skipped };
+  writeFileSync(reportPath, buildReport(games, tzHours, ffaGames));
+  return { reportPath, jsonPath, games, ffaGames, skipped };
 }

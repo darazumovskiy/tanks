@@ -1,4 +1,5 @@
 import type { FieldSize } from '@tanks/shared/engine';
+import { TANK_ART_SCALE } from './art.js';
 import type { Camera } from './camera.js';
 import { makeCanvas } from './view.js';
 
@@ -14,8 +15,10 @@ export interface DecalLayer {
 
 const TREAD_COLOR = 'rgba(0,0,0,0.2)';
 // Гусеницы — по бокам корпуса, след ложится за кормой.
-const TREAD_SIDE_OFFSETS = [-17, 17];
-const TREAD_BACK = 14;
+const TREAD_SIDE_OFFSETS = [-17 * TANK_ART_SCALE, 17 * TANK_ART_SCALE];
+const TREAD_BACK = 14 * TANK_ART_SCALE;
+const TREAD_MARK_LENGTH = 8 * TANK_ART_SCALE;
+const TREAD_MARK_WIDTH = 9 * TANK_ART_SCALE;
 const FADE_COLOR = 'rgba(0,0,0,0.05)';
 
 export function drawTread(g: CanvasRenderingContext2D, x: number, y: number, heading: number): void {
@@ -26,7 +29,7 @@ export function drawTread(g: CanvasRenderingContext2D, x: number, y: number, hea
     g.save();
     g.translate(x + px * offset - Math.cos(heading) * TREAD_BACK, y + py * offset - Math.sin(heading) * TREAD_BACK);
     g.rotate(heading);
-    g.fillRect(-4, -4.5, 8, 9);
+    g.fillRect(-TREAD_MARK_LENGTH / 2, -TREAD_MARK_WIDTH / 2, TREAD_MARK_LENGTH, TREAD_MARK_WIDTH);
     g.restore();
   }
 }

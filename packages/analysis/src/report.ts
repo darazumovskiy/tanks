@@ -1,4 +1,5 @@
 import { TICK_RATE } from '@tanks/shared/engine';
+import type { FfaGameSummary } from './ffaGames.js';
 import type { GameAnalysis, GameSummary, RoundSummary } from './game.js';
 import type { InferredStats } from './inferStats.js';
 import { SECONDS_PER_DAY } from './logParser.js';
@@ -24,6 +25,7 @@ export const REPORT_SECTIONS = {
   dynamics: '## 4. Динамика движения и команды',
   wonLost: '## 5. Выигранные и проигранные раунды по устройствам (уровни ≥ 4)',
   quality: '## 6. Контроль качества разбора',
+  ffa: '## 7. Бой толпы: прогон журнала движком',
 } as const;
 
 function fmt(value: number | null | undefined, suffix = ''): string {
@@ -456,7 +458,41 @@ function qualitySection(results: readonly GameAnalysis[]): string {
   );
 }
 
-export function buildReport(results: readonly GameAnalysis[], tzHours: number): string {
+function ffaSection(ffaGames: readonly FfaGameSummary[]): string {
+  if (ffaGames.length === 0) {
+    return 'Журналов боя толпы нет.';
+  }
+  const rows: Cell[][] = [];
+  for (const game of ffaGames) {
+    const humans = game.humans.length === 0 ? EMPTY : game.humans.join(', ');
+    if (game.matches.length === 0) {
+      rows.push([game.id, game.size, humans, EMPTY, EMPTY, EMPTY, EMPTY, 'журнал без команд']);
+      continue;
+    }
+    for (const match of game.matches) {
+      rows.push([
+        game.id,
+        game.size,
+        humans,
+        match.index,
+        match.ticks,
+        `${String(match.sums - match.mismatches)} / ${String(match.sums)}`,
+        fmt(match.firstMismatchTick),
+        match.isComplete ? 'да' : 'нет',
+      ]);
+    }
+  }
+  return mdTable(
+    ['Игра', 'Мест', 'Люди', 'Матч', 'Тиков', 'Сверки совпали', 'Первое расхождение, тик', 'Доигран'],
+    rows,
+  );
+}
+
+export function buildReport(
+  results: readonly GameAnalysis[],
+  tzHours: number,
+  ffaGames: readonly FfaGameSummary[],
+): string {
   const groups = groupByLevelDevice(results);
   return [
     '# Анализ журналов дуэлей человек — бот',
@@ -488,6 +524,10 @@ export function buildReport(results: readonly GameAnalysis[], tzHours: number): 
     REPORT_SECTIONS.quality,
     '',
     qualitySection(results),
+    '',
+    REPORT_SECTIONS.ffa,
+    '',
+    ffaSection(ffaGames),
     '',
   ].join('\n');
 }

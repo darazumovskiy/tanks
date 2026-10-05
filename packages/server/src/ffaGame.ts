@@ -21,8 +21,16 @@ import {
   bulletSnapshot,
   encode,
   ErrorCode,
+  FFA_JOURNAL,
+  FFA_LEAVE_IDLE,
+  FFA_LEAVE_OFFLINE,
   FfaPhase,
+  formatJournalActions,
+  formatJournalRoster,
+  formatJournalStats,
+  formatJournalSum,
   gameTimecode,
+  isJournalSumTick,
   MessageType,
   NO_ID,
   rulesToByte,
@@ -96,7 +104,7 @@ type Stage =
   | { phase: typeof FfaPhase.Fight; match: FfaMatch }
   | { phase: typeof FfaPhase.Results; match: FfaMatch; ticksLeft: number };
 
-type LeaveReason = 'offline' | 'idle';
+type LeaveReason = typeof FFA_LEAVE_OFFLINE | typeof FFA_LEAVE_IDLE;
 
 const TOKEN_BYTES = 12;
 const SCORE_INTERVAL_TICKS = TICK_RATE;
@@ -143,6 +151,7 @@ export class FfaGame {
   private readonly bullets = new BulletTracker();
   private hasDamageSinceScore = false;
   private ticksSinceScore = 0;
+  private journalActions: ReadonlyMap<number, Action> = new Map();
 
   constructor(
     readonly size: FfaSize,
@@ -302,7 +311,7 @@ export class FfaGame {
       }
       player.offlineTicks++;
       if (player.offlineTicks >= this.options.reconnectTicks) {
-        this.removePlayer(player, 'offline');
+        this.removePlayer(player, FFA_LEAVE_OFFLINE);
       }
     }
   }
@@ -313,7 +322,7 @@ export class FfaGame {
     if (stage.phase !== FfaPhase.Lobby) {
       leaveFfaMatch(stage.match, player.id);
     }
-    this.writeLog(`leave id=${String(player.id)} reason=${reason}`);
+    this.writeLog(`${FFA_JOURNAL.leave} id=${String(player.id)} reason=${reason}`);
     this.broadcast(this.rosterMessage());
     this.broadcast(this.stateMessage());
   }
@@ -346,7 +355,11 @@ export class FfaGame {
     this.stage = { phase: FfaPhase.Countdown, match, ticksLeft: this.options.countdownTicks };
     this.hasDamageSinceScore = false;
     this.ticksSinceScore = 0;
-    this.writeLog(`match start idx=${String(this.matchIndex)} players=${String(setups.length)} seed=${String(seed)}`);
+    this.journalActions = new Map();
+    this.writeLog(
+      `${FFA_JOURNAL.matchStart} idx=${String(this.matchIndex)} players=${String(setups.length)} seed=${String(seed)}` +
+        ` dur=${String(this.options.matchSeconds)} roster=${formatJournalRoster(setups)}`,
+    );
     this.broadcast(this.stateMessage());
     this.broadcast(this.matchStartMessage(match));
     this.broadcast(this.scoreMessage(match));
@@ -361,6 +374,7 @@ export class FfaGame {
     this.sendSnapshots(stage.match, [], { births: [], bounces: [], deaths: [] });
     if (stage.ticksLeft <= 0) {
       this.stage = { phase: FfaPhase.Fight, match: stage.match };
+      this.writeLog(`${FFA_JOURNAL.fightStart} idx=${String(this.matchIndex)}`);
       this.broadcast(this.stateMessage());
     }
   }
@@ -370,6 +384,7 @@ export class FfaGame {
     for (const player of this.players) {
       if (!match.players.some((candidate) => candidate.id === player.id)) {
         joinFfaMatch(match, { id: player.id, name: player.nickname, stats: player.stats });
+        this.writeLog(`${FFA_JOURNAL.join} id=${String(player.id)} stats=${formatJournalStats(player.stats)}`);
         hasNewcomer = true;
       }
     }
@@ -381,6 +396,11 @@ export class FfaGame {
       }
       this.trackIdle(player, action, match);
     }
+    const actionsLine = formatJournalActions(this.journalActions, actions);
+    if (actionsLine !== null) {
+      this.writeLog(actionsLine);
+    }
+    this.journalActions = actions;
     const events = stepFfaMatch(match, actions);
     const changes = this.bullets.diff(match.world.bullets);
     for (const event of events) {
@@ -389,12 +409,15 @@ export class FfaGame {
         this.writeLog(line);
       }
     }
+    if (isJournalSumTick(match)) {
+      this.writeLog(formatJournalSum(match));
+    }
     this.sendSnapshots(match, events.map(toFfaSnapshotEvent), changes);
     this.updateScore(match, events, hasNewcomer);
     this.kickIdle();
     if (match.isOver) {
       this.stage = { phase: FfaPhase.Results, match, ticksLeft: this.options.resultsTicks };
-      this.writeLog(`match over idx=${String(this.matchIndex)}`);
+      this.writeLog(`${FFA_JOURNAL.matchOver} idx=${String(this.matchIndex)}`);
       this.broadcast(this.scoreMessage(match));
       this.broadcast(this.stateMessage());
     }
@@ -434,7 +457,7 @@ export class FfaGame {
         continue;
       }
       connection.send(encode({ type: MessageType.Error, code: ErrorCode.Idle, text: 'выкинуло за бездействие' }));
-      this.removePlayer(player, 'idle');
+      this.removePlayer(player, FFA_LEAVE_IDLE);
       connection.close();
     }
   }

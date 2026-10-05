@@ -6,3 +6,4 @@ export * from './botRoom.js';
 export * from './ffaRoom.js';
 export { toFfaSnapshotEvent } from './ffaEvents.js';
 export * from './bullets.js';
+export * from './ffaJournal.js';

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TANK_RADIUS } from './constants.js';
-import { buildFfaMap, FFA_SIZES, ffaMap, type FfaMap, type FfaSize } from './ffaMaps.js';
-import { circleRect } from './geometry.js';
+import { buildFfaMap, FFA_PASSAGE_CLEARANCE, FFA_SIZES, ffaMap, type FfaMap, type FfaSize } from './ffaMaps.js';
+import { circleRect, type Wall } from './geometry.js';
 import type { Point } from './maps.js';
 
 const EXPECTED: Readonly<Record<FfaSize, { width: number; height: number; areas: number; kits: number }>> = {
@@ -11,9 +11,17 @@ const EXPECTED: Readonly<Record<FfaSize, { width: number; height: number; areas:
 };
 const GRID_STEP = 10;
 const MIN_AREA_SPACING = 400;
+// Стены округляются до целых: края соседних клеток сдвигаются на единицу.
+const PASSAGE_ROUNDING = 1;
 // Отпечатки карт, одинаковые на V8 и JavaScriptCore (проверено jsc из macOS): клиент строит карту сам,
 // поэтому смена раскладки должна быть заметна.
 const MAP_DIGESTS: Readonly<Record<FfaSize, string>> = { 10: '9cbe8c29', 30: '60cd8e09', 50: '4781d08e' };
+
+function wallGap(a: Wall, b: Wall): number {
+  const gapX = Math.max(0, a.x - (b.x + b.w), b.x - (a.x + a.w));
+  const gapY = Math.max(0, a.y - (b.y + b.h), b.y - (a.y + a.h));
+  return Math.hypot(gapX, gapY);
+}
 
 function fnv1a(text: string): string {
   let hash = 0x811c9dc5;
@@ -100,6 +108,20 @@ describe.each(FFA_SIZES.map((size) => [size] as const))('карта на %i ме
     const grid = reachableGrid(map, first);
     for (const point of [...map.spawnAreas, ...map.kits]) {
       expect(grid.isReachable(point), `(${String(point.x)}, ${String(point.y)})`).toBe(true);
+    }
+  });
+
+  it('между стенами и у края поля проходит танк с запасом по бокам', () => {
+    const minPassage = 2 * TANK_RADIUS + FFA_PASSAGE_CLEARANCE - PASSAGE_ROUNDING;
+    for (const [i, a] of map.walls.entries()) {
+      const edgeGap = Math.min(a.x, a.y, map.width - a.x - a.w, map.height - a.y - a.h);
+      expect(edgeGap, JSON.stringify(a)).toBeGreaterThanOrEqual(minPassage);
+      for (const b of map.walls.slice(i + 1)) {
+        const gap = wallGap(a, b);
+        if (gap > 0) {
+          expect(gap, JSON.stringify([a, b])).toBeGreaterThanOrEqual(minPassage);
+        }
+      }
     }
   });
 

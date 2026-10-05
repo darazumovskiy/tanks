@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { TANK_RADIUS } from '@tanks/shared/engine';
 import { Player, sleep, until, type DebugState } from './player.js';
 import { GameServer } from './server.js';
 
 const DEFAULT_STATS = '3322';
-const TANK_RADIUS = 24;
 // Верхняя полоса «Полигона» без стен; оттуда танк идёт в верхний край под острым углом.
 const LANE_POST = { x: 140, y: 100 };
 const ARRIVE_DISTANCE = 30;

@@ -1,8 +1,15 @@
+import { TANK_RADIUS } from '@tanks/shared/engine';
 import { makeCanvas } from './view.js';
 
 // Вид сверху, носом вправо, сетка 64×64, центр вращения (32, 32) — тот же контракт, что у ботов tank-arena.
 // Растр заготавливается крупным: камера приближает танк, и при 64 px он бы мылился.
 const SPRITE_RASTER_PX = 256;
+const SPRITE_GRID = 64;
+// При таком радиусе танка сетка спрайта совпадает с единицами поля: корпус с гусеницами ложится в круг столкновений.
+const SPRITE_GRID_TANK_RADIUS = 24;
+// Всё, что нарисовано по корпусу танка (спрайт, следы гусениц, плашка, кольцо щита), растёт вместе с танком.
+export const TANK_ART_SCALE = TANK_RADIUS / SPRITE_GRID_TANK_RADIUS;
+export const TANK_SPRITE_SIZE = SPRITE_GRID * TANK_ART_SCALE;
 const SVG_ROOT = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="${String(SPRITE_RASTER_PX)}" height="${String(SPRITE_RASTER_PX)}">`;
 
 function bodySvg(color: string, dark: string): string {

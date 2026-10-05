@@ -21,3 +21,4 @@ export * from './ffaMaps.js';
 export * from './spawn.js';
 export * from './ffa.js';
 export * from './ffaView.js';
+export * from './worldDigest.js';

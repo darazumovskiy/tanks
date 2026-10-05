@@ -1,8 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_STATS,
   DT,
   normalizeAngle,
+  TICK_RATE,
   TURRET_RATE,
   type Action,
   type FfaMap,
@@ -10,9 +14,12 @@ import {
 } from '@tanks/shared/engine';
 import {
   ErrorCode,
+  FFA_JOURNAL,
   FfaPhase,
   MessageType,
   PROTOCOL_VERSION,
+  replayFfaJournal,
+  type FfaScoreMessage,
   type FfaSnapshotEvent,
   type FfaSnapshotMessage,
   type FfaTankSnapshot,
@@ -735,5 +742,118 @@ describe('бездействие', () => {
     }
     expect(isWarnedAlive).toBe(true);
     expect(deadSnapshots).toBeGreaterThan(0);
+  }, 30_000);
+});
+
+describe('журнал боя толпы', () => {
+  let logDir = '';
+
+  beforeEach(() => {
+    logDir = mkdtempSync(join(tmpdir(), 'tanks-ffa-log-'));
+  });
+
+  afterEach(() => {
+    rmSync(logDir, { recursive: true, force: true });
+  });
+
+  async function journalOf(gameId: string): Promise<string[]> {
+    await app?.close();
+    app = null;
+    return readFileSync(join(logDir, `${gameId}.log`), 'utf8').split('\n');
+  }
+
+  function linesOf(journal: readonly string[], tag: string): string[] {
+    return journal.filter((line) => line.includes(` ${tag} `) || line.endsWith(` ${tag}`));
+  }
+
+  it('стрельба, вход посреди боя, обрыв и возврат: прогон движком совпадает на всех сверках', async () => {
+    await startApp({ matchSeconds: 20 }, { logDir });
+    const [shooter, target] = await fightPair(SHOOTER, TARGET);
+    const shooterId = shooter.welcome.playerId;
+    const targetId = target.welcome.playerId;
+    let late: Entered | null = null;
+    let isTargetGone = false;
+    let back: Entered | null = null;
+    let finalScore: FfaScoreMessage | null = null;
+    let isResults = false;
+    const deadline = Date.now() + SCRIPT_TIMEOUT_MS;
+    while (!isResults && Date.now() < deadline) {
+      const messages = [await shooter.client.next(deadline - Date.now()), ...shooter.client.takeQueued()];
+      for (const message of messages) {
+        if (message.type === MessageType.FfaScore) {
+          finalScore = message;
+        }
+        isResults = isResults || (message.type === MessageType.FfaState && message.phase === FfaPhase.Results);
+      }
+      const latest = messages.filter(isSnapshot).pop();
+      if (latest === undefined || isResults) {
+        continue;
+      }
+      hunt(shooter.client, latest, shooterId, targetId);
+      if (late === null && latest.tick > 100) {
+        late = await enter('ffa10', { nickname: 'Поздний' });
+      }
+      if (!isTargetGone && latest.tick > 200) {
+        target.client.close();
+        isTargetGone = true;
+      }
+      if (back === null && latest.tick > 300) {
+        back = await enter('ffa10', { token: target.welcome.token });
+      }
+    }
+    expect(isResults).toBe(true);
+    expect(back).not.toBeNull();
+    const journal = await journalOf(shooter.welcome.gameId);
+    expect(linesOf(journal, FFA_JOURNAL.matchStart)[0]).toMatch(/ seed=\d+ dur=20 roster=\d+:0055,\d+:0505$/);
+    expect(linesOf(journal, FFA_JOURNAL.fightStart)).toHaveLength(1);
+    expect(linesOf(journal, FFA_JOURNAL.join)).toHaveLength(1);
+    expect(journal.some((line) => line.includes(` ${String(targetId)}=-`))).toBe(true);
+    expect(journal.some((line) => / ac .*=-?\d+,-?\d+,-?\d+,1/.test(line))).toBe(true);
+    expect(linesOf(journal, FFA_JOURNAL.matchOver)).toHaveLength(1);
+
+    const [replayed] = replayFfaJournal(journal, { mapFor: () => TEST_MAP }).matches;
+    expect(replayed?.isComplete).toBe(true);
+    expect(replayed?.mismatches).toEqual([]);
+    expect(replayed?.sums).toBe(Math.ceil((replayed?.match.world.tick ?? 0) / TICK_RATE));
+    expect(finalScore?.rows.some((row) => row.damageDealt > 0)).toBe(true);
+    for (const row of finalScore?.rows ?? []) {
+      const player = replayed?.match.players.find((candidate) => candidate.id === row.id);
+      expect(player).toMatchObject({ kills: row.kills, deaths: row.deaths, damageDealt: row.damageDealt });
+    }
+
+    const actionLines = journal.filter((line) => line.includes(` ${FFA_JOURNAL.actions} `));
+    const broken = journal.filter((line) => line !== actionLines[3]);
+    const [brokenReplay] = replayFfaJournal(broken, { mapFor: () => TEST_MAP }).matches;
+    expect(brokenReplay?.mismatches.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  it('выход за бездействие и по обрыву дольше окна: прогон совпадает на всех сверках', async () => {
+    await startApp(
+      { matchSeconds: 10, idleWarnTicks: 20, idleKickTicks: 40, reconnectTicks: 30, lobbyQuietTicks: 30 },
+      { logDir, tickMs: 5 },
+    );
+    const busy = await enter('ffa10', { nickname: 'Занят' });
+    const idle = await enter('ffa10', { nickname: 'Спит' });
+    const gone = await enter('ffa10', { nickname: 'Ушёл' });
+    await waitFor(busy.client, MessageType.FfaState, (state) => state.phase === FfaPhase.Fight);
+    gone.client.close();
+    let isOver = false;
+    const deadline = Date.now() + SCRIPT_TIMEOUT_MS;
+    while (!isOver && Date.now() < deadline) {
+      const fresh = await freshSnapshots(busy.client);
+      isOver = fresh.some((snapshot) => snapshot.events.some((event) => event.kind === 'matchOver'));
+      busy.client.input(fidget());
+    }
+    expect(isOver).toBe(true);
+    const journal = await journalOf(busy.welcome.gameId);
+
+    expect(journal.some((line) => line.endsWith(`leave id=${String(idle.welcome.playerId)} reason=idle`))).toBe(true);
+    expect(journal.some((line) => line.endsWith(`leave id=${String(gone.welcome.playerId)} reason=offline`))).toBe(
+      true,
+    );
+    const [replayed] = replayFfaJournal(journal, { mapFor: () => TEST_MAP }).matches;
+    expect(replayed?.isComplete).toBe(true);
+    expect(replayed?.mismatches).toEqual([]);
+    expect(replayed?.match.players.map((player) => player.id)).toEqual([busy.welcome.playerId]);
   }, 30_000);
 });

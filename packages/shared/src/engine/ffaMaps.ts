@@ -1,3 +1,4 @@
+import { TANK_RADIUS } from './constants.js';
 import type { Wall } from './geometry.js';
 import type { BattleMap, Point } from './maps.js';
 import { createRandom, nextRandom, type Random } from './random.js';
@@ -37,8 +38,9 @@ const LAYOUTS: Readonly<Record<FfaSize, Layout>> = {
 const SPAWN_AREA_RADIUS = 90;
 const WALL_THICKNESS = 40;
 const PILLAR_SIZE = 80;
-// Препятствие держится дальше этого от краёв клетки: между клетками остаётся проход шире танка.
-const CELL_MARGIN = 70;
+// Самый узкий проход карты — между препятствием и краем поля: танк и такой запас. Между клетками проход вдвое шире.
+export const FFA_PASSAGE_CLEARANCE = 22;
+const CELL_MARGIN = 2 * TANK_RADIUS + FFA_PASSAGE_CLEARANCE;
 
 type ShapeKind = 'barAcross' | 'barAlong' | 'corner' | 'pair' | 'pillar' | 'empty';
 

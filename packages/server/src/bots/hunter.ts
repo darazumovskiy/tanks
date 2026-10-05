@@ -1,6 +1,9 @@
 import {
   clamp,
+  MUZZLE_OFFSET,
   normalizeAngle,
+  TANK_HIT_RADIUS,
+  TANK_RADIUS,
   TICK_RATE,
   type Action,
   type BotView,
@@ -14,11 +17,11 @@ import type { BotProfile } from './profile.js';
 import { isClear, isReturningShot } from './sight.js';
 
 const CELL = 25;
-// Радиус танка с запасом: клетка сетки и отрезок пути считаются свободными на таком удалении от стен.
-const PAD = 26;
+// Клетка сетки и отрезок пути считаются свободными на таком удалении от стен.
+const PAD = TANK_RADIUS + 2;
 const NEAREST_FREE_RADIUS = 6;
 const REPLAN_TICKS = 10;
-const WAYPOINT_SKIP_PAD = 24;
+const WAYPOINT_SKIP_PAD = TANK_RADIUS;
 const WAYPOINT_REACHED = 14;
 const REVERSE_ANGLE = 2.2;
 const STEER_GAIN = 3;
@@ -26,9 +29,8 @@ const CREEP_THROTTLE = 0.15;
 const LEAD_ITERATIONS = 4;
 const TURRET_GAIN = 8;
 const SHOT_PAD = 6;
-const MUZZLE = 34;
 const THREAT_HORIZON_S = 0.9;
-const THREAT_MISS = 40;
+const THREAT_MISS = TANK_HIT_RADIUS + 11;
 const DODGE_DISTANCE = 80;
 const ZONE_MARGIN = 80;
 const KIT_HP_FRACTION = 0.6;
@@ -317,8 +319,8 @@ export class HunterBrain implements BotBrain {
     const wanted = Math.atan2(target.y - me.y, target.x - me.x) + this.aimNoise;
     const turretDiff = normalizeAngle(wanted - me.turret);
     const turretTurn = clamp(turretDiff * TURRET_GAIN, -1, 1);
-    const muzzleX = me.x + Math.cos(me.turret) * MUZZLE;
-    const muzzleY = me.y + Math.sin(me.turret) * MUZZLE;
+    const muzzleX = me.x + Math.cos(me.turret) * MUZZLE_OFFSET;
+    const muzzleY = me.y + Math.sin(me.turret) * MUZZLE_OFFSET;
     const isAimed = Math.abs(turretDiff) < this.profile.fireWindowRad;
     const muzzle = { x: muzzleX, y: muzzleY };
     const isLineClear = isClear(arena.walls, muzzleX, muzzleY, target.x, target.y, SHOT_PAD);

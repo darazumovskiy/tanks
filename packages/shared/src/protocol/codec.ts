@@ -78,12 +78,12 @@ const EVENT_KINDS: readonly SnapshotEventKind[] = [
   'roundOver',
 ];
 
-function quantizeAxis(value: number): number {
+export function quantizeAxis(value: number): number {
   const clamped = Math.max(-1, Math.min(1, value));
   return Math.round(clamped * AXIS_SCALE);
 }
 
-function dequantizeAxis(value: number): number {
+export function dequantizeAxis(value: number): number {
   return value / AXIS_SCALE;
 }
 

@@ -1,13 +1,12 @@
 import { KIT, MUZZLE_OFFSET, type FieldSize, type Kit } from '@tanks/shared/engine';
 import type { AimLine } from '../aimLine.js';
 import { drawAimLine, type AimLineStyle } from './aimLineStyle.js';
-import { drawTankSprite, TankArt } from './art.js';
+import { drawTankSprite, TANK_ART_SCALE, TANK_SPRITE_SIZE, TankArt } from './art.js';
 import type { Camera } from './camera.js';
 import type { Effects, FxBullet } from './effects.js';
 import { BODY_FONT, clamp, easeOut, rgba } from './view.js';
 
 const BACKGROUND_COLOR = '#07080a';
-const TANK_SPRITE_SIZE = 64;
 
 // Кромка за полем: камера может показать пустоту за краем, и она должна выглядеть краем арены, а не фоном холста.
 // Внешняя ступень — во всю ширину кромки из сцены; ближе к полю полоса светлеет ступенями: глубина без градиента
@@ -58,8 +57,8 @@ const KIT_RESPAWN_ARC_S = 6;
 const KIT_RESPAWN_ARC_COLOR = 'rgba(93,255,160,0.35)';
 const KIT_RESPAWN_ARC_WIDTH = 3;
 
-const TAG_WIDTH = 56;
-const TAG_OFFSET_Y = 48;
+const TAG_WIDTH = 56 * TANK_ART_SCALE;
+const TAG_OFFSET_Y = 48 * TANK_ART_SCALE;
 const TAG_BAR_HEIGHT = 4;
 const TAG_BAR_BORDER = 1;
 const TAG_BAR_BACK_COLOR = 'rgba(0,0,0,0.6)';
