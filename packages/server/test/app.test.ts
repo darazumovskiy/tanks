@@ -110,10 +110,11 @@ describe('HTTP', () => {
     expect(binary.headers.get('content-type')).toBe('application/octet-stream');
     expect(await binary.text()).toBe('raw');
 
-    const outside = join(staticRoot, '..', 'tanks-outside-secret.txt');
+    const secretName = `tanks-outside-${randomBytes(6).toString('hex')}.txt`;
+    const outside = join(staticRoot, '..', secretName);
     writeFileSync(outside, 'secret');
     try {
-      expect((await fetch(`${base}/%2e%2e/tanks-outside-secret.txt`)).status).toBe(404);
+      expect((await fetch(`${base}/%2e%2e/${secretName}`)).status).toBe(404);
     } finally {
       rmSync(outside);
     }

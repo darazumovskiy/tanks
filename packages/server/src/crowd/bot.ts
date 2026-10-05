@@ -1,7 +1,9 @@
 import {
   deriveStats,
   DT,
+  normalizeAngle,
   zoneRadiusAt,
+  type Action,
   type DerivedStats,
   type FfaMap,
   type FfaSize,
@@ -78,6 +80,7 @@ export class CrowdBot {
   private roster = new Map<number, DerivedStats>();
   private zonePlan: ZonePlan | null = null;
   private history: Frame[] = [];
+  private unconfirmed: { seq: number; action: Action }[] = [];
   private lastGameTick: number | null = null;
   private isOnField = false;
   private counters = emptyCounters();
@@ -100,6 +103,7 @@ export class CrowdBot {
     this.playerId = null;
     this.lastGameTick = null;
     this.history = [];
+    this.unconfirmed = [];
     this.isOnField = false;
     return {
       type: MessageType.Join,
@@ -194,7 +198,6 @@ export class CrowdBot {
         y: bullet.y,
         vx: bullet.vx,
         vy: bullet.vy,
-        damage: this.statsOf(bullet.owner).damage,
         hasBounced: bullet.hasBounced,
       })),
     };
@@ -211,26 +214,42 @@ export class CrowdBot {
   }
 
   // Кто попал в бота на этом снимке; урон по боту и та его часть, что пришла от стрелков вне окна обзора.
+  // Танк стрелка мог уже исчезнуть с поля — снаряд живёт дольше подбитого танка; такой стрелок тоже не виден.
   private attackersOf(message: FfaSnapshotMessage, frame: Frame, myId: number): number[] {
     const me = frame.tanks.find((tank) => tank.id === myId);
     const attackers: number[] = [];
     for (const event of message.events) {
-      const shooter = frame.tanks.find((tank) => tank.id === event.by);
-      const isHitByOther = event.kind === 'hit' && event.tank === myId && event.by !== myId;
-      if (!isHitByOther || shooter === undefined || me === undefined) {
+      const isHitByOther = event.kind === 'hit' && event.tank === myId && event.by !== null && event.by !== myId;
+      if (!isHitByOther || me === undefined) {
         continue;
       }
-      attackers.push(shooter.id);
       this.counters.damageTaken += event.value;
-      if (!isInView(me, shooter.x, shooter.y)) {
+      const shooter = frame.tanks.find((tank) => tank.id === event.by);
+      if (shooter === undefined || !isInView(me, shooter.x, shooter.y)) {
         this.counters.offscreenDamage += event.value;
+      }
+      if (shooter !== undefined) {
+        attackers.push(shooter.id);
       }
     }
     return attackers;
   }
 
+  // Свой танк — с поправкой на команды, которые сервер ещё не применил: без неё башня при задержке связи
+  // проскакивает цель и качается вокруг неё. Место не поправляется — за пару тиков оно меняется мало.
+  private predictedSelf(tank: CrowdTank): CrowdTank {
+    let heading = tank.heading;
+    let turret = tank.turret;
+    for (const { action } of this.unconfirmed) {
+      heading = normalizeAngle(heading + action.turn * tank.stats.turnRate * DT);
+      turret = normalizeAngle(turret + action.turretTurn * tank.stats.turretRate * DT);
+    }
+    return { ...tank, heading, turret, vx: Math.cos(heading) * tank.speed, vy: Math.sin(heading) * tank.speed };
+  }
+
   private onSnapshot(message: FfaSnapshotMessage): InputMessage | null {
     this.counters.snapshots++;
+    this.unconfirmed = this.unconfirmed.filter((entry) => entry.seq > message.ackSeq);
     if (this.lastGameTick !== null && message.gameTick > this.lastGameTick + 1) {
       this.counters.gaps += message.gameTick - this.lastGameTick - 1;
     }
@@ -254,9 +273,13 @@ export class CrowdBot {
     for (const oldest of this.history.slice(0, 1)) {
       delayed = oldest;
     }
+    const fresh: Frame = {
+      ...frame,
+      tanks: frame.tanks.map((tank) => (tank.id === myId ? this.predictedSelf(tank) : tank)),
+    };
     const view = crowdView({
       myId,
-      fresh: frame,
+      fresh,
       delayed,
       map: this.map,
       kits: this.kitsOf(message),
@@ -277,6 +300,8 @@ export class CrowdBot {
     this.counters.visibleMax = Math.max(this.counters.visibleMax, view.bullets.length);
     const target: CrowdTank | null = this.targeting.pick(view, this.gameId);
     this.seq++;
-    return { type: MessageType.Input, seq: this.seq, action: this.brain.tick(view, target) };
+    const action = this.brain.tick(view, target);
+    this.unconfirmed.push({ seq: this.seq, action });
+    return { type: MessageType.Input, seq: this.seq, action };
   }
 }

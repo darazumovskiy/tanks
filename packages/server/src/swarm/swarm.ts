@@ -11,17 +11,22 @@ import {
 } from '@tanks/shared/protocol';
 import { WebSocket } from 'ws';
 import { CrowdBot } from '../crowd/bot.js';
-import { CROWD_PROFILES, crowdPyramid, type CrowdLevel } from '../crowd/profile.js';
+import { CROWD_PROFILES, crowdPyramid } from '../crowd/profile.js';
 import { TargetBook } from '../crowd/targets.js';
 
 const DEFAULT_JOIN_INTERVAL_MS = 200;
 const DEFAULT_PING_INTERVAL_MS = 1000;
+// Сервер отвечает на каждый пинг: тишина дольше этого — связь пропала, а закрытие не дошло.
+const DEFAULT_SILENCE_TIMEOUT_MS = 5000;
 const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 4000, 5000];
+// Сервер держит максимум тика за последнюю секунду: опрос раз в секунду не теряет всплески между отчётами.
+const HEALTH_POLL_MS = 1000;
 const HEALTH_TIMEOUT_MS = 1000;
 const HEALTH_PATH = '/healthz';
 const BYTES_IN_KIB = 1024;
 const MS_IN_SECOND = 1000;
 const MICROSECONDS_IN_SECOND = 1_000_000;
+const MIN_REPORT_SECONDS = 1e-3;
 const SECONDS_IN_MINUTE = 60;
 const PERCENT = 100;
 const MEDIAN_SHARE = 0.5;
@@ -36,6 +41,7 @@ export interface SwarmOptions {
   mapFor: (size: FfaSize) => FfaMap;
   joinIntervalMs?: number;
   pingIntervalMs?: number;
+  silenceTimeoutMs?: number;
   // Паузы перед повторами подряд; последняя повторяется, пока сервер не ответит.
   retryDelaysMs?: readonly number[];
   healthUrl?: string;
@@ -43,17 +49,10 @@ export interface SwarmOptions {
 }
 
 export interface SwarmBot {
-  nickname: string;
-  level: CrowdLevel;
   playerId: number | null;
   token: string;
   isOnline: boolean;
   isStopped: boolean;
-}
-
-interface Spread {
-  average: number;
-  max: number;
 }
 
 interface Percentiles {
@@ -61,14 +60,14 @@ interface Percentiles {
   high: number | null;
 }
 
-// Отчёт за время с прошлого отчёта: трафик и снимки — на бота в секунду, высокий процентиль — 95-й у пинга и
-// 99-й у мозга; доля процессора — от одного ядра.
+// Отчёт за время с прошлого отчёта: трафик и снимки — на бота в игре в секунду, высокий процентиль — 95-й у
+// пинга и 99-й у мозга; доля процессора — от одного ядра; тик сервера — максимум за время отчёта.
 export interface SwarmReport {
   online: number;
   total: number;
   phase: FfaPhase | null;
   matchTick: number;
-  bytesPerSecond: Spread;
+  bytesPerSecond: { average: number; max: number };
   snapshotsPerSecond: number;
   gaps: number;
   pingMs: Percentiles;
@@ -86,12 +85,10 @@ export function healthUrlOf(url: string): string {
   return parsed.toString();
 }
 
+// Ближайший ранг: на двух значениях 95-й процентиль — большее из них.
 function percentile(values: readonly number[], share: number): number | null {
   const sorted = [...values].sort((a, b) => a - b);
-  for (const value of sorted.slice(Math.floor(share * (sorted.length - 1)))) {
-    return value;
-  }
-  return null;
+  return sorted[Math.ceil(share * sorted.length) - 1] ?? null;
 }
 
 function hasTickDuration(body: unknown): body is { tickDurationMaxMs: number } {
@@ -130,12 +127,12 @@ class Member {
   brainTimes: number[] = [];
   private socket: WebSocket | null = null;
   private attempt = 0;
+  private heardAt = 0;
   private pingTimer: NodeJS.Timeout | undefined;
   private retryTimer: NodeJS.Timeout | undefined;
 
   constructor(
     readonly bot: CrowdBot,
-    readonly level: CrowdLevel,
     private readonly context: MemberContext,
   ) {}
 
@@ -144,18 +141,28 @@ class Member {
   }
 
   connect(): void {
-    const socket = new WebSocket(this.context.options.url);
+    const options = this.context.options;
+    const socket = new WebSocket(options.url);
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
     socket.on('open', () => {
+      this.heardAt = performance.now();
       this.send(this.bot.joinMessage());
-      const interval = this.context.options.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
+      const silenceMs = options.silenceTimeoutMs ?? DEFAULT_SILENCE_TIMEOUT_MS;
       this.pingTimer = setInterval(() => {
+        if (performance.now() - this.heardAt > silenceMs) {
+          socket.terminate();
+          return;
+        }
         this.send({ type: MessageType.Ping, clientTime: performance.now() });
-      }, interval);
+      }, options.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS);
     });
-    socket.on('message', (data: ArrayBuffer) => {
-      this.receive(new Uint8Array(data));
+    // Текстовые сообщения — не протокол игры: игровой сервер шлёт только двоичные.
+    socket.on('message', (data: ArrayBuffer, isBinary: boolean) => {
+      if (!isBinary) {
+        return;
+      }
+      this.receive(socket, new Uint8Array(data));
     });
     socket.on('close', () => {
       this.onClose();
@@ -183,9 +190,18 @@ class Member {
     this.socket?.send(encode(message));
   }
 
-  private receive(bytes: Uint8Array): void {
+  // Нераспознанное сообщение — не игровой сервер или другая версия протокола: бот останавливается, рой живёт.
+  private receive(socket: WebSocket, bytes: Uint8Array): void {
+    this.heardAt = performance.now();
     this.bytes += bytes.byteLength;
-    const message = decode(bytes) as ServerMessage;
+    let message: ServerMessage;
+    try {
+      message = decode(bytes) as ServerMessage;
+    } catch {
+      this.stop('сервер прислал сообщение не по протоколу игры — проверь адрес и сборку');
+      socket.terminate();
+      return;
+    }
     if (message.type === MessageType.FfaWelcome) {
       this.attempt = 0;
     }
@@ -214,10 +230,15 @@ class Member {
       this.context.log(`${this.bot.nickname}: выкинуло за бездействие, вхожу заново`);
       return;
     }
-    this.isStopped = true;
-    this.context.log(`${this.bot.nickname} остановлен: ${message.text}`);
+    this.stop(message.text);
   }
 
+  private stop(reason: string): void {
+    this.isStopped = true;
+    this.context.log(`${this.bot.nickname} остановлен: ${reason}`);
+  }
+
+  // Пауза перед повтором — по номеру попытки подряд; после последней из списка повторяется последняя.
   private onClose(): void {
     clearInterval(this.pingTimer);
     this.socket = null;
@@ -226,11 +247,7 @@ class Member {
       return;
     }
     const delays = this.context.options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
-    const step = Math.min(this.attempt, delays.length - 1);
-    let delay = 0;
-    for (const value of delays.slice(step, step + 1)) {
-      delay = value;
-    }
+    const delay = delays.slice(0, this.attempt + 1).reduce((_, value) => value, 0);
     this.attempt++;
     this.retryTimer = setTimeout(() => {
       this.connect();
@@ -242,7 +259,9 @@ class Member {
 export class Swarm {
   private readonly members: Member[];
   private readonly joinTimers: NodeJS.Timeout[] = [];
+  private healthTimer: NodeJS.Timeout | undefined;
   private isRunning = false;
+  private serverTickMaxMs: number | null = null;
   private reportedAt = performance.now();
   private cpuAt = process.cpuUsage();
 
@@ -263,7 +282,7 @@ export class Swarm {
         phase: index,
         mapFor: options.mapFor,
       });
-      return new Member(bot, level, context);
+      return new Member(bot, context);
     });
   }
 
@@ -281,10 +300,15 @@ export class Swarm {
         }, index * interval),
       );
     });
+    this.pollHealth();
+    this.healthTimer = setInterval(() => {
+      this.pollHealth();
+    }, HEALTH_POLL_MS);
   }
 
   async stop(): Promise<void> {
     this.isRunning = false;
+    clearInterval(this.healthTimer);
     for (const timer of this.joinTimers.splice(0)) {
       clearTimeout(timer);
     }
@@ -293,8 +317,6 @@ export class Swarm {
 
   bots(): SwarmBot[] {
     return this.members.map((member) => ({
-      nickname: member.bot.nickname,
-      level: member.level,
       playerId: member.bot.playerId,
       token: member.bot.token,
       isOnline: member.isOnline,
@@ -302,12 +324,14 @@ export class Swarm {
     }));
   }
 
-  async report(): Promise<SwarmReport> {
+  report(): SwarmReport {
     const now = performance.now();
-    const seconds = Math.max(1e-3, (now - this.reportedAt) / MS_IN_SECOND);
+    const seconds = Math.max(MIN_REPORT_SECONDS, (now - this.reportedAt) / MS_IN_SECOND);
     this.reportedAt = now;
     const cpu = process.cpuUsage(this.cpuAt);
     this.cpuAt = process.cpuUsage();
+    const online = this.members.filter((member) => member.isOnline);
+    const perBot = Math.max(1, online.length);
     const rates: number[] = [];
     const pings: number[] = [];
     const brainTimes: number[] = [];
@@ -332,23 +356,33 @@ export class Swarm {
       damageTaken += counters.damageTaken;
       offscreenDamage += counters.offscreenDamage;
     }
-    const total = this.members.length;
-    const lead = this.members.find((member) => member.bot.phase !== null)?.bot;
+    const serverTickMaxMs = this.serverTickMaxMs;
+    this.serverTickMaxMs = null;
+    const lead = online.find((member) => member.bot.phase !== null)?.bot;
     return {
-      online: this.members.filter((member) => member.isOnline).length,
-      total,
+      online: online.length,
+      total: this.members.length,
       phase: lead?.phase ?? null,
       matchTick: lead?.matchTick ?? 0,
-      bytesPerSecond: { average: rates.reduce((sum, rate) => sum + rate, 0) / total, max: Math.max(...rates) },
-      snapshotsPerSecond: snapshots / total / seconds,
+      bytesPerSecond: { average: rates.reduce((sum, rate) => sum + rate, 0) / perBot, max: Math.max(...rates) },
+      snapshotsPerSecond: snapshots / perBot / seconds,
       gaps,
       pingMs: { median: percentile(pings, MEDIAN_SHARE), high: percentile(pings, PING_HIGH_SHARE) },
       brainMs: { median: percentile(brainTimes, MEDIAN_SHARE), high: percentile(brainTimes, BRAIN_HIGH_SHARE) },
       cpuShare: (cpu.user + cpu.system) / MICROSECONDS_IN_SECOND / seconds,
-      serverTickMaxMs: await readServerTick(this.options.healthUrl ?? healthUrlOf(this.options.url)),
+      serverTickMaxMs,
       visibleBullets: { average: visibleSamples > 0 ? visibleSum / visibleSamples : null, max: visibleMax },
       offscreenShare: damageTaken > 0 ? offscreenDamage / damageTaken : null,
     };
+  }
+
+  private pollHealth(): void {
+    void readServerTick(this.options.healthUrl ?? healthUrlOf(this.options.url)).then((tickMs) => {
+      if (tickMs === null) {
+        return;
+      }
+      this.serverTickMaxMs = Math.max(this.serverTickMaxMs ?? 0, tickMs);
+    });
   }
 }
 
@@ -380,10 +414,11 @@ function phaseText(report: SwarmReport): string {
 
 export function formatReport(report: SwarmReport): string {
   const percent = (share: number | null): string => optional(share === null ? null : share * PERCENT, 0);
+  const bytes = report.bytesPerSecond;
   return [
     `${String(report.online)}/${String(report.total)} в игре`,
     phaseText(report),
-    `вход на бота ${decimal(report.bytesPerSecond.average / BYTES_IN_KIB, 0)} КиБ/с (макс ${decimal(report.bytesPerSecond.max / BYTES_IN_KIB, 0)})`,
+    `вход на бота ${decimal(bytes.average / BYTES_IN_KIB, 0)} КиБ/с (макс ${decimal(bytes.max / BYTES_IN_KIB, 0)})`,
     `снимков ${decimal(report.snapshotsPerSecond, 0)}/с, пропусков ${String(report.gaps)}`,
     `пинг ${optional(report.pingMs.median, 0)}/${optional(report.pingMs.high, 0)} мс`,
     `мозг ${optional(report.brainMs.median, 2)}/${optional(report.brainMs.high, 2)} мс`,

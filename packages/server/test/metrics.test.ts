@@ -8,6 +8,7 @@ import { seededRandom, sleep } from './support.js';
 
 const FAST_ROOM = { countdownTicks: 3, roundEndTicks: 3, maxInputsPerSecond: 90 };
 const TICK_MS = 4;
+const SCRAPE_WAIT_MS = 5000;
 const EXPECTED_SERIES = [
   'tanks_tick_duration_ms{quantile="0.5"}',
   'tanks_tick_duration_ms{quantile="0.99"}',
@@ -102,9 +103,13 @@ describe('GET /metrics', () => {
     for (let i = 0; i < inputs; i++) {
       a.input({ throttle: 1 });
     }
-    await sleep(20 * TICK_MS);
-
-    const series = await scrape();
+    // Под нагрузкой таймер тика опаздывает: ждать нужного числа тиков, а не фиксированного времени.
+    let series = await scrape();
+    const deadline = Date.now() + SCRAPE_WAIT_MS;
+    while (valueOf(series, 'tanks_ticks_total') <= 10 && Date.now() < deadline) {
+      await sleep(20 * TICK_MS);
+      series = await scrape();
+    }
     expect(valueOf(series, 'tanks_rooms')).toBe(1);
     expect(valueOf(series, 'tanks_connections')).toBe(2);
     expect(valueOf(series, 'tanks_ticks_total')).toBeGreaterThan(10);

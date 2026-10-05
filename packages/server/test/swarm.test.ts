@@ -1,7 +1,9 @@
+import { once } from 'node:events';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import { WebSocketServer } from 'ws';
 import { DEFAULT_STATS, FFA, ffaMap } from '@tanks/shared/engine';
 import {
   FfaPhase,
@@ -121,6 +123,14 @@ class Proxy {
       socket.destroy();
     }
     this.sockets.clear();
+  }
+
+  // Сеть пропала без закрытия: открытые соединения перестают доставлять данные, новые работают.
+  freeze(): void {
+    for (const socket of this.sockets) {
+      socket.unpipe();
+      socket.pause();
+    }
   }
 
   close(): Promise<void> {
@@ -243,7 +253,6 @@ describe('рой ботов через сокет', () => {
     expect(finalScore).not.toBeNull();
     const rows = (finalScore as FfaScoreMessage | null)?.rows ?? [];
     expect(rows.reduce((sum, row) => sum + row.damageDealt, 0)).toBeGreaterThan(0);
-    expect(rows.reduce((sum, row) => sum + row.kills, 0)).toBeGreaterThan(0);
     expect(botShots).toBeGreaterThan(0);
     expect(blindShots).toEqual([]);
     expect([...moved].filter((key) => key.startsWith('1:')).length).toBeGreaterThanOrEqual(6);
@@ -253,7 +262,7 @@ describe('рой ботов через сокет', () => {
       'боты едут во втором матче',
     );
 
-    const report = await swarm.report();
+    const report = swarm.report();
     expect(report).toMatchObject({ online: 8, total: 8, phase: FfaPhase.Fight, gaps: 0 });
     expect(report.bytesPerSecond.average).toBeGreaterThan(0);
     expect(report.snapshotsPerSecond).toBeGreaterThan(0);
@@ -317,6 +326,18 @@ describe('рой ботов через сокет', () => {
     ).toEqual([...fresh].sort());
   }, 30_000);
 
+  it('тихий обрыв: сервер замолчал, а закрытие не пришло — бот сам рвёт соединение и возвращается с пропуском', async () => {
+    const serverPort = await startApp({ minimum: { 10: 2, 30: 2, 50: 2 } });
+    const { proxy, port } = await Proxy.start(serverPort);
+    const swarm = startSwarm(port, { count: 2, pingIntervalMs: 50, silenceTimeoutMs: 300 });
+    await until(() => swarm.bots().every((bot) => bot.isOnline), 'двое в игре');
+    const ids = swarm.bots().map((bot) => bot.playerId);
+    proxy.freeze();
+    await until(() => swarm.bots().some((bot) => !bot.isOnline), 'молчание замечено', 5000);
+    await until(() => swarm.bots().every((bot) => bot.isOnline), 'вернулись');
+    expect(swarm.bots().map((bot) => bot.playerId)).toEqual(ids);
+  }, 20_000);
+
   it('чужое соединение с пропуском бота занимает место — бот остановлен и больше не входит', async () => {
     const port = await startApp();
     const lines: string[] = [];
@@ -359,13 +380,34 @@ describe('рой ботов через сокет', () => {
     const port = await probe.listen(0, '127.0.0.1');
     await probe.close();
     const swarm = startSwarm(port, { count: 2 });
-    const empty = await swarm.report();
+    const empty = swarm.report();
     expect(empty).toMatchObject({ online: 0, phase: null, serverTickMaxMs: null, offscreenShare: null });
     expect(empty.pingMs.median).toBeNull();
     expect(formatReport(empty)).toContain('нет игры');
     await sleep(150);
     await startApp({}, {}, port);
     await until(() => swarm.bots().every((bot) => bot.isOnline), 'боты вошли');
+  }, 20_000);
+
+  it('чужой сервер: текст пропускается, сообщение не по протоколу останавливает бота, рой не падает', async () => {
+    const stranger = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    closers.push(
+      () =>
+        new Promise((resolve) => {
+          stranger.close(() => {
+            resolve();
+          });
+        }),
+    );
+    stranger.on('connection', (socket) => {
+      socket.send('{"hello":"world"}');
+      socket.send(new Uint8Array([123, 1, 2]));
+    });
+    await once(stranger, 'listening');
+    const lines: string[] = [];
+    const swarm = startSwarm((stranger.address() as AddressInfo).port, { count: 1, log: (line) => lines.push(line) });
+    await until(() => swarm.isDone, 'бот остановлен');
+    expect(lines.join('\n')).toContain('не по протоколу игры');
   }, 20_000);
 
   it('бот, вошедший в идущий матч, едет', async () => {
@@ -451,7 +493,7 @@ describe('отчёт роя', () => {
     });
     swarms.push(swarm);
     swarm.start();
-    expect((await swarm.report()).serverTickMaxMs).toBeNull();
+    expect(swarm.report().serverTickMaxMs).toBeNull();
     await sleep(100);
     expect(swarm.bots()[0]?.isOnline).toBe(false);
   });

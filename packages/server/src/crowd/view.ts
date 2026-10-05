@@ -24,7 +24,6 @@ export interface CrowdBullet {
   y: number;
   vx: number;
   vy: number;
-  damage: number;
   hasBounced: boolean;
 }
 

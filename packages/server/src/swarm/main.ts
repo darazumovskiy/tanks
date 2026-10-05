@@ -47,13 +47,11 @@ console.log(`Уровни: ${describeLevels(launch.count)}`);
 swarm.start();
 
 const timer = setInterval(() => {
-  void swarm.report().then((report) => {
-    console.log(formatReport(report));
-    if (swarm.isDone) {
-      console.log('Все боты остановлены');
-      process.exit(1);
-    }
-  });
+  console.log(formatReport(swarm.report()));
+  if (swarm.isDone) {
+    console.log('Все боты остановлены');
+    process.exit(1);
+  }
 }, REPORT_INTERVAL_MS);
 
 process.on('SIGINT', () => {

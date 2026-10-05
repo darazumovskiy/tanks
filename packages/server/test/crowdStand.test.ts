@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, ffaMap, TICK_RATE, type Action, type FfaSize } from '@tanks/shared/engine';
-import { decode, EventFlag, FfaPhase, MessageType, type ServerMessage } from '@tanks/shared/protocol';
+import { decode, EventFlag, FfaPhase, MessageType, quantizeAction, type ServerMessage } from '@tanks/shared/protocol';
 import { CrowdBot } from '../src/crowd/bot.js';
 import { crowdPyramid, type CrowdLevel } from '../src/crowd/profile.js';
 import { TargetBook } from '../src/crowd/targets.js';
@@ -17,6 +17,9 @@ const STILL_MOVE = 10;
 const IDLE_KICK_TICKS = 25 * TICK_RATE;
 const SELF_DAMAGE_SHARE = 0.1;
 const MAX_TICKS = 20_000;
+const STAND_TIMEOUT_MS = 120_000;
+// Команда доходит до сервера через два тика — как на боевом сервере при пинге ~53 мс.
+const INPUT_DELAY_TICKS = 2;
 
 const MATCH_SEEDS = [0x51a7, 0x51a8, 0x51a9];
 
@@ -31,6 +34,13 @@ interface StandBot {
   sameTicks: number;
   maxSameTicks: number;
   isKicked: boolean;
+}
+
+interface Delivery {
+  dueTick: number;
+  seat: Seat;
+  seq: number;
+  action: Action;
 }
 
 interface LevelTally {
@@ -55,6 +65,7 @@ function isSameAction(a: Action, b: Action): boolean {
   return a.throttle === b.throttle && a.turn === b.turn && a.turretTurn === b.turretTurn && a.isFiring === b.isFiring;
 }
 
+// Стоит ли бот на месте и жмёт ли при этом газ: стоять, целясь, можно; упереться и жать газ — нет.
 function trackMovement(entry: StandBot, message: ServerMessage): void {
   if (message.type !== MessageType.FfaSnapshot) {
     return;
@@ -87,9 +98,12 @@ function trackAction(entry: StandBot, action: Action): void {
   entry.lastAction = action;
 }
 
-// Игра толпы без сокетов: боты подключены как соединения процесса и отвечают на каждый снимок синхронно.
+// Игра толпы без сокетов: боты подключены как соединения процесса; их команды округляются, как в кодеке, и
+// доходят до сервера с задержкой.
 function runStand(count: number): StandResult {
   let seedIndex = 0;
+  let tick = 0;
+  const deliveries: Delivery[] = [];
   const options: FfaOptions = {
     ...DEFAULT_FFA_OPTIONS,
     countdownTicks: 3,
@@ -148,11 +162,12 @@ function runStand(count: number): StandResult {
         }
         const input = bot.receive(message);
         trackMovement(entry, message);
-        if (input === null) {
+        if (input === null || entry.seat === null) {
           return;
         }
-        trackAction(entry, input.action);
-        entry.seat?.input(input.seq, input.action);
+        const action = quantizeAction(input.action);
+        trackAction(entry, action);
+        deliveries.push({ dueTick: tick + INPUT_DELAY_TICKS, seat: entry.seat, seq: input.seq, action });
       },
       close: () => undefined,
     };
@@ -185,7 +200,7 @@ function runStand(count: number): StandResult {
       return;
     }
     for (const event of message.events) {
-      if (event.kind !== 'hit') {
+      if (event.kind !== 'hit' || (event.flags & EventFlag.Zone) !== 0) {
         continue;
       }
       result.damage += event.value;
@@ -195,7 +210,12 @@ function runStand(count: number): StandResult {
     }
   }
 
-  for (let tick = 0; tick < MAX_TICKS && result.matchesOver < MATCHES; tick++) {
+  for (; tick < MAX_TICKS && result.matchesOver < MATCHES; tick++) {
+    const due = deliveries.filter((delivery) => delivery.dueTick <= tick);
+    deliveries.splice(0, deliveries.length, ...deliveries.filter((delivery) => delivery.dueTick > tick));
+    for (const delivery of due) {
+      delivery.seat.input(delivery.seq, delivery.action);
+    }
     game.step();
   }
   for (const entry of result.bots) {
@@ -220,8 +240,16 @@ function killsPerLife(tally: Map<number, LevelTally>, levels: readonly CrowdLeve
   return kills / (deaths + 1);
 }
 
-describe('стенд толпы: 30 ботов по пирамиде, два матча на карте ffa30', () => {
-  const result = runStand(SIZE);
+function describeBots(bots: readonly StandBot[], ticksOf: (entry: StandBot) => number): string[] {
+  return bots.map((entry) => `${entry.bot.nickname} (уровень ${String(entry.level)}): ${String(ticksOf(entry))} тиков`);
+}
+
+describe('стенд толпы: 30 ботов по пирамиде, два матча на карте ffa30, команды с задержкой', () => {
+  let result: StandResult;
+
+  beforeAll(() => {
+    result = runStand(SIZE);
+  }, STAND_TIMEOUT_MS);
 
   it('матчи доигрываются без ошибок и без выкинутых', () => {
     expect(result.matchesOver).toBe(MATCHES);
@@ -229,18 +257,20 @@ describe('стенд толпы: 30 ботов по пирамиде, два м�
   });
 
   it('ни один живой бот не стоит на месте дольше 3 с', () => {
-    const stuck = result.bots
-      .filter((entry) => entry.maxStillTicks >= STILL_LIMIT_TICKS)
-      .map((entry) => `${entry.bot.nickname} (уровень ${String(entry.level)}): ${String(entry.maxStillTicks)} тиков`);
-    expect(stuck).toEqual([]);
+    const still = result.bots.filter((entry) => entry.maxStillTicks >= STILL_LIMIT_TICKS);
+    console.log(`дольше всех на месте — ${String(Math.max(...result.bots.map((entry) => entry.maxStillTicks)))} тиков`);
+    expect(describeBots(still, (entry) => entry.maxStillTicks)).toEqual([]);
   });
 
   it('ни один бот не держит одну команду 25 с — сервер не выкинул бы его за бездействие', () => {
     const idle = result.bots.filter((entry) => entry.maxSameTicks >= IDLE_KICK_TICKS);
+    console.log(
+      `одна команда подряд — до ${String(Math.max(...result.bots.map((entry) => entry.maxSameTicks)))} тиков`,
+    );
     expect(idle.map((entry) => entry.bot.nickname)).toEqual([]);
   });
 
-  it('урон по себе — меньше 10 % всего урона', () => {
+  it('урон по себе — меньше 10 % урона снарядами', () => {
     expect(result.damage).toBeGreaterThan(0);
     expect(result.selfDamage / result.damage).toBeLessThan(SELF_DAMAGE_SHARE);
   });

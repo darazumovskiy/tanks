@@ -25,6 +25,10 @@ const WAYPOINT_REACHED = 14;
 const REVERSE_ANGLE = 2.2;
 const STEER_GAIN = 3;
 const CREEP_THROTTLE = 0.15;
+// Отклонение меньше 60°: ехать полным газом, не дожидаясь конца разворота.
+const FULL_THROTTLE_COS = 0.5;
+// Шаги времени складываются с ошибкой округления: без запаса последний шаг горизонта терялся бы.
+const TIME_EPSILON = 1e-9;
 const LEAD_ITERATIONS = 4;
 const TURRET_GAIN = 8;
 const SHOT_PAD = 6;
@@ -36,7 +40,7 @@ const SAFE_MISS = 60;
 // Выбранный уход держится столько тиков: без этого бот метался бы между равными кандидатами.
 const DODGE_HOLD_TICKS = 9;
 const DODGE_DIRECTIONS = 8;
-const DODGE_DISTANCE = 80;
+const SIDESTEP_DISTANCE = 80;
 // Куда кандидат уклонения успеет доехать — проверяется на свободу от стен.
 const DODGE_PROBE_S = 0.5;
 const ZONE_MARGIN = 80;
@@ -90,6 +94,7 @@ interface Move {
   dirY: number;
   speed: number;
   delay: number;
+  isForward: boolean;
   isCurrent: boolean;
 }
 
@@ -215,15 +220,32 @@ function findPath(grid: Grid, from: number, to: number): Point[] {
   return path.reverse();
 }
 
+function driveForward(me: CrowdTank, angle: number): Drive {
+  const diff = normalizeAngle(angle - me.heading);
+  const throttle = Math.cos(diff) > FULL_THROTTLE_COS ? 1 : CREEP_THROTTLE;
+  return { throttle, turn: clamp(diff * STEER_GAIN, -1, 1) };
+}
+
+// Кормой к направлению angle. Поворот корпуса от газа не зависит: корма идёт за ним в ту же сторону.
+function driveBackward(me: CrowdTank, angle: number): Drive {
+  const back = normalizeAngle(angle + Math.PI - me.heading);
+  const throttle = Math.cos(back) > FULL_THROTTLE_COS ? -1 : -CREEP_THROTTLE;
+  return { throttle, turn: clamp(back * STEER_GAIN, -1, 1) };
+}
+
 // Задним ходом развернуться часто быстрее, чем крутиться на месте.
 function driveTo(me: CrowdTank, x: number, y: number): Drive {
   const wanted = Math.atan2(y - me.y, x - me.x);
-  const diff = normalizeAngle(wanted - me.heading);
-  if (Math.abs(diff) > REVERSE_ANGLE) {
-    const back = normalizeAngle(diff + Math.PI);
-    return { throttle: -1, turn: clamp(-back * STEER_GAIN, -1, 1) };
+  if (Math.abs(normalizeAngle(wanted - me.heading)) > REVERSE_ANGLE) {
+    return driveBackward(me, wanted);
   }
-  return { throttle: Math.cos(diff) > 0.5 ? 1 : CREEP_THROTTLE, turn: clamp(diff * STEER_GAIN, -1, 1) };
+  return driveForward(me, wanted);
+}
+
+// Уход исполняется тем же ходом, что посчитала модель кандидатов: передом или задом.
+function driveAlong(me: CrowdTank, move: Move): Drive {
+  const angle = Math.atan2(move.dirY, move.dirX);
+  return move.isForward ? driveForward(me, angle) : driveBackward(me, angle);
 }
 
 // quality — учитываемая доля скорости цели: 0 даёт текущее положение, 1 — полное упреждение.
@@ -242,8 +264,8 @@ function sidestep(me: CrowdTank, alongX: number, alongY: number, side: number): 
   const perpendicular = Math.atan2(alongY, alongX) + Math.PI / 2;
   return driveTo(
     me,
-    me.x + Math.cos(perpendicular) * DODGE_DISTANCE * side,
-    me.y + Math.sin(perpendicular) * DODGE_DISTANCE * side,
+    me.x + Math.cos(perpendicular) * SIDESTEP_DISTANCE * side,
+    me.y + Math.sin(perpendicular) * SIDESTEP_DISTANCE * side,
   );
 }
 
@@ -260,7 +282,7 @@ function positionAt(me: CrowdTank, move: Move, time: number): Point {
 // Наименьшее расстояние от танка, едущего по кандидату, до снарядов на горизонте уклонения.
 function clearance(me: CrowdTank, move: Move, bullets: readonly CrowdBullet[]): number {
   let closest = Infinity;
-  for (let time = 0; time <= THREAT_HORIZON_S + 1e-9; time += THREAT_STEP_S) {
+  for (let time = 0; time <= THREAT_HORIZON_S + TIME_EPSILON; time += THREAT_STEP_S) {
     const place = positionAt(me, move, time);
     for (const bullet of bullets) {
       const gap = Math.hypot(bullet.x + bullet.vx * time - place.x, bullet.y + bullet.vy * time - place.y);
@@ -277,6 +299,7 @@ function candidateMoves(me: CrowdTank): Move[] {
     dirY: Math.sin(me.heading) * Math.sign(me.speed),
     speed: Math.abs(me.speed),
     delay: 0,
+    isForward: me.speed >= 0,
     isCurrent: true,
   };
   const turns: Move[] = [];
@@ -290,6 +313,7 @@ function candidateMoves(me: CrowdTank): Move[] {
       dirY: Math.sin(angle),
       speed: isForward ? me.stats.maxSpeed : me.stats.maxSpeed * REVERSE_FACTOR,
       delay: turnAngle / me.stats.turnRate,
+      isForward,
       isCurrent: false,
     });
   }
@@ -308,7 +332,7 @@ export class CrowdBrain {
   private aimNoiseTicksLeft = 0;
   private isLeadingShot = false;
   private isCarelessShot = false;
-  private wasReloading = false;
+  private hasBeenReloading = false;
   private fireRetryTicksLeft = 0;
   private patrolTarget: Point | null = null;
   private patrolTick = -Infinity;
@@ -341,7 +365,7 @@ export class CrowdBrain {
     this.aimNoiseTicksLeft = 0;
     this.isLeadingShot = this.random() < this.profile.leadChance;
     this.isCarelessShot = this.random() < this.profile.carelessness;
-    this.wasReloading = false;
+    this.hasBeenReloading = false;
     this.fireRetryTicksLeft = 0;
     this.patrolTarget = null;
     this.patrolTick = -Infinity;
@@ -379,11 +403,11 @@ export class CrowdBrain {
     this.aimNoiseTicksLeft--;
     // Монетки упреждения и беспечности бросаются на каждый новый выстрел — в момент, когда перезарядка закончилась.
     const isReady = me.reloadLeft <= 0;
-    if (isReady && this.wasReloading) {
+    if (isReady && this.hasBeenReloading) {
       this.isLeadingShot = this.random() < this.profile.leadChance;
       this.isCarelessShot = this.random() < this.profile.carelessness;
     }
-    this.wasReloading = !isReady;
+    this.hasBeenReloading = !isReady;
 
     const point = leadPoint(me, target, this.isLeadingShot ? this.profile.leadQuality : 0);
     const wanted = Math.atan2(point.y - me.y, point.x - me.x) + this.aimNoise;
@@ -515,7 +539,7 @@ export class CrowdBrain {
     }
     if (this.dodgeTicksLeft > 0 && this.dodgeMove !== null) {
       this.dodgeTicksLeft--;
-      return driveTo(me, me.x + this.dodgeMove.dirX * DODGE_DISTANCE, me.y + this.dodgeMove.dirY * DODGE_DISTANCE);
+      return driveAlong(me, this.dodgeMove);
     }
     let best: Move | null = null;
     let bestClearance = -Infinity;
@@ -538,7 +562,7 @@ export class CrowdBrain {
     }
     this.dodgeMove = best;
     this.dodgeTicksLeft = DODGE_HOLD_TICKS - 1;
-    return driveTo(me, me.x + best.dirX * DODGE_DISTANCE, me.y + best.dirY * DODGE_DISTANCE);
+    return driveAlong(me, best);
   }
 
   // Случайная свободная точка внутри зоны; новая — когда доехал или по таймеру.

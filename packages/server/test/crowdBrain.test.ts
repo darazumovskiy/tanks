@@ -64,7 +64,7 @@ function bullet(
   vy: number,
   hasBounced = false,
 ): CrowdBullet {
-  return { id, owner, x, y, vx, vy, damage: 30, hasBounced };
+  return { id, owner, x, y, vx, vy, hasBounced };
 }
 
 function viewOf(me: CrowdTank, overrides: Partial<CrowdView> = {}): CrowdView {
@@ -116,7 +116,7 @@ function survivesCrossfire(drive: (world: ReturnType<typeof createWorld>, brain:
     STILL_ZONE,
   );
   for (const shot of [FROM_WEST, NORTH_OF_ME]) {
-    world.bullets.push({ ...shot, bouncesLeft: 1, age: 0, isDead: false });
+    world.bullets.push({ ...shot, damage: 30, bouncesLeft: 1, age: 0, isDead: false });
   }
   const brain = brainOf(DODGER);
   for (let tick = 0; tick < 40; tick++) {
@@ -147,6 +147,16 @@ describe('мозг толпы на крафтовых видах', () => {
     const stood = survivesCrossfire(() => IDLE_ACTION);
     expect(dodged).toBe(0);
     expect(stood).toBeGreaterThan(0);
+  });
+
+  it('задним ходом к точке сзади-сбоку корма поворачивает к точке, а не от неё', () => {
+    const me = crowdTank(ME, 800, 450, { heading: 0 });
+    const behindBelow = crowdTank(2, 800 - 346, 650);
+    const behindAbove = crowdTank(2, 800 - 346, 250);
+    const toBelow = brainOf(profileOf(4)).tick(viewOf(me), behindBelow);
+    const toAbove = brainOf(profileOf(4)).tick(viewOf(me), behindAbove);
+    expect(toBelow).toMatchObject({ throttle: -1, turn: -1 });
+    expect(toAbove).toMatchObject({ throttle: -1, turn: 1 });
   });
 
   it('снаряд, не замеченный по монетке, на движение не влияет; решение по снаряду не меняется от тика к тику', () => {
@@ -319,15 +329,16 @@ describe('мозг толпы на крафтовых видах', () => {
     expect(leading.tick(viewOf(me), moving).turretTurn).toBeGreaterThan(plain.tick(viewOf(me), moving).turretTurn);
   });
 
-  it('монетки упреждения и беспечности бросаются заново, когда перезарядка закончилась', () => {
-    const brain = brainOf(profileOf(6));
+  it('монетка упреждения бросается заново на каждый выстрел: за много перезарядок выпадают оба исхода', () => {
+    const brain = brainOf(profileOf(6, { aimNoiseRad: 0, leadChance: 0.5, leadQuality: 1 }));
     const me = crowdTank(ME, 700, 450);
-    const target = crowdTank(2, 1100, 450);
-    const actions = [
-      ...ticks(brain, viewOf({ ...me, reloadLeft: 0.5 }), target, 3),
-      ...ticks(brain, viewOf(me), target, 3),
-    ];
-    expect(actions).toHaveLength(6);
+    const moving = crowdTank(2, 1100, 450, { heading: Math.PI / 2, speed: 150 });
+    const aims = new Set<number>();
+    for (let shot = 0; shot < 24; shot++) {
+      brain.tick(viewOf({ ...me, reloadLeft: 0.5 }), moving);
+      aims.add(brain.tick(viewOf(me), moving).turretTurn);
+    }
+    expect(aims.size).toBe(2);
   });
 });
 
@@ -558,15 +569,31 @@ describe('бот толпы на сообщениях сервера', () => {
     expect(bot.playerId).toBeNull();
   });
 
-  it('на отсчёте, подбитым и зрителем команд не шлёт', () => {
+  it('на отсчёте, подбитым, в ожидании возрождения и зрителем команд не шлёт', () => {
     const counting = botOf();
     enter(counting, FfaPhase.Countdown);
     expect(counting.receive(snapshot(1))).toBeNull();
-    const wrecked = botOf();
-    enter(wrecked);
-    const down = { state: 'wreck' as const, ticksLeft: 30, killerId: 2, idleTicksLeft: null };
-    expect(wrecked.receive(snapshot(1, { self: down }))).toBeNull();
-    expect(wrecked.receive(snapshot(2))?.seq).toBe(1);
+    const fallen = botOf();
+    enter(fallen);
+    for (const state of ['wreck', 'waiting', 'spectator'] as const) {
+      const self = { state, ticksLeft: 30, killerId: 2, idleTicksLeft: null };
+      expect(fallen.receive(snapshot(1, { self }))).toBeNull();
+    }
+    expect(fallen.receive(snapshot(2))?.seq).toBe(1);
+  });
+
+  it('башня с учётом неподтверждённых команд: пока сервер их не применил, бот не проскакивает цель', () => {
+    const bot = botOf(7);
+    enter(bot);
+    const facingAway = [tankSnapshot(ME, 400, 450, { turret: -0.6 }), tankSnapshot(2, 900, 450)];
+    const turns: number[] = [];
+    for (let gameTick = 1; gameTick <= 12; gameTick++) {
+      turns.push(bot.receive(snapshot(gameTick, { tanks: facingAway, ackSeq: 0 }))?.action.turretTurn ?? 0);
+    }
+    expect(turns[0]).toBe(1);
+    expect(Math.abs(turns.at(-1) ?? 1)).toBeLessThan(0.5);
+    const confirmed = bot.receive(snapshot(13, { tanks: facingAway, ackSeq: 12 }));
+    expect(confirmed?.action.turretTurn).toBe(1);
   });
 
   it('снаряд в виде появляется с задержкой реакции; вошедшему посреди матча — все снаряды сразу', () => {
@@ -594,18 +621,23 @@ describe('бот толпы на сообщениях сервера', () => {
     const bot = botOf(1);
     enter(bot);
     bot.receive(snapshot(1));
-    bot.receive(snapshot(4, { events: [hit(2, 20), hit(3, 15), hit(null, 5), hit(ME, 7), hit(2, 9, 2)] }));
+    const vanished = 9;
+    const events = [hit(2, 20), hit(3, 15), hit(vanished, 11), hit(null, 5), hit(ME, 7), hit(2, 9, 2)];
+    bot.receive(snapshot(4, { events }));
     const counters = bot.takeCounters();
-    expect(counters).toMatchObject({ snapshots: 2, gaps: 2, damageTaken: 35, offscreenDamage: 15 });
+    expect(counters).toMatchObject({ snapshots: 2, gaps: 2, damageTaken: 46, offscreenDamage: 26 });
   });
 
-  it('попавший противник становится целью сразу; незнакомый танк в составе не ломает вид', () => {
+  it('попавший противник становится целью сразу, хотя другой ближе; незнакомый танк в составе не ломает вид', () => {
     const book = new TargetBook();
     const bot = botOf(5, book);
     enter(bot);
-    bot.receive(snapshot(1));
-    bot.receive(snapshot(2, { events: [hit(2, 20)] }));
+    const tanks = [tankSnapshot(ME, 400, 450), tankSnapshot(2, 1000, 450), tankSnapshot(3, 600, 450)];
+    bot.receive(snapshot(1, { tanks }));
+    expect(book.hunters('игра', 3, {})).toBe(1);
+    bot.receive(snapshot(2, { tanks, events: [hit(2, 20)] }));
     expect(book.hunters('игра', 2, {})).toBe(1);
+    expect(book.hunters('игра', 3, {})).toBe(0);
     expect(bot.receive({ type: MessageType.Pong, clientTime: 0, serverTick: 1 })).toBeNull();
   });
 });
