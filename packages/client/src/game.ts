@@ -16,17 +16,17 @@ import {
   type SnapshotEvent,
   type SnapshotMessage,
 } from '@tanks/shared/protocol';
-import { computeAimLine, type AimLine, type AimLineState } from './aimLine.js';
+import type { AimLine, AimLineState } from './aimLine.js';
 import type { AimLineStyleId } from './render/aimLineStyles.js';
 import { DiagLog } from './diag.js';
+import { DuelPresenter, duelNames } from './duelPresenter.js';
 import { InputReader, type ShotContext } from './input.js';
 import { browserInviteActions, renderInvite } from './invite.js';
 import { NetClient, websocketUrl } from './net.js';
-import { Prediction, type InterpolatedTank, type WorldView } from './prediction.js';
+import { Prediction, type InterpolatedTank } from './prediction.js';
 import { hideRoundEnd, showRoundEnd, type RoundResult } from './roundEnd.js';
-import { isInView, type Camera } from './render/camera.js';
-import { Effects } from './render/effects.js';
-import { Renderer, type Overlay } from './render/renderer.js';
+import type { Camera } from './render/camera.js';
+import { createDuelEffects, Renderer, type Overlay } from './render/renderer.js';
 import type { Settings } from './settings.js';
 import { Sfx } from './sfx.js';
 import type { Telemetry } from './telemetry.js';
@@ -77,8 +77,8 @@ function formatFlags(settings: Readonly<Settings>): string {
 
 // Связывает сеть, предсказание, ввод, эффекты, звук и рендер; держит цикл кадров и фиксированный шаг ввода.
 export class Game {
-  private readonly effects: Effects;
   private readonly renderer: Renderer;
+  private readonly duel: DuelPresenter;
   private readonly input: InputReader;
   private readonly sfx = new Sfx();
   private readonly net: NetClient;
@@ -112,8 +112,9 @@ export class Game {
     this.diag.write(
       `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'}`,
     );
-    this.effects = new Effects(() => this.names());
-    this.renderer = new Renderer(options.canvas, this.effects, options.settings, options.isTouchDevice);
+    const effects = createDuelEffects(() => this.names());
+    this.renderer = new Renderer(options.canvas, effects, options.settings, options.isTouchDevice);
+    this.duel = new DuelPresenter(this.renderer, effects, options.settings);
     this.input = new InputReader(options.canvas, this.renderer, options.settings, {
       onGuard: (event): void => {
         this.diag.write(`guard ${event}`);
@@ -166,8 +167,7 @@ export class Game {
             this.lastInputSeq,
             message.rules,
           );
-          this.effects.reset();
-          this.renderer.resetCamera();
+          this.duel.startRound();
           this.hideOverlay();
         },
         onSnapshot: (message, receivedAt): void => {
@@ -177,9 +177,8 @@ export class Game {
           this.prediction.applySnapshot(message, receivedAt);
           this.diag.markSnapshot(message.gameTick, receivedAt);
           this.logSnapshot(this.prediction, message, receivedAt);
-          this.effects.onSnapshot(message.tick, message.tanks);
+          this.duel.applySnapshot(message.tick, message.tanks, message.events);
           for (const event of message.events) {
-            this.effects.onEvent(event);
             if (event.kind === 'roundOver') {
               this.onRoundOver(event, message);
             }
@@ -246,19 +245,6 @@ export class Game {
     this.diag.write(settingsLine);
   }
 
-  // Помощники не добывают информацию: предохранитель, линия выстрела и огонь по цели знают только о живом
-  // противнике в кадре камеры и только во время боя.
-  private visibleEnemy(prediction: Prediction, view: WorldView, side: Side): InterpolatedTank | null {
-    const enemy = view.tanks[side === 0 ? 1 : 0];
-    if (!prediction.isFighting || !enemy.isAlive) {
-      return null;
-    }
-    if (!isInView(this.renderer.currentCamera, enemy)) {
-      return null;
-    }
-    return enemy;
-  }
-
   // Зона считается только при включённом флаге: без него трассировка пути на каждом тике не нужна.
   private shotContextFor(prediction: Prediction, field: Field, enemy: InterpolatedTank | null): ShotContext {
     const me = prediction.me;
@@ -267,26 +253,6 @@ export class Game {
       this.options.settings.hasZoneFire &&
       isShotInZone({ field, shooter: { x: me.x, y: me.y, turret: me.turret }, bulletSpeed, enemy });
     return { isReturning: isShotReturning(field, me, me.turret, bulletSpeed, enemy), isInZone };
-  }
-
-  private aimLineFor(
-    prediction: Prediction,
-    view: WorldView,
-    side: Side,
-    enemy: InterpolatedTank | null,
-  ): AimLine | null {
-    const { settings } = this.options;
-    const me = view.tanks[side];
-    if (!settings.hasAimLine || !prediction.isFighting || !me.isAlive) {
-      return null;
-    }
-    return computeAimLine({
-      field: view.round.map,
-      shooter: { x: me.x, y: me.y, turret: me.turret },
-      bulletSpeed: prediction.me.stats.bulletSpeed,
-      enemy,
-      hasLeadHint: settings.hasLeadHint,
-    });
   }
 
   private logSnapshot(prediction: Prediction, message: SnapshotMessage, receivedAt: number): void {
@@ -388,7 +354,7 @@ export class Game {
     if (this.roundStart === null) {
       return ['', ''];
     }
-    return [this.roundStart.tanks[0].nickname, this.roundStart.tanks[1].nickname];
+    return duelNames(this.roundStart);
   }
 
   private bindAudioUnlock(): void {
@@ -468,7 +434,7 @@ export class Game {
     this.logFlags(false);
     this.accumulator += elapsed;
     const frameView = prediction.view(now);
-    const enemy = this.visibleEnemy(prediction, frameView, side);
+    const enemy = this.duel.visibleEnemy(frameView, side, prediction.isFighting);
     const field = frameView.round.map;
     while (this.accumulator >= TICK_MS) {
       this.accumulator -= TICK_MS;
@@ -506,52 +472,48 @@ export class Game {
     }
 
     const view = prediction.view(now);
-    this.aimLine = this.aimLineFor(prediction, view, side, enemy);
-    this.effects.update(elapsed / 1000, view.tanks);
-    this.renderer.draw(
+    this.duel.update(elapsed / 1000, view);
+    const drawn = this.duel.draw({
       view,
-      {
-        names: this.names(),
-        score: roundStart.score,
-        roundIndex: roundStart.roundIndex,
-        gameId: roundStart.gameId,
-        gameTick: prediction.latestGameTick,
-        mySide: side,
+      roundStart,
+      sinceRoundStartS: (now - this.roundStartedAt) / 1000,
+      gameTick: prediction.latestGameTick,
+      mySide: side,
+      isFighting: prediction.isFighting,
+      visibleEnemy: enemy,
+      frameMs: elapsed,
+      readout: {
         rttMs: this.net.rttMs,
-        serverTick: this.net.serverTick,
-        pending: prediction.pendingCount,
         correctionPx: prediction.lastCorrectionPx,
         fps: this.fps,
         worstFrameMs: this.worstFrameMs,
         isMuted: this.sfx.isMuted,
+        frameTimes: this.frameTimes,
+      },
+      controls: {
         sticks: this.input.stickStates,
         isShotGuarded: this.input.isShotGuarded,
         isZoneFiring: this.input.isZoneFiring,
         isReversing: this.input.isReversing,
-        aimLine: this.aimLine,
-        frameMs: elapsed,
-        frameTimes: this.frameTimes,
       },
-      this.overlayFor(now, prediction, roundStart),
-    );
+    });
+    this.aimLine = drawn.aimLine;
+    this.beepCountdown(drawn.overlay);
     this.logCamera(this.renderer.currentCamera, isSummaryDue);
   }
 
-  private overlayFor(now: number, prediction: Prediction, roundStart: RoundStartMessage): Overlay {
-    const totalS = (roundStart.countdownTicks * TICK_MS) / 1000;
-    const elapsedS = (now - this.roundStartedAt) / 1000;
-    if (!prediction.isFighting && elapsedS < totalS + 0.6) {
-      const secondsLeft = Math.ceil(totalS - elapsedS);
-      if (secondsLeft >= 1 && secondsLeft !== this.countdownBeeped) {
-        this.countdownBeeped = secondsLeft;
-        this.sfx.play('beep');
-      } else if (secondsLeft < 1 && this.countdownBeeped !== -1) {
-        this.countdownBeeped = -1;
-        this.sfx.play('go');
-      }
-      return { kind: 'countdown', elapsedS, totalS };
+  private beepCountdown(overlay: Overlay): void {
+    if (overlay === null) {
+      return;
     }
-    return null;
+    const secondsLeft = Math.ceil(overlay.totalS - overlay.elapsedS);
+    if (secondsLeft >= 1 && secondsLeft !== this.countdownBeeped) {
+      this.countdownBeeped = secondsLeft;
+      this.sfx.play('beep');
+    } else if (secondsLeft < 1 && this.countdownBeeped !== -1) {
+      this.countdownBeeped = -1;
+      this.sfx.play('go');
+    }
   }
 
   private showWaiting(): void {

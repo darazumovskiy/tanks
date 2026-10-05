@@ -1,5 +1,4 @@
-import type { Side } from '@tanks/shared/engine';
-import { SIDE_COLORS, makeCanvas } from './view.js';
+import { makeCanvas } from './view.js';
 
 // Вид сверху, носом вправо, сетка 64×64, центр вращения (32, 32) — тот же контракт, что у ботов tank-arena.
 // Растр заготавливается крупным: камера приближает танк, и при 64 px он бы мылился.
@@ -60,8 +59,8 @@ export class TankArt {
   private deadTurret: HTMLCanvasElement | null = null;
   private readonly shadow: HTMLCanvasElement;
 
-  constructor(side: Side) {
-    const color = SIDE_COLORS[side];
+  // Цвет — шестизначный hex вида #rrggbb.
+  constructor(color: string) {
     const dark = darken(color);
     this.body = loadSvg(bodySvg(color, dark));
     this.turret = loadSvg(turretSvg(color, dark));
@@ -159,7 +158,8 @@ export function drawTankSprite(
   if (!isDead && flash > 0) {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = Math.min(1, flash);
+    // Подсветка прозрачна настолько же, насколько сам танк.
+    ctx.globalAlpha *= Math.min(1, flash);
     drawParts();
     ctx.restore();
   }

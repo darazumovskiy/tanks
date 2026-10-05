@@ -11,6 +11,6 @@
 | `server/bots/` | Мозг видит одного противника; бот Астры (уровень 10) — формат арены 1 на 1 |
 | `client/render/camera*.ts` | Стратегии «Оба в кадре», «отдаление к противнику», стрелка на противника за кадром |
 | `client/aimLine.ts`, `zoneFire.ts` | Состояния «на нём» / «упреждаю» и огонь по цели считаются по единственному противнику |
-| `client/prediction.ts`, `game.ts`, `roundEnd.ts`, `render/renderer.ts`, `effects.ts` | Свой и чужой танк, счёт раундов на двоих |
+| `client/prediction.ts`, `game.ts`, `duelPresenter.ts`, `roundEnd.ts`, `render/renderer.ts`, `duelHud.ts`, `fxEvent.ts` | Свой и чужой танк, счёт раундов на двоих |
 | `analysis/` | Разбор журнала по двум сторонам |
 | `server/gameLog.ts` | Строка на каждый тик со всеми командами: на двоих ~1 МБ в минуту, растёт с числом игроков |

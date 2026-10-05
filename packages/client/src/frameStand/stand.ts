@@ -1,15 +1,14 @@
-import type { Target } from '../fxLab/frame.js';
+import { DuelPresenter } from '../duelPresenter.js';
 import { FX_SCREENS, type FxScreen } from '../fxLab/scenes.js';
 import { buildSelect } from '../labShared.js';
 import { worldToScreen } from '../render/camera.js';
-import { Effects } from '../render/effects.js';
-import { Renderer } from '../render/renderer.js';
+import { createDuelEffects, Renderer } from '../render/renderer.js';
 import { makeCanvas } from '../render/view.js';
 import { showRoundEnd } from '../roundEnd.js';
 import { defaultSettings } from '../settings.js';
 import { DUEL_FRAMES, SPRITE_PROBE } from './frames.js';
 import { NAMES, type DuelFrame, type FrameKind, type FrameScreenId } from './model.js';
-import { frameImage, playFrame } from './play.js';
+import { frameImage, playFrame, type FrameTarget } from './play.js';
 import { installSeededRandom } from './seededRandom.js';
 
 // Стенд кадров дуэли (`/?lab=frames`): именованные кадры настоящим рендером в замороженное время — эталоны
@@ -56,13 +55,13 @@ function stageCanvas(): HTMLCanvasElement {
 }
 
 // `isWindowSized` — холст страницы боя: размер и плотность берёт из окна, как в игре.
-function makeFrameTarget(screen: FxScreen, canvas: HTMLCanvasElement, isWindowSized: boolean): Target {
+function makeFrameTarget(screen: FxScreen, canvas: HTMLCanvasElement, isWindowSized: boolean): FrameTarget {
   const ctx = canvas.getContext('2d');
   if (ctx === null) {
     throw new Error('Canvas 2D недоступен');
   }
   const settings = defaultSettings();
-  const effects = new Effects(() => NAMES);
+  const effects = createDuelEffects(() => NAMES);
   const viewport = isWindowSized
     ? undefined
     : (): { width: number; height: number; pixelRatio: number } => ({
@@ -71,10 +70,11 @@ function makeFrameTarget(screen: FxScreen, canvas: HTMLCanvasElement, isWindowSi
         pixelRatio: screen.pixelRatio,
       });
   const renderer = new Renderer(canvas, effects, settings, screen.isTouchDevice, viewport);
-  return { screen, canvas, ctx, renderer, effects, settings };
+  const duel = new DuelPresenter(renderer, effects, settings);
+  return { screen, canvas, ctx, renderer, effects, settings, duel };
 }
 
-function makeScreenTarget(screen: FxScreen): Target {
+function makeScreenTarget(screen: FxScreen): FrameTarget {
   const { canvas } = makeCanvas(1, 1);
   canvas.style.width = `${String(screen.width)}px`;
   canvas.style.height = `${String(screen.height)}px`;
@@ -93,7 +93,7 @@ function windowScreen(): FxScreen {
 }
 
 // Рендер не рисует танк, пока спрайт не загрузился; у каждого рендера свои спрайты.
-function hasSprites(target: Target): boolean {
+function hasSprites(target: FrameTarget): boolean {
   playFrame(target, SPRITE_PROBE);
   return SPRITE_PROBE.tanks.every((pose) => {
     const point = worldToScreen(target.renderer.currentCamera, pose);
@@ -103,7 +103,7 @@ function hasSprites(target: Target): boolean {
 }
 
 // Все начертания подключённого набора — до первого кадра: холст не ждёт шрифт и нарисовал бы запасным.
-async function waitForAssets(targets: readonly Target[]): Promise<void> {
+async function waitForAssets(targets: readonly FrameTarget[]): Promise<void> {
   if (document.readyState !== 'complete') {
     await new Promise<void>((resolve) => {
       window.addEventListener(

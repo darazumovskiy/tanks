@@ -88,7 +88,8 @@ interface CameraStrategy {
 | `packages/client/src/render/cameraFollow.ts` | Стратегии `follow` и `followZoom` |
 | `packages/client/src/render/cameraPair.ts` | Стратегия `pair` |
 | `packages/client/src/render/cameraScenarios.ts` | Экраны, сценарии, прогон траекторий, общие инварианты — для тестов и лаборатории |
-| `packages/client/src/render/renderer.ts` | Выбор и пересоздание стратегии, кромка за полем |
+| `packages/client/src/render/renderer.ts` | Выбор и пересоздание стратегии, ширина кромки за полем |
+| `packages/client/src/render/field.ts` | Кромка за полем |
 | `packages/client/src/lab.ts` | Лаборатория `/?lab=camera`: сценарий × стратегия × экран настоящим рендером; `window.tanksLab.show(scenario, mode, screen)`; параметры `?scenario=`, `?mode=` |
 | `packages/client/src/settings.ts`, `settingsPanel.ts` | Режим камеры и параметры по режимам |
 | `packages/client/src/game.ts` | `debugState()` отдаёт `camera` и `enemy` для сквозных проверок |

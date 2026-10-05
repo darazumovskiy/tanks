@@ -1,6 +1,7 @@
-import { ARENA, type Side } from '@tanks/shared/engine';
-import { EventFlag, type SnapshotEvent, type TankSnapshot } from '@tanks/shared/protocol';
-import { BODY_FONT, HEAD_FONT, SIDE_COLORS, easeOut, lerp, makeCanvas, rgba } from './view.js';
+import { EventFlag, type FfaEventKind, type SnapshotEventKind, type TankSnapshot } from '@tanks/shared/protocol';
+import type { Camera } from './camera.js';
+import type { DecalLayer } from './decals.js';
+import { BODY_FONT, HEAD_FONT, easeOut, lerp, rgba } from './view.js';
 
 type ParticleKind = 'spark' | 'smoke' | 'flash' | 'ring' | 'fire' | 'debris';
 
@@ -45,6 +46,44 @@ export interface TankFx {
   smokeTimer: number;
 }
 
+// Событие эффектов — форма события снимка толпы с видами дуэли и толпы: tank — о ком событие, by — стрелок.
+export interface FxEvent {
+  kind: SnapshotEventKind | FfaEventKind;
+  tank: number | null;
+  by: number | null;
+  x: number;
+  y: number;
+  value: number;
+  dx: number;
+  dy: number;
+  flags: number;
+}
+
+type FxAnnouncement = 'zoneStart' | 'selfHit' | 'firstBlood';
+
+// Что событие делает с экраном целиком. Решает вызывающий: дуэль и толпа трясут и объявляют по своим правилам.
+export interface FxEventOptions {
+  shake: number;
+  flash: number;
+  announcement: FxAnnouncement | null;
+}
+
+export interface FxTank {
+  id: number;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  isAlive: boolean;
+}
+
+export interface FxBullet {
+  id: number;
+  x: number;
+  y: number;
+  color: string;
+}
+
 interface TrailPoint {
   x: number;
   y: number;
@@ -52,6 +91,10 @@ interface TrailPoint {
 
 const MAX_PARTICLES = 1400;
 const TRAIL_LENGTH = 80;
+const TREAD_EVERY_TICKS = 2;
+const TREAD_MIN_SPEED = 8;
+const DECAL_FADE_EVERY_TICKS = 45;
+const ZONE_ANNOUNCE_COLOR = '#ff4d5e';
 
 function particle(partial: Partial<Particle> & Pick<Particle, 'kind' | 'x' | 'y' | 'max'>): Particle {
   return {
@@ -68,67 +111,83 @@ function particle(partial: Partial<Particle> & Pick<Particle, 'kind' | 'x' | 'y'
   };
 }
 
+function idleTankFx(): TankFx {
+  return { flash: 0, recoil: 0, ghostHp: null, smokeTimer: 0 };
+}
+
 // Визуальный слой поверх симуляции: частицы, следы гусениц и подпалины, всплывающие цифры, объявления, тряска.
+// Цвет и имя танка — по номеру: дуэль красит по стороне, толпа — своего и чужих.
 export class Effects {
   private particles: Particle[] = [];
   private popups: Popup[] = [];
   private announcements: Announcement[] = [];
   private readonly trails = new Map<number, TrailPoint[]>();
-  private readonly decals: HTMLCanvasElement;
-  private readonly decalCtx: CanvasRenderingContext2D;
-  private hasFirstBlood = false;
+  private readonly tankFxById = new Map<number, TankFx>();
   shake = 0;
   flashScreen = 0;
   time = 0;
-  readonly tankFx: [TankFx, TankFx] = [
-    { flash: 0, recoil: 0, ghostHp: null, smokeTimer: 0 },
-    { flash: 0, recoil: 0, ghostHp: null, smokeTimer: 0 },
-  ];
 
-  constructor(private readonly names: () => [string, string]) {
-    const made = makeCanvas(ARENA.width, ARENA.height);
-    this.decals = made.canvas;
-    this.decalCtx = made.ctx;
-  }
+  constructor(
+    private readonly decals: DecalLayer,
+    private readonly colorOf: (id: number) => string,
+    private readonly nameOf: (id: number) => string,
+  ) {}
 
   reset(): void {
-    this.decalCtx.clearRect(0, 0, ARENA.width, ARENA.height);
+    this.decals.clear();
     this.particles = [];
     this.popups = [];
     this.trails.clear();
-    this.hasFirstBlood = false;
-    for (const fx of this.tankFx) {
-      fx.flash = 0;
-      fx.recoil = 0;
-      fx.ghostHp = null;
-      fx.smokeTimer = 0;
+    this.tankFxById.clear();
+  }
+
+  tankFx(id: number): Readonly<TankFx> {
+    return this.fxOf(id);
+  }
+
+  private fxOf(id: number): TankFx {
+    const known = this.tankFxById.get(id);
+    if (known !== undefined) {
+      return known;
     }
+    const fx = idleTankFx();
+    this.tankFxById.set(id, fx);
+    return fx;
   }
 
   // Вызывается на каждый снимок сервера: следы гусениц и медленное выцветание подпалин.
   onSnapshot(tick: number, tanks: readonly TankSnapshot[]): void {
-    if (tick % 2 === 0) {
-      this.treads(tanks);
+    if (tick % TREAD_EVERY_TICKS === 0) {
+      for (const tank of tanks) {
+        if (!tank.isAlive || Math.abs(tank.speed) < TREAD_MIN_SPEED) {
+          continue;
+        }
+        this.decals.tread(tank.x, tank.y, tank.heading);
+      }
     }
-    if (tick % 45 === 0) {
-      this.decalCtx.save();
-      this.decalCtx.globalCompositeOperation = 'destination-out';
-      this.decalCtx.fillStyle = 'rgba(0,0,0,0.05)';
-      this.decalCtx.fillRect(0, 0, ARENA.width, ARENA.height);
-      this.decalCtx.restore();
+    if (tick % DECAL_FADE_EVERY_TICKS === 0) {
+      this.decals.fade();
     }
   }
 
-  onEvent(event: SnapshotEvent): void {
+  onEvent(event: FxEvent, options: FxEventOptions): void {
+    this.spawnFor(event);
+    this.shake = Math.max(this.shake, options.shake);
+    this.flashScreen = Math.max(this.flashScreen, options.flash);
+    if (options.announcement !== null) {
+      this.announceFor(options.announcement, event);
+    }
+  }
+
+  private spawnFor(event: FxEvent): void {
     switch (event.kind) {
       case 'shot': {
-        if (event.side !== null) {
-          this.tankFx[event.side].recoil = 1;
+        if (event.tank !== null) {
+          this.fxOf(event.tank).recoil = 1;
         }
         this.spawn(particle({ kind: 'flash', x: event.x, y: event.y, max: 0.09, size: 34, color: '255,220,150' }));
         this.sparks(event.x, event.y, 6, '255,210,120', 420, event.value, 0.5);
         this.smoke(event.x + event.dx * 6, event.y + event.dy * 6, 3, 10, 0.7);
-        this.shake = Math.max(this.shake, 2.5);
         break;
       }
       case 'ricochet':
@@ -138,7 +197,7 @@ export class Effects {
       case 'impact':
         this.sparks(event.x, event.y, 12, '255,190,110', 260);
         this.smoke(event.x, event.y, 4, 12, 0.9);
-        this.scorch(event.x, event.y, 16, 0.35);
+        this.decals.scorch(event.x, event.y, 16, 0.35);
         break;
       case 'fizzle':
         this.smoke(event.x, event.y, 2, 8, 0.5);
@@ -165,7 +224,6 @@ export class Effects {
         );
         this.sparks(event.x, event.y, 24, '220,240,255', 420);
         this.popup('ПЕРЕХВАТ!', event.x, event.y - 34, '#dff2ff', 34, 1.4);
-        this.shake = Math.max(this.shake, 6);
         break;
       case 'hit':
         this.onHit(event);
@@ -173,19 +231,16 @@ export class Effects {
       case 'death':
         this.onDeath(event);
         break;
-      case 'zoneStart':
-        this.announce('ЗОНА СУЖАЕТСЯ', '#ff4d5e', 'вне круга — урон');
-        break;
-      case 'roundOver':
+      default:
         break;
     }
   }
 
-  private onHit(event: SnapshotEvent): void {
-    if (event.side === null) {
+  private onHit(event: FxEvent): void {
+    if (event.tank === null) {
       return;
     }
-    const fx = this.tankFx[event.side];
+    const fx = this.fxOf(event.tank);
     const isZone = (event.flags & EventFlag.Zone) !== 0;
     if (isZone) {
       fx.flash = Math.max(fx.flash, 0.25);
@@ -205,22 +260,16 @@ export class Effects {
       '#ffffff',
       36,
     );
-    this.shake = Math.max(this.shake, 9);
     const isSelf = (event.flags & EventFlag.Self) !== 0;
     const isRicochet = (event.flags & EventFlag.Ricochet) !== 0;
-    const shooter: Side = event.side === 0 ? 1 : 0;
-    if (isSelf) {
-      this.announce('САМ СЕБЯ!', SIDE_COLORS[event.side], 'рикошетом');
-    } else if (isRicochet) {
-      this.popup('РИКОШЕТ!', event.x, event.y - 76, SIDE_COLORS[shooter], 30, 1.3);
+    const isForeignRicochet = isRicochet && !isSelf;
+    if (!isForeignRicochet || event.by === null) {
+      return;
     }
-    if (!this.hasFirstBlood && !isSelf) {
-      this.hasFirstBlood = true;
-      this.announce('ПЕРВАЯ КРОВЬ', SIDE_COLORS[shooter], this.names()[shooter]);
-    }
+    this.popup('РИКОШЕТ!', event.x, event.y - 76, this.colorOf(event.by), 30, 1.3);
   }
 
-  private onDeath(event: SnapshotEvent): void {
+  private onDeath(event: FxEvent): void {
     const { x, y } = event;
     this.spawn(particle({ kind: 'flash', x, y, max: 0.35, size: 260, color: '255,210,140' }));
     this.spawn(particle({ kind: 'ring', x, y, max: 0.7, size: 260, color: '255,230,190', width: 10 }));
@@ -241,7 +290,6 @@ export class Effects {
         }),
       );
     }
-    const color = event.side === null ? '#ffffff' : SIDE_COLORS[event.side];
     for (let i = 0; i < 26; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 120 + Math.random() * 420;
@@ -257,18 +305,34 @@ export class Effects {
           rot: Math.random() * 6,
           vr: (Math.random() - 0.5) * 20,
           drag: 2.5,
-          color,
         }),
       );
     }
     this.sparks(x, y, 50, '255,220,150', 700);
     this.smoke(x, y, 24, 34, 2.4, '70,70,74');
-    this.scorch(x, y, 90, 0.75);
-    this.shake = 26;
-    this.flashScreen = 0.55;
+    this.decals.scorch(x, y, 90, 0.75);
   }
 
-  update(dt: number, tanks: readonly { x: number; y: number; hp: number; maxHp: number; isAlive: boolean }[]): void {
+  // «САМ СЕБЯ!» — цветом того, кто попал в себя; «ПЕРВАЯ КРОВЬ» — цветом и именем стрелка.
+  private announceFor(announcement: FxAnnouncement, event: FxEvent): void {
+    switch (announcement) {
+      case 'zoneStart':
+        this.announce('ЗОНА СУЖАЕТСЯ', ZONE_ANNOUNCE_COLOR, 'вне круга — урон');
+        break;
+      case 'selfHit':
+        if (event.tank !== null) {
+          this.announce('САМ СЕБЯ!', this.colorOf(event.tank), 'рикошетом');
+        }
+        break;
+      case 'firstBlood':
+        if (event.by !== null) {
+          this.announce('ПЕРВАЯ КРОВЬ', this.colorOf(event.by), this.nameOf(event.by));
+        }
+        break;
+    }
+  }
+
+  update(dt: number, tanks: readonly FxTank[]): void {
     this.time += dt;
     for (const p of this.particles) {
       p.life += dt;
@@ -290,8 +354,8 @@ export class Effects {
     this.announcements = this.announcements.filter((announcement) => announcement.life < announcement.max);
     this.shake = Math.max(0, this.shake - dt * 60);
     this.flashScreen = Math.max(0, this.flashScreen - dt * 2);
-    for (const [index, tank] of tanks.entries()) {
-      const fx = this.tankFx[index === 0 ? 0 : 1];
+    for (const tank of tanks) {
+      const fx = this.fxOf(tank.id);
       fx.flash = Math.max(0, fx.flash - dt * 7);
       fx.recoil = Math.max(0, fx.recoil - dt * 6);
       if (fx.ghostHp === null || fx.ghostHp < tank.hp) {
@@ -326,40 +390,6 @@ export class Effects {
         }
       }
     }
-  }
-
-  private treads(tanks: readonly TankSnapshot[]): void {
-    const g = this.decalCtx;
-    for (const tank of tanks) {
-      if (!tank.isAlive || Math.abs(tank.speed) < 8) {
-        continue;
-      }
-      const px = -Math.sin(tank.heading);
-      const py = Math.cos(tank.heading);
-      g.fillStyle = 'rgba(0,0,0,0.2)';
-      for (const offset of [-17, 17]) {
-        g.save();
-        g.translate(
-          tank.x + px * offset - Math.cos(tank.heading) * 14,
-          tank.y + py * offset - Math.sin(tank.heading) * 14,
-        );
-        g.rotate(tank.heading);
-        g.fillRect(-4, -4.5, 8, 9);
-        g.restore();
-      }
-    }
-  }
-
-  private scorch(x: number, y: number, radius: number, alpha: number): void {
-    const g = this.decalCtx;
-    const gradient = g.createRadialGradient(x, y, 0, x, y, radius);
-    gradient.addColorStop(0, `rgba(0,0,0,${String(alpha)})`);
-    gradient.addColorStop(0.6, `rgba(10,8,6,${String(alpha * 0.5)})`);
-    gradient.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = gradient;
-    g.beginPath();
-    g.arc(x, y, radius, 0, Math.PI * 2);
-    g.fill();
   }
 
   private spawn(p: Particle): void {
@@ -420,18 +450,15 @@ export class Effects {
     this.popups.push({ text, x, y, color, size, life: 0, max });
   }
 
-  announce(text: string, color: string, sub = ''): void {
+  private announce(text: string, color: string, sub: string): void {
     this.announcements.push({ text, sub, color, life: 0, max: 1.8 });
   }
 
-  drawDecals(ctx: CanvasRenderingContext2D): void {
-    ctx.drawImage(this.decals, 0, 0);
+  drawDecals(ctx: CanvasRenderingContext2D, camera: Camera): void {
+    this.decals.draw(ctx, camera);
   }
 
-  drawBullets(
-    ctx: CanvasRenderingContext2D,
-    bullets: readonly { id: number; owner: Side; x: number; y: number }[],
-  ): void {
+  drawBullets(ctx: CanvasRenderingContext2D, bullets: readonly FxBullet[]): void {
     const live = new Set<number>();
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -459,7 +486,7 @@ export class Effects {
           break;
         }
       }
-      const color = SIDE_COLORS[bullet.owner];
+      const { color } = bullet;
       for (let i = 1; i < trail.length; i++) {
         const from = trail[i - 1];
         const to = trail[i];

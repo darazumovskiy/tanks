@@ -8,10 +8,9 @@ import {
   type CameraScenario,
   type ScreenGeometry,
 } from './render/cameraScenarios.js';
-import { buildSelect, labHud, thumbSticks } from './labShared.js';
+import { buildSelect, LAB_NAMES, labHud, thumbSticks } from './labShared.js';
 import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrategy.js';
-import { Effects } from './render/effects.js';
-import { Renderer } from './render/renderer.js';
+import { createDuelEffects, Renderer } from './render/renderer.js';
 import { defaultSettings, type Settings } from './settings.js';
 
 // Лаборатория камеры (`/?lab=camera`): танки ставятся в позиции сценария без сервера и рисуются настоящим
@@ -74,7 +73,7 @@ export function showCameraLab(root: HTMLElement): void {
   info.style.whiteSpace = 'pre-wrap';
   root.append(controls, stage, info);
 
-  const effects = new Effects(() => ['Я', 'Противник']);
+  const effects = createDuelEffects(() => LAB_NAMES);
   let renderer: Renderer | null = null;
   let rendererScreen: ScreenGeometry | null = null;
 

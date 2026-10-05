@@ -1,8 +1,8 @@
-import { labHud, thumbSticks } from '../labShared.js';
+import { LAB_NAMES, labHud, thumbSticks } from '../labShared.js';
 import type { AimLineStyle } from '../render/aimLineStyle.js';
 import { worldToScreen } from '../render/camera.js';
-import { Effects } from '../render/effects.js';
-import { Renderer } from '../render/renderer.js';
+import type { Effects } from '../render/effects.js';
+import { createDuelEffects, Renderer } from '../render/renderer.js';
 import { makeCanvas } from '../render/view.js';
 import { defaultSettings, type Settings } from '../settings.js';
 import { buildSceneFrame, type FxScene, type FxScreen } from './scenes.js';
@@ -31,7 +31,7 @@ export function makeTarget(screen: FxScreen): Target {
   canvas.style.height = `${String(screen.height)}px`;
   canvas.className = 'fx-stage-canvas';
   const settings = defaultSettings();
-  const effects = new Effects(() => ['Я', 'Противник']);
+  const effects = createDuelEffects(() => LAB_NAMES);
   const renderer = new Renderer(canvas, effects, settings, screen.isTouchDevice, () => ({
     width: screen.width,
     height: screen.height,

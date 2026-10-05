@@ -58,7 +58,7 @@
 | `packages/client/src/input.ts` | `read(me, shot: ShotContext)`, `ShotContext { isReturning, isInZone }`; зона применяется к стику, авто-огню и выбросу стика, тап и мышь с пробелом — без зоны; `isZoneFiring` |
 | `packages/client/src/game.ts` | `isShotInZone` раз в тик по карте раунда, `prediction.me` и видимому противнику, только при включённом флаге; `debugState().isZoneFiring`; `zonefire=` в строке `flags` |
 | `packages/client/src/settings.ts`, `settingsPanel.ts` | Поле `hasZoneFire` (label «Огонь по цели»); админская группа панели пропускает флажки `isTouchOnly` на компьютере |
-| `packages/client/src/render/renderer.ts` | Контур и кольцо правого стика цвета огня только при `stick.isFiring` и открытой зоне (`HudInfo.isZoneFiring` или флаг выключен) |
+| `packages/client/src/render/screenLayers.ts` | Контур и кольцо правого стика цвета огня только при `stick.isFiring` и открытой зоне (`HudInfo.isZoneFiring` или флаг выключен) |
 
 ### План тестирования — огонь по цели
 
@@ -126,8 +126,10 @@
 | `packages/client/src/touch.ts` | `TouchSticks`: слушает Pointer Events касаний на холсте, ведёт до двух стиков по половинам экрана, считает `isActive` и `isFiring` с гистерезисом, отдаёт состояние для чтения ввода и рисования; защёлка огня и тап — `takePendingFire()` → `'none' | 'stick' | 'tap'`; бросок стика корпуса — `takeReverseFlick()` (защёлка до следующего чтения, сбрасывается с отпусканием стика) |
 | `packages/client/src/input.ts` | `InputReader`: объединяет клавиатуру, мышь, стики и авто-огонь в один `Action` на тик — `read(me, shot)` с `ShotContext { isReturning, isInZone }`; корпус — бросок при пальце позади танка включает `isReversing`, дальше `steerHull`; предохранитель: задержка `RICOCHET_GUARD_HOLD_MS`, своя защёлка огня на время задержки, `isShotGuarded`, события `hold`/`cancel` наружу; огонь по цели — `isZoneFiring` |
 | `packages/client/src/render/camera.ts` | `isInView(camera, point)` — точка в кадре; общая проверка для стрелки «противник за кадром» и видимого противника помощников |
-| `packages/client/src/render/renderer.ts` | Рисует стики в экранных координатах поверх кадра: основание (контур цвета огня, когда стреляет без кольца и зона огня открыта; контур стика корпуса цвета заднего хода при `isReversing`), ручка, кольцо огня при включённой настройке; в координатах поля — штрих предохранителя у дула своего танка с плавным появлением |
-| `packages/client/src/game.ts` | Передаёт состояние стиков и `isReversing` в рендер; `toggleAutoFire()` — тогл с записью в журнал, `debugState().isAutoFiring`, `debugState().isReversing`; видимый противник (интерполированный, живой, в кадре) — общая цель предохранителя, линии выстрела и огня по цели; опасность выстрела через `isShotReturning` и зона через `isShotInZone` по карте раунда, `prediction.me` и видимому противнику — в `ShotContext` для ввода, `debugState().isShotGuarded`, `debugState().isZoneFiring`; строки `flags`, `guard hold`, `guard cancel` в журнале |
+| `packages/client/src/render/screenLayers.ts` | Рисует стики в экранных координатах поверх кадра: основание (контур цвета огня, когда стреляет без кольца и зона огня открыта; контур стика корпуса цвета заднего хода при `isReversing`), ручка, кольцо огня при включённой настройке |
+| `packages/client/src/render/field.ts` | В координатах поля — штрих предохранителя у дула своего танка с плавным появлением |
+| `packages/client/src/duelPresenter.ts` | Видимый противник (интерполированный, живой, в кадре, во время боя) — общая цель предохранителя, линии выстрела и огня по цели |
+| `packages/client/src/game.ts` | Передаёт состояние стиков и `isReversing` в рендер; `toggleAutoFire()` — тогл с записью в журнал, `debugState().isAutoFiring`, `debugState().isReversing`; опасность выстрела через `isShotReturning` и зона через `isShotInZone` по карте раунда, `prediction.me` и видимому противнику — в `ShotContext` для ввода, `debugState().isShotGuarded`, `debugState().isZoneFiring`; строки `flags`, `guard hold`, `guard cancel` в журнале |
 | `packages/client/src/main.ts` | Кнопка `#autofire` (видна на устройстве с касанием), подсказка про ориентацию: `matchMedia('(orientation: portrait) and (pointer: coarse)')` |
 
 ## План тестирования

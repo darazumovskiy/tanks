@@ -19,17 +19,17 @@ export function buildSelect<T extends { id: string }>(
   return select;
 }
 
+export const LAB_NAMES: [string, string] = ['Я', 'Противник'];
+
 export function labHud(sticks: StickState[], frameMs: number, aimLine: AimLine | null): HudInfo {
   return {
-    names: ['Я', 'Противник'],
+    names: LAB_NAMES,
     score: [0, 0],
     roundIndex: 0,
     gameId: 'LAB',
     gameTick: 0,
     mySide: 0,
     rttMs: 0,
-    serverTick: 0,
-    pending: 0,
     correctionPx: 0,
     fps: 0,
     worstFrameMs: 0,

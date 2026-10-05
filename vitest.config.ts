@@ -32,6 +32,8 @@ export default defineConfig({
         'packages/client/src/zoneFire.ts',
         'packages/client/src/admin.ts',
         'packages/client/src/render/aimLineStyle.ts',
+        'packages/client/src/render/fxEvent.ts',
+        'packages/client/src/duelPresenter.ts',
         'packages/client/src/fxLab/{scenes,styleParams,paramPanel,contactSheet}.ts',
         'packages/client/src/clientInfo.ts',
         'packages/client/src/telemetry.ts',
@@ -55,6 +57,12 @@ export default defineConfig({
           lines: 95,
         },
         'packages/client/src/{steering,flick,touch,input,clientInfo,telemetry,aimLine,zoneFire,admin}.ts': {
+          statements: 95,
+          branches: 90,
+          functions: 95,
+          lines: 95,
+        },
+        'packages/client/src/{render/fxEvent,duelPresenter}.ts': {
           statements: 95,
           branches: 90,
           functions: 95,

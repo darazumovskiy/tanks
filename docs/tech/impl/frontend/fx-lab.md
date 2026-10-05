@@ -8,7 +8,7 @@
 
 Две необязательные ручки формы: `taper` — множители ширины в начале и в конце участка (`start`, `end`), участок рисуется короткими кусками с плавно меняющейся толщиной; `grain` — зернистость вдоль ядра: полоска шума в цвете состояния натягивается узором (`createPattern`) по длине, медленно ползёт по времени (`alpha`, `periodPx`, `speedPxPerS`).
 
-`drawAimLine(ctx, line, style, { timeS, scale, glow })` рисует линию в координатах поля: ореолы в `lighter` (внешний → внутренний, альфа × пульс), штрихи со смещением `−timeS · speed`, ядро в `source-over` без пульса, хвост теми же слоями с ослаблением, при `isReturning` — цвет `danger` и штрихи к игроку; горячие точки — спрайт радиального градиента из кэша по (цвет, радиус); засечка поперёк пути. `glow` — доля появления (0–1), `Renderer` считает её как раньше и держит последнюю линию на время угасания. `AIM_LINE_STYLE` — токен по умолчанию; `Renderer.setAimLineStyle(style)` подменяет его (лаборатория).
+`drawAimLine(ctx, line, style, { timeS, scale, glow })` рисует линию в координатах поля: ореолы в `lighter` (внешний → внутренний, альфа × пульс), штрихи со смещением `−timeS · speed`, ядро в `source-over` без пульса, хвост теми же слоями с ослаблением, при `isReturning` — цвет `danger` и штрихи к игроку; горячие точки — спрайт радиального градиента из кэша по (цвет, радиус); засечка поперёк пути. `glow` — доля появления (0–1), рендер поля (`FieldRenderer`) считает её и держит последнюю линию на время угасания. `AIM_LINE_STYLE` — токен по умолчанию; `Renderer.setAimLineStyle(style)` подменяет его (лаборатория).
 
 ## Сцены
 
@@ -55,7 +55,8 @@
 | Файл | Роль |
 |---|---|
 | `packages/client/src/render/aimLineStyle.ts` | `AimLineStyle`, `AIM_LINE_STYLE`, `drawAimLine`, кэш спрайтов горячих точек |
-| `packages/client/src/render/renderer.ts` | Появление и угасание линии, `setAimLineStyle`, вызов `drawAimLine` с масштабом камеры |
+| `packages/client/src/render/renderer.ts` | `setAimLineStyle` — стиль линии вместо стиля из настроек |
+| `packages/client/src/render/field.ts` | Появление и угасание линии, вызов `drawAimLine` с масштабом камеры |
 | `packages/client/src/fxLab/scenes.ts` | `FX_SCENES`, `FX_SCREENS`, `buildSceneFrame` |
 | `packages/client/src/fxLab/variants.ts` | Раунды и варианты стиля линии с якорями и выбором |
 | `packages/client/src/fxLab/frame.ts` | Цель рендера на экран, служебные кадры, кадрирование вокруг линии — общее для страницы лаборатории, листа и просмотра |

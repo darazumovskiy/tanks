@@ -32,11 +32,11 @@
 | Файл | Роль |
 |---|---|
 | `packages/client/src/render/camera.ts`, `cameraStrategy.ts`, `cameraFollow.ts`, `cameraPair.ts`, `cameraLevels.ts` | Камера: математика и стратегии — [duel-camera.md](duel-camera.md) |
-| `packages/client/src/render/renderer.ts` | Проход по миру через камеру (кромка, пол, объекты); проход по интерфейсу в CSS-пикселях: панели, стрелка, объявления, оверлеи, отладка, стики |
+| `packages/client/src/render/renderer.ts` | Кадр дуэли: проход по миру через камеру — `field.ts` (кромка, пол, объекты); проход по интерфейсу в CSS-пикселях — `duelHud.ts` (панели, стрелка, отсчёт) и `screenLayers.ts` (объявления, вспышка, отладка, стики) |
 | `packages/client/src/render/art.ts` | `TankArt`: растр спрайтов 256 px, заготовленные тень и «подбитый» вид; `drawTankSprite` без фильтров |
 | `packages/client/src/render/floor.ts` | Пол в двойном разрешении |
 | `packages/client/src/main.ts` | Хранилище настроек, панель и шестерёнка на странице боя, определение устройства с касанием |
-| `packages/client/src/game.ts` | Передаёт настройки в рендер и ввод, в HUD — свою сторону (`mySide`), длительность кадра и историю кадров; сбрасывает камеру на новом раунде; `debugState()` отдаёт `fps` и `correctionPx` |
+| `packages/client/src/game.ts` | Передаёт настройки в рендер и ввод, в HUD — свою сторону (`mySide`), длительность кадра и историю кадров; сбрасывает камеру на новом раунде через проводку кадра дуэли (`duelPresenter.ts`); `debugState()` отдаёт `fps` и `correctionPx` |
 
 ## План тестирования
 

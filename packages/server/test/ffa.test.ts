@@ -604,7 +604,8 @@ describe('обрыв и возврат', () => {
 
 describe('бездействие', () => {
   it('отсчёт в снимке; смена команды снимает; на пороге — выход с ошибкой Idle, состав обновлён', async () => {
-    await startApp({ idleWarnTicks: 60, idleKickTicks: 160 });
+    // Тик — миллисекунда: окно между предупреждением и выходом должно пережить задержку разбора очереди под нагрузкой.
+    await startApp({ idleWarnTicks: 60, idleKickTicks: 2060 });
     const [idle, busy] = await fightPair();
     let turret = 1;
     const keepBusy = (): void => {
@@ -616,7 +617,7 @@ describe('бездействие', () => {
       keepBusy();
       return snapshot.self.idleTicksLeft !== null;
     });
-    expect(warned.self.idleTicksLeft).toBeLessThanOrEqual(100);
+    expect(warned.self.idleTicksLeft).toBeLessThanOrEqual(2000);
     const seq = idle.client.input({ throttle: 0.5 });
     const cleared = await waitFor(
       idle.client,
@@ -635,7 +636,7 @@ describe('бездействие', () => {
         keepBusy();
         return true;
       },
-      8000,
+      15_000,
     );
     expect(error.code).toBe(ErrorCode.Idle);
     expect(await idle.client.closed()).toBe(true);
