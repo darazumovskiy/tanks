@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { connect as connectTcp } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +20,21 @@ import { seededRandom, sleep } from './support.js';
 
 const FAST_ROOM = { countdownTicks: 3, roundEndTicks: 3, maxInputsPerSecond: 90 };
 const TICK_MS = 4;
+const LOG_BODY_LIMIT_BYTES = 256 * 1024;
+const PART_PAUSE_MS = 50;
+
+// Тело двумя записями с паузой: вторая гарантированно приходит отдельным куском уже после отказа — иначе
+// дочитывание лишнего тела проверялось бы, только если TCP сам порежет тело на куски после лимита.
+async function postInTwoParts(url: string, first: string, second: string): Promise<number | undefined> {
+  const request = httpRequest(url, { method: 'POST' });
+  const answered = once(request, 'response') as Promise<[IncomingMessage]>;
+  request.write(first);
+  await sleep(PART_PAUSE_MS);
+  request.end(second);
+  const [response] = await answered;
+  response.resume();
+  return response.statusCode;
+}
 
 let app: App;
 let port: number;
@@ -468,8 +484,8 @@ describe('журнал игры', () => {
     expect((await fetch(`${base}/log?key=K7MF&src=client-0`, { method: 'POST', body: 'x' })).status).toBe(400);
     expect((await fetch(`${base}/log?src=C1`, { method: 'POST', body: 'x' })).status).toBe(400);
     expect((await fetch(`${base}/log?key=K7MF`, { method: 'POST', body: 'x' })).status).toBe(400);
-    const huge = 'y'.repeat(300 * 1024);
-    expect((await fetch(`${base}/log?key=K7MF&src=C1`, { method: 'POST', body: huge })).status).toBe(413);
+    const overLimit = 'y'.repeat(LOG_BODY_LIMIT_BYTES + 1);
+    expect(await postInTwoParts(`${base}/log?key=K7MF&src=C1`, overLimit, 'z'.repeat(1024))).toBe(413);
     expect((await fetch(`${base}/log?key=K7MF&src=C1`)).status).toBe(404);
     await app.close();
     expect(existsSync(join(logDir, 'K7MF.log'))).toBe(false);
