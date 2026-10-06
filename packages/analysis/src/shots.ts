@@ -7,11 +7,16 @@ import { roundTo, toDegrees, toRadians } from './numbers.js';
 // Противник быстрее 30 единиц в секунду считается движущимся.
 export const MOVING_SPEED = 30;
 // Наведение: от потери цели (ошибка башни больше 30°) до наведения (меньше 5°).
-const AIM_LOST_RAD = toRadians(30);
-const AIM_DONE_RAD = toRadians(5);
-// Доля упреждения не определена, когда точка упреждения почти совпадает с корпусом.
-const LEAD_SPAN_MIN_RAD = 0.01;
-const MIN_DISTANCE = 1;
+export const AIM_LOST_RAD = toRadians(30);
+export const AIM_DONE_RAD = toRadians(5);
+// Ошибка башни меньше 5° — башня смотрит на противника.
+export const AIM_GOOD_DEG = 5;
+// Доля упреждения не определена, когда точка упреждения почти совпадает с корпусом; вне коридора от −1 до 2 —
+// выстрел не по противнику.
+export const LEAD_SPAN_MIN_RAD = 0.01;
+export const LEAD_FRACTION_MIN = -1;
+export const LEAD_FRACTION_MAX = 2;
+export const MIN_DISTANCE = 1;
 
 export const SHOT_KIND = {
   standingHit: 'стоящий: в цель',
@@ -28,10 +33,13 @@ export interface DistanceBucket {
   label: string;
 }
 
+const NEAR_DISTANCE = 300;
+export const FAR_DISTANCE = 600;
+export const MID_DISTANCE_LABEL = '300–600';
 export const DISTANCE_BUCKETS: readonly DistanceBucket[] = [
-  { low: 0, high: 300, label: '<300' },
-  { low: 300, high: 600, label: '300–600' },
-  { low: 600, high: Infinity, label: '>600' },
+  { low: 0, high: NEAR_DISTANCE, label: '<300' },
+  { low: NEAR_DISTANCE, high: FAR_DISTANCE, label: MID_DISTANCE_LABEL },
+  { low: FAR_DISTANCE, high: Infinity, label: '>600' },
 ];
 
 export interface ShotRow {

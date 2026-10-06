@@ -3,6 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./bots/ladder": {
+      "types": "./dist/bots/ladder.d.ts",
+      "default": "./dist/bots/ladder.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "start": "node dist/main.js",

@@ -3,7 +3,9 @@ import { gameTimecode } from '@tanks/shared/protocol';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { analyzeLogLines, type LogFile } from './index.js';
 import type { LogAction, Pose } from './logParser.js';
+import { selectProfileRounds, type ProfileRound, type ProfileSelection } from './profile/index.js';
 
 export type { LogAction, Pose } from './logParser.js';
 
@@ -231,4 +233,29 @@ export function standingFrames(poses: [Pose, Pose], count: number): Frame[] {
 // Путь снаряда за n тиков от момента выстрела в единицах поля.
 export function bulletTravel(ticks: number, speed = DEFAULT_BULLET_SPEED): number {
   return (speed / TICK_RATE) * ticks;
+}
+
+export function logFiles(files: Record<string, string>): LogFile[] {
+  return Object.entries(files).map(([name, text]) => ({ name, lines: text.split('\n') }));
+}
+
+// Выборка профиля для синтетических журналов: ник человека из startDuel, все его игры, снаряд ботов по умолчанию.
+export const FIXTURE_SELECTION: ProfileSelection = {
+  nick: HUMAN_NAME,
+  periods: null,
+  oldLadderGames: [],
+  botBulletSpeeds: { 1: 550, 2: 550, 3: 550, 4: 550, 5: 550, 6: 550, 7: 550, 8: 550, 9: 550, 10: 550 },
+};
+
+export function roundOver(winner: Side | null): EventSpec {
+  return { kind: 'roundOver', side: winner };
+}
+
+// Раунды выборки синтетических журналов, разобранных из памяти.
+export function profileRoundsOf(files: Record<string, string>): ProfileRound[] {
+  return selectProfileRounds(analyzeLogLines(logFiles(files)), FIXTURE_SELECTION).kept;
+}
+
+export function shotEvent(side: Side, shooter: Pose): EventSpec {
+  return { kind: 'shot', side, ...muzzleOf(shooter), v: shooter.turret };
 }

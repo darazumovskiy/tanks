@@ -31,14 +31,20 @@ import {
 } from './movement.js';
 import { count, median, pct, roundTo, sum } from './numbers.js';
 import { analyzeSelfHits, type SelfHitRow } from './selfHits.js';
-import { analyzeAimTracking, analyzeShots, DISTANCE_BUCKETS, MOVING_SPEED, SHOT_KIND, type ShotRow } from './shots.js';
+import {
+  AIM_GOOD_DEG,
+  analyzeAimTracking,
+  analyzeShots,
+  DISTANCE_BUCKETS,
+  LEAD_FRACTION_MAX,
+  LEAD_FRACTION_MIN,
+  MOVING_SPEED,
+  SHOT_KIND,
+  type ShotRow,
+} from './shots.js';
 
 const SECONDS_PER_MINUTE = 60;
 const SECONDS_PER_HOUR = 3600;
-// Доля упреждения вне этого коридора — выстрел не по противнику, в медиану не идёт.
-const LEAD_FRACTION_MIN = -1;
-const LEAD_FRACTION_MAX = 2;
-const AIM_GOOD_DEG = 5;
 const DEFAULT_HUMAN_SIDE: Side = 1;
 
 export type LevelSource = 'код' | 'имя';

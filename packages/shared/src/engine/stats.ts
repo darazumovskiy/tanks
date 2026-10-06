@@ -1,4 +1,12 @@
-import { DEFAULT_STATS, STAT_KEYS, STAT_MAX, STAT_POINTS, TURRET_RATE } from './constants.js';
+import {
+  BULLET_SPEED_BASE,
+  BULLET_SPEED_PER_GUN,
+  DEFAULT_STATS,
+  STAT_KEYS,
+  STAT_MAX,
+  STAT_POINTS,
+  TURRET_RATE,
+} from './constants.js';
 
 export type StatKey = (typeof STAT_KEYS)[number];
 export type Stats = Record<StatKey, number>;
@@ -46,7 +54,7 @@ export function deriveStats(stats: unknown): DerivedStats {
     turnRate: 1.8 + 0.25 * source.engine,
     turretRate: TURRET_RATE,
     damage: 18 + 5 * source.gun,
-    bulletSpeed: 450 + 50 * source.gun,
+    bulletSpeed: BULLET_SPEED_BASE + BULLET_SPEED_PER_GUN * source.gun,
     reloadTime: Math.round((1.3 - 0.16 * source.reload) * 100) / 100,
   };
 }
