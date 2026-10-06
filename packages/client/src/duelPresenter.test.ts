@@ -16,7 +16,7 @@ import {
 } from '@tanks/shared/protocol';
 import { describe, expect, it } from 'vitest';
 import { countdownSeconds, DuelPresenter, type DuelFrameInput } from './duelPresenter.js';
-import type { InterpolatedTank, WorldView } from './prediction.js';
+import type { InterpolatedTank, PictureView, WorldView } from './prediction.js';
 import type { Camera } from './render/camera.js';
 import type { DecalLayer } from './render/decals.js';
 import { Effects, type FxEvent, type FxEventOptions, type FxTank } from './render/effects.js';
@@ -162,8 +162,19 @@ function duelEvent(kind: SnapshotEvent['kind'], side: Side | null, flags = 0): S
   return { kind, side, x: 300, y: 200, value: 28, dx: 1, dy: 0, flags };
 }
 
+// Танки снимка там же, где нарисованы в laneView: точки событий не сдвигаются.
 function snapshotTanks(): TankSnapshot[] {
-  return [0, 1].map(() => ({ x: 0, y: 0, heading: 0, turret: 0, speed: 0, hp: 140, reloadLeft: 0, isAlive: true }));
+  return [LANE_ME, LANE_ENEMY].map((pose) => ({ ...pose, speed: 0, hp: 140, reloadLeft: 0, isAlive: true }));
+}
+
+// Кадр, где картинка противника дошла до othersTick, а свой танк — на три тика впереди.
+function pictureView(othersTick: number, enemyOverrides: Partial<InterpolatedTank> = {}): PictureView {
+  const view = laneView(enemyOverrides);
+  return {
+    ...view,
+    bullets: [],
+    clock: { myTick: othersTick + 3, othersTick, me: view.tanks[0], others: [view.tanks[1]] },
+  };
 }
 
 class FakeDecals implements DecalLayer {
@@ -228,6 +239,9 @@ describe('снимок сервера', () => {
       duelEvent('hit', 1, EventFlag.Ricochet),
       duelEvent('death', 1),
     ]);
+    expect(log).toEqual(['snapshot 12']);
+    const released = presenter.releaseEvents(pictureView(11.5), 0);
+    expect(released.map((event) => event.kind)).toEqual(['shot', 'hit', 'death']);
     expect(log).toEqual(['snapshot 12', 'event shot', 'event hit', 'event death']);
     expect(effects.events).toEqual([
       {
@@ -253,8 +267,53 @@ describe('снимок сервера', () => {
     );
     const presenter = new DuelPresenter(fakeRenderer([]), effects, defaultSettings());
     presenter.applySnapshot(2, snapshotTanks(), [duelEvent('death', 0)]);
+    expect(effects.shake).toBe(0);
+    presenter.releaseEvents(pictureView(1.5), 0);
     expect(effects.shake).toBe(26);
     expect(effects.flashScreen).toBe(0.55);
+  });
+
+  it('попадание по противнику ждёт, пока его картинка дойдёт до тика, и играется на нарисованном танке', () => {
+    const log: string[] = [];
+    const effects = recordedEffects(log);
+    const presenter = new DuelPresenter(fakeRenderer(log), effects, defaultSettings());
+    const hit = { ...duelEvent('hit', 1), x: LANE_ENEMY.x - 20, y: LANE_ENEMY.y };
+    presenter.applySnapshot(30, snapshotTanks(), [hit, duelEvent('shot', 0)], 1000);
+    expect(presenter.releaseEvents(pictureView(28.9), 1010).map((event) => event.kind)).toEqual(['shot']);
+    expect(presenter.releaseEvents(pictureView(29), 1020)).toEqual([]);
+    const moved = presenter.releaseEvents(pictureView(29.2, { x: LANE_ENEMY.x - 7, y: LANE_ENEMY.y + 3 }), 1030);
+    expect(moved).toEqual([{ ...hit, x: LANE_ENEMY.x - 27, y: LANE_ENEMY.y + 3 }]);
+    expect(log).toEqual(['snapshot 30', 'event shot', 'event hit']);
+  });
+
+  it('попадание по своему танку — сразу; конец раунда — сразу', () => {
+    const presenter = new DuelPresenter(fakeRenderer([]), recordedEffects([]), defaultSettings());
+    presenter.applySnapshot(30, snapshotTanks(), [duelEvent('hit', 0), duelEvent('roundOver', null)], 1000, 0);
+    expect(presenter.releaseEvents(pictureView(27.5), 1000).map((event) => event.kind)).toEqual(['hit', 'roundOver']);
+  });
+
+  it('смертельное попадание по себе — сразу на своём танке, хотя своего времени на картинке уже нет', () => {
+    const presenter = new DuelPresenter(fakeRenderer([]), recordedEffects([]), defaultSettings());
+    presenter.applySnapshot(30, snapshotTanks(), [duelEvent('hit', 0), duelEvent('death', 0)], 1000, 0);
+    const dead = pictureView(27.5);
+    const released = presenter.releaseEvents({ ...dead, clock: { ...dead.clock, me: null, myTick: 28 } }, 1000);
+    expect(released.map((event) => event.kind)).toEqual(['hit', 'death']);
+  });
+
+  it('событие, не дождавшееся картинки за 500 мс, выброшено молча; новый раунд и возврат вкладки очищают очередь', () => {
+    const log: string[] = [];
+    const presenter = new DuelPresenter(fakeRenderer(log), recordedEffects(log), defaultSettings());
+    presenter.applySnapshot(30, snapshotTanks(), [duelEvent('death', 1)], 1000, 0);
+    expect(presenter.releaseEvents(pictureView(20), 1499)).toEqual([]);
+    expect(presenter.releaseEvents(pictureView(20), 1500)).toEqual([]);
+    expect(presenter.releaseEvents(pictureView(40), 1501)).toEqual([]);
+    presenter.applySnapshot(31, snapshotTanks(), [duelEvent('death', 1)], 1000, 0);
+    presenter.startRound();
+    expect(presenter.releaseEvents(pictureView(40), 1200)).toEqual([]);
+    presenter.applySnapshot(32, snapshotTanks(), [duelEvent('death', 1)], 2000, 0);
+    presenter.clearEvents();
+    expect(presenter.releaseEvents(pictureView(40), 2100)).toEqual([]);
+    expect(log.filter((line) => line.startsWith('event'))).toEqual([]);
   });
 
   it('шаг эффектов получает танки с номерами сторон по порядку', () => {

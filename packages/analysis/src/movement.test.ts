@@ -240,4 +240,18 @@ describe('движение и динамика', () => {
     expect(game.client.rtt_median).toBe(60);
     expect(game.client.fps_median).toBe(59);
   });
+
+  it('шаги `in skip` среди команд — считаются пропущенными, идут в минуты игры, смены поворота не рвут', () => {
+    const poses: [Pose, Pose] = [BOT_POSE, pose(400, LANE_Y)];
+    const builder = startDuel().roundStart(0, 0).frames(countdownFrames(poses));
+    builder.client(HUMAN, 'in seq=1 a=0.00,1.00,0.00,0');
+    builder.client(HUMAN, 'in skip next=2');
+    builder.client(HUMAN, 'in seq=2 a=0.00,-1.00,0.00,0');
+    builder.client(HUMAN, 'in skip next=3');
+    builder.frames([fightFrame(poses), fightFrame(poses)]);
+    const game = analyzeSingle(builder);
+
+    expect(game.client_inputs).toMatchObject({ inputs: 2, skipped_inputs: 2, turn_sign_flips: 1, turn_changes: 1 });
+    expect(game.client_inputs.minutes).toBe(Math.round((4 / TICK_RATE / SECONDS_PER_MINUTE) * 100) / 100);
+  });
 });

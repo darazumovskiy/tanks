@@ -198,9 +198,11 @@ function viewAt(frame: FfaStandFrame, zone: ZonePlan, t: number): FfaFrameView {
       owner: bullet.owner,
       x: bullet.x + Math.cos(bullet.angle) * BULLET_SPEED * t,
       y: bullet.y + Math.sin(bullet.angle) * BULLET_SPEED * t,
+      tick: 0,
     })),
     kits: frame.hasKits ? map.kits.map((kit) => ({ x: kit.x, y: kit.y, isActive: true, respawnIn: 0 })) : [],
     zoneRadius: frame.zoneTimeS === null ? 0 : zoneRadiusAt(zone, frame.zoneTimeS),
+    clock: { myTick: 0, othersTick: 0, me: null, others: [] },
   };
 }
 

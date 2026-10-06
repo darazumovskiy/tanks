@@ -25,7 +25,15 @@ import {
 } from '@tanks/shared/protocol';
 import { randomInt } from 'node:crypto';
 import { duelSide, toSnapshotEvent } from './events.js';
-import { clearInput, createInputChannel, isSilent, offerInput, takeAction, type InputChannel } from './inputs.js';
+import {
+  clearInput,
+  createInputChannel,
+  hasSpareInput,
+  isSilent,
+  offerInput,
+  takeAction,
+  type InputChannel,
+} from './inputs.js';
 import { LOG_SOURCE_SERVER, NO_LOG, type GameLog } from './gameLog.js';
 import { NO_DROP_COUNTER, type InputDropCounter } from './metrics.js';
 
@@ -319,7 +327,7 @@ export class Room {
 
   private broadcastSnapshot(duel: Duel, events: SnapshotEvent[]): void {
     const round = duel.round;
-    const base: Omit<SnapshotMessage, 'ackSeq'> = {
+    const base: Omit<SnapshotMessage, 'ackSeq' | 'hasSpareInput'> = {
       type: MessageType.Snapshot,
       tick: round.tick,
       gameTick: this.gameTick(duel),
@@ -364,7 +372,11 @@ export class Room {
       events,
     };
     for (const player of duel.players) {
-      this.sendTo(player, { ...base, ackSeq: player.input.ackSeq });
+      this.sendTo(player, {
+        ...base,
+        ackSeq: player.input.ackSeq,
+        hasSpareInput: hasSpareInput(player.input, this.tick),
+      });
     }
   }
 

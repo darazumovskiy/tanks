@@ -36,6 +36,7 @@ const TOUCHING_WALL = 60;
 const HALF_TURN = Math.PI / 2;
 const SECONDS_PER_MINUTE = 60;
 const INPUT_PREFIX = 'in seq=';
+const INPUT_SKIP_PREFIX = 'in skip';
 const AUTOFIRE_PREFIX = 'autofire on=';
 const AUTOFIRE_ON = 'on=1';
 const ROUND_START_PREFIX = 'net roundstart';
@@ -352,6 +353,7 @@ export function analyzeDynamics(round: ParsedRound, side: Side, enemy: Side, wal
 
 export interface ClientInputs {
   inputs: number;
+  skipped_inputs: number;
   turn_sign_flips: number;
   turn_full_flips: number;
   turn_changes: number;
@@ -364,8 +366,10 @@ export interface ClientInputs {
 }
 
 // Клиентские строки `in`: дрожание поворота между ±1 и смены желаемого курса.
+// Шаг `in skip` — тик без команды: идёт во время игры, но не в смены поворота и газа.
 export function analyzeClientInputs(lines: readonly ClientLine[]): ClientInputs {
   let inputs = 0;
+  let skippedInputs = 0;
   let turnSignFlips = 0;
   let turnFullFlips = 0;
   let turnChanges = 0;
@@ -373,6 +377,10 @@ export function analyzeClientInputs(lines: readonly ClientLine[]): ClientInputs 
   let prevTurn: number | null = null;
   let prevThrottle = 0;
   for (const line of lines) {
+    if (line.text.startsWith(INPUT_SKIP_PREFIX)) {
+      skippedInputs++;
+      continue;
+    }
     if (!line.text.startsWith(INPUT_PREFIX)) {
       continue;
     }
@@ -398,10 +406,11 @@ export function analyzeClientInputs(lines: readonly ClientLine[]): ClientInputs 
     prevTurn = action.turn;
     prevThrottle = action.throttle;
   }
-  const minutes = inputs / TICK_RATE / SECONDS_PER_MINUTE;
+  const minutes = (inputs + skippedInputs) / TICK_RATE / SECONDS_PER_MINUTE;
   const perMinute = (value: number): number | null => (minutes === 0 ? null : roundTo(value / minutes, 1));
   return {
     inputs,
+    skipped_inputs: skippedInputs,
     turn_sign_flips: turnSignFlips,
     turn_full_flips: turnFullFlips,
     turn_changes: turnChanges,

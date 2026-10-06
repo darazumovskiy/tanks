@@ -19,6 +19,7 @@ const snapshot: SnapshotMessage = {
   tick: 123456,
   gameTick: 654321,
   ackSeq: 77,
+  hasSpareInput: true,
   isOver: true,
   winner: 1,
   endReason: 'time',
@@ -63,6 +64,7 @@ const ffaSnapshot: FfaSnapshotMessage = {
   tick: 3599,
   gameTick: 99999,
   ackSeq: 4242,
+  hasSpareInput: false,
   self: { state: 'wreck', ticksLeft: 45, killerId: 17, idleTicksLeft: null, isOut: false },
   tanks: [
     {
@@ -260,14 +262,14 @@ describe('кодек протокола', () => {
     expect(() => decode(error)).toThrow(RangeError);
 
     const badWinner = encode(snapshot);
-    badWinner[14] = 7;
+    badWinner[15] = 7;
     expect(() => decode(badWinner)).toThrow(RangeError);
 
     const badReason = encode(snapshot);
-    badReason[15] = 9;
+    badReason[16] = 9;
     expect(() => decode(badReason)).toThrow(RangeError);
 
-    const headerBytes = 1 + 4 + 4 + 4 + 1 + 1 + 1 + 8 + 2 * 57;
+    const headerBytes = 1 + 4 + 4 + 4 + 1 + 1 + 1 + 1 + 8 + 2 * 57;
     const badBulletOwner = encode({ ...snapshot, kits: [], events: [] });
     badBulletOwner[headerBytes + 2 + 4] = 5;
     expect(() => decode(badBulletOwner)).toThrow(RangeError);
@@ -309,7 +311,7 @@ describe('кодек протокола', () => {
     badMiss[1 + 2 + 1 + 1 + 1 + 1] = 3;
     expect(() => decode(badMiss)).toThrow(RangeError);
 
-    const selfOffset = 1 + 4 + 4 + 4;
+    const selfOffset = 1 + 4 + 4 + 4 + 1;
     const badState = encode(ffaSnapshot);
     badState[selfOffset] = 9;
     expect(() => decode(badState)).toThrow(RangeError);

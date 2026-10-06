@@ -189,6 +189,7 @@ function snapshot(session: FfaSession, tick: number, own: FfaSelf, events: FfaSn
       tick,
       gameTick: tick,
       ackSeq: 0,
+      hasSpareInput: false,
       self: own,
       tanks: [],
       kits: [],

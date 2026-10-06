@@ -79,6 +79,7 @@ function snapshot(tick: number, own: FfaSelf = self('alive'), events: FfaSnapsho
     tick,
     gameTick: tick,
     ackSeq: 0,
+    hasSpareInput: false,
     self: own,
     tanks: [],
     kits: [],

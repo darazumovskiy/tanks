@@ -18,6 +18,7 @@ import {
   quantizeAction,
   type ErrorMessage,
   type FfaMatchStartMessage,
+  type FfaSnapshotEvent,
   type FfaSnapshotMessage,
   type FfaWelcomeMessage,
 } from '@tanks/shared/protocol';
@@ -26,6 +27,7 @@ import { AudioMix, mixedSound } from '../audioMix.js';
 import { DiagLog } from '../diag.js';
 import { InputReader, type ShotContext } from '../input.js';
 import { NetClient, websocketUrl, type DisconnectReason, type SocketLike } from '../net.js';
+import { EventSchedule, eventPlace, pictureDebug } from '../pictureTime.js';
 import { isInView, screenToWorld, type Camera } from '../render/camera.js';
 import { Effects } from '../render/effects.js';
 import {
@@ -38,6 +40,7 @@ import {
 import { StampDecals } from '../render/stampDecals.js';
 import type { Settings } from '../settings.js';
 import { Sfx, SOUND_DURATIONS } from '../sfx.js';
+import { SpareInput } from '../spareInput.js';
 import type { Telemetry } from '../telemetry.js';
 import { isPathInZone } from '../zoneFire.js';
 import { edgeArrows, visibleEnemies, type EdgeArrow } from './arrows.js';
@@ -105,7 +108,13 @@ const MAX_FRAME_MS = 250;
 const FRAME_HISTORY = 120;
 const SECOND_MS = 1000;
 const VIEW_MARGIN = 100;
-const EMPTY_VIEW: FfaFrameView = { tanks: [], bullets: [], kits: [], zoneRadius: 0 };
+const EMPTY_VIEW: FfaFrameView = {
+  tanks: [],
+  bullets: [],
+  kits: [],
+  zoneRadius: 0,
+  clock: { myTick: 0, othersTick: 0, me: null, others: [] },
+};
 
 // Помощники кадра: линия выстрела с номером танка «на нём» и стрелки на врагов за кадром.
 interface FieldHelpers {
@@ -141,6 +150,8 @@ export class FfaGame {
   private readonly camera = new FfaCamera();
   private readonly fxPolicy = new FfaFxPolicy();
   private readonly audioMix = new AudioMix(SOUND_DURATIONS);
+  private readonly events = new EventSchedule<FfaSnapshotEvent>();
+  private readonly spareInput = new SpareInput();
   private readonly diag: DiagLog;
   private readonly hud: FfaHud;
   private session: FfaSession;
@@ -328,6 +339,7 @@ export class FfaGame {
       floorMemoryMb: this.renderer.floorMemoryMb,
       fps: this.fps,
       worstFrameMs: this.worstFrameMs,
+      picture: pictureDebug(view.clock, prediction?.latestTick ?? 0, view.bullets),
     };
   }
 
@@ -385,6 +397,7 @@ export class FfaGame {
     const outcome = this.session.onWelcome(message, this.deps.now());
     this.deps.tokens.write(this.options.size, message.token);
     this.seq = 0;
+    this.spareInput.reset();
     this.prediction?.resetConnection();
     if (outcome === 'lost') {
       this.prediction = null;
@@ -426,6 +439,7 @@ export class FfaGame {
         this.effects.renameTrail(predictedId, serverId);
       }
     }
+    this.spareInput.noteSnapshot(message.ackSeq, message.hasSpareInput);
     this.diag.markSnapshot(message.gameTick, receivedAt);
     this.snapshotsThisSecond++;
     const camera = this.framing?.camera ?? null;
@@ -433,8 +447,6 @@ export class FfaGame {
       return;
     }
     const myId = this.session.playerId;
-    const listener = this.listener();
-    const now = this.deps.now();
     this.effects.onSnapshot(
       message.tick,
       message.tanks.filter((tank) => isInView(camera, tank)),
@@ -444,11 +456,22 @@ export class FfaGame {
         this.camera.snap();
         this.setAutoFire(false);
       }
+      const tank = message.tanks.find((candidate) => candidate.id === event.tank) ?? null;
+      this.events.add(event, message.tick, eventPlace(event.kind, tank, myId), receivedAt);
+    }
+  }
+
+  // События, до места которых дошла картинка: эффекты, тряска, объявления и звук по правилам толпы.
+  private releaseEvents(view: FfaFrameView, camera: Camera, now: number): void {
+    const myId = this.session.playerId;
+    const listener = this.listener();
+    const drawnTank = (id: number): FfaViewTank | null => view.tanks.find((tank) => tank.id === id) ?? null;
+    for (const { event, tick } of this.events.release(view.clock, drawnTank, now)) {
       const options = this.fxPolicy.optionsFor(event, myId, camera);
       if (options !== null) {
         this.effects.onEvent(event, options);
       }
-      const sound = this.fxPolicy.soundFor(event, camera, message.tick);
+      const sound = this.fxPolicy.soundFor(event, camera, tick);
       if (sound !== null) {
         this.audioMix.play(mixedSound(event, sound.name, myId), listener, now, (volume) =>
           this.sfx.play(sound.name, sound.pan, sound.volume * volume),
@@ -478,6 +501,7 @@ export class FfaGame {
   private resetMatchEffects(): void {
     this.effects.reset();
     this.fxPolicy.reset();
+    this.events.clear();
     this.camera.snap();
   }
 
@@ -506,7 +530,8 @@ export class FfaGame {
       this.switchSpectator();
     });
     // Вкладка скрылась — одна команда «стоп»: танк не едет туда, куда держали газ, пока игрока нет. Вернулась —
-    // отсчёт кадров с этого мгновения, иначе первый кадр нагонит пропущенное пачкой команд.
+    // отсчёт кадров с этого мгновения, иначе первый кадр нагонит пропущенное пачкой команд; события, накопленные
+    // в фоне, не играются.
     document.addEventListener('visibilitychange', () => {
       const isHidden = document.visibilityState === 'hidden';
       if (isHidden && !this.isHidden) {
@@ -515,6 +540,7 @@ export class FfaGame {
       this.isHidden = isHidden;
       this.accumulator = 0;
       this.lastFrame = this.deps.now();
+      this.events.clear();
     });
   }
 
@@ -587,6 +613,9 @@ export class FfaGame {
     this.accumulator += elapsed;
     while (this.accumulator >= TICK_MS) {
       this.accumulator -= TICK_MS;
+      if (this.spareInput.shouldSkip(this.seq + 1)) {
+        continue;
+      }
       this.sendInput(prediction, quantizeAction(this.input.read(me, this.shotContext(me))));
     }
   }
@@ -682,6 +711,7 @@ export class FfaGame {
     this.framing = framing;
     this.frameView = view;
     const { camera } = framing;
+    this.releaseEvents(view, camera, now);
     this.helpers = this.fieldHelpers(view, screen, camera);
     this.effects.update(
       elapsed / SECOND_MS,

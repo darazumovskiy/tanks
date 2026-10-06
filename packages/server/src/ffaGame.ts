@@ -56,7 +56,7 @@ import { crowdNickname, crowdPyramid, type CrowdLevel } from './crowd/profile.js
 import { ServerBot } from './crowd/serverBot.js';
 import { TargetBook } from './crowd/targets.js';
 import { LOG_SOURCE_SERVER, type GameLog } from './gameLog.js';
-import { clearInput, createInputChannel, offerInput, takeAction, type InputChannel } from './inputs.js';
+import { clearInput, createInputChannel, hasSpareInput, offerInput, takeAction, type InputChannel } from './inputs.js';
 import type { InputDropCounter } from './metrics.js';
 import { randomGameId, sanitizeNickname, sanitizeStats, type Connection, type Seat } from './room.js';
 
@@ -747,6 +747,7 @@ export class FfaGame {
           tick: match.world.tick,
           gameTick: this.tick,
           ackSeq: player.input.ackSeq,
+          hasSpareInput: hasSpareInput(player.input, this.tick),
           self: this.selfOf(player, match),
           tanks,
           kits,

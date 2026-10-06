@@ -578,6 +578,7 @@ function snapshot(gameTick: number, overrides: Partial<FfaSnapshotMessage> = {})
     tick: gameTick,
     gameTick,
     ackSeq: 0,
+    hasSpareInput: false,
     self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: null, isOut: false },
     tanks: [tankSnapshot(ME, 400, 450), tankSnapshot(2, 900, 450), tankSnapshot(3, 1500, 450)],
     kits: [{ isActive: true, respawnIn: 0 }],

@@ -149,11 +149,13 @@ export interface SnapshotEvent {
 }
 
 // tick — тик раунда (с нуля каждый раунд); gameTick — тиков с создания дуэли, таймкод журнала.
+// hasSpareInput — сервер держит запас команд, который секунду не понадобился: клиент пропускает шаг ввода.
 export interface SnapshotMessage {
   type: typeof MessageType.Snapshot;
   tick: number;
   gameTick: number;
   ackSeq: number;
+  hasSpareInput: boolean;
   isOver: boolean;
   winner: Side | null;
   endReason: EndReason | null;
@@ -308,12 +310,13 @@ export interface FfaSnapshotEvent {
 }
 
 // tick — тик матча; gameTick — тиков с создания игры, таймкод журнала. births, bounces, deaths — снаряды
-// всего поля: родились, отскочили, погибли на этом тике.
+// всего поля: родились, отскочили, погибли на этом тике. hasSpareInput — как у снимка дуэли.
 export interface FfaSnapshotMessage {
   type: typeof MessageType.FfaSnapshot;
   tick: number;
   gameTick: number;
   ackSeq: number;
+  hasSpareInput: boolean;
   self: FfaSelf;
   tanks: FfaTankSnapshot[];
   kits: KitSnapshot[];

@@ -391,6 +391,7 @@ describe('NetClient в общем бою', () => {
         tick: 4,
         gameTick: 90,
         ackSeq: 0,
+        hasSpareInput: false,
         self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: null, isOut: false },
         tanks: [],
         kits: [],

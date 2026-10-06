@@ -435,6 +435,7 @@ function qualitySection(results: readonly GameAnalysis[]): string {
       r.movement.silent_ticks,
       r.movement.batched_inputs,
       r.movement.dropped_inputs,
+      r.client_inputs.skipped_inputs,
     ];
   });
   return mdTable(
@@ -453,6 +454,7 @@ function qualitySection(results: readonly GameAnalysis[]): string {
       'Тиков молчания',
       'Команд пачкой',
       'Отброшенных команд',
+      'Пропущенных шагов ввода',
     ],
     rows,
   );

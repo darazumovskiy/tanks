@@ -403,7 +403,7 @@ function readList<T>(reader: ByteReader, readItem: (reader: ByteReader) => T): T
 }
 
 function writeFfaSnapshot(writer: ByteWriter, message: FfaSnapshotMessage): void {
-  writer.u32(message.tick).u32(message.gameTick).u32(message.ackSeq);
+  writer.u32(message.tick).u32(message.gameTick).u32(message.ackSeq).bool(message.hasSpareInput);
   writeSelf(writer, message.self);
   writeList(writer, message.tanks, writeFfaTank);
   writeList(writer, message.kits, writeKit);
@@ -419,6 +419,7 @@ function readFfaSnapshot(reader: ByteReader): FfaSnapshotMessage {
     tick: reader.u32(),
     gameTick: reader.u32(),
     ackSeq: reader.u32(),
+    hasSpareInput: reader.bool(),
     self: readSelf(reader),
     tanks: readList(reader, readFfaTank),
     kits: readList(reader, readKit),
@@ -460,7 +461,8 @@ export function encode(message: Message): Uint8Array {
       writeTankInfo(writer, message.tanks[1]);
       break;
     case MessageType.Snapshot:
-      writer.u32(message.tick).u32(message.gameTick).u32(message.ackSeq).bool(message.isOver);
+      writer.u32(message.tick).u32(message.gameTick).u32(message.ackSeq).bool(message.hasSpareInput);
+      writer.bool(message.isOver);
       writeSide(writer, message.winner);
       writer.u8(message.endReason === null ? NO_SIDE : END_REASONS.indexOf(message.endReason));
       writer.f64(message.zoneRadius);
@@ -531,6 +533,7 @@ function readSnapshot(reader: ByteReader): ServerMessage {
   const tick = reader.u32();
   const gameTick = reader.u32();
   const ackSeq = reader.u32();
+  const hasSpareInput = reader.bool();
   const isOver = reader.bool();
   const winner = readNullableSide(reader);
   const endReason = readEndReason(reader);
@@ -556,6 +559,7 @@ function readSnapshot(reader: ByteReader): ServerMessage {
     tick,
     gameTick,
     ackSeq,
+    hasSpareInput,
     isOver,
     winner,
     endReason,

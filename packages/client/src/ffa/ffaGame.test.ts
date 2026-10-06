@@ -19,6 +19,7 @@ import {
 } from '@tanks/shared/engine';
 import {
   BulletTracker,
+  bulletSnapshot,
   decode,
   encode,
   ErrorCode,
@@ -45,7 +46,8 @@ import { installFakeAudio, type FakeAudio } from '../testing/fakeAudio.js';
 import { snapshotOf } from '../testing/ffaServer.js';
 import { shownText } from '../testing/hudText.js';
 import { FfaGame, type FfaRendererLike, type TokenStore } from './ffaGame.js';
-import { PREDICTED_BULLET_ID_BASE } from './ffaPrediction.js';
+import { PREDICTED_BULLET_ID_BASE } from '../predictedShots.js';
+import { EVENT_MAX_WAIT_MS } from '../pictureTime.js';
 
 const ME = 4;
 const ENEMY = 5;
@@ -54,6 +56,8 @@ const MAP = ffaMap(SIZE);
 const SCREEN = { width: 1280, height: 720, pixelRatio: 1 };
 const FRAME_MS = 1000 / 60;
 const TICK_MS = 1000 / 30;
+// Кадров, за которые картинка чужих (отставание два тика) доходит до тика последнего снимка.
+const PICTURE_FRAMES = 6;
 const ZONE = { startRadius: 9000, finalRadius: 9000, startShrink: 1000, endShrink: 1001 };
 const SUDDEN_DEATH_AT = 85;
 const AIM_TOLERANCE = 0.05;
@@ -614,6 +618,7 @@ describe('обрыв и возврат', () => {
     );
     step(world);
     first.receive(snapshotOf(world, { events: [event('death', 6, 900, 650, ME)] }));
+    harness.frames(PICTURE_FRAMES);
     expect(onEvent.mock.calls.map(([, options]) => options.announcement)).toContain('firstBlood');
     const reset = vi.spyOn(harness.effects, 'reset');
     first.drop();
@@ -699,8 +704,36 @@ describe('вкладка скрылась', () => {
       world.tanks.map(() => IDLE_ACTION),
     );
     socket.receive(snapshotOf(world, { events: [event('shot', ENEMY, 930, 650)] }));
+    harness.frames(PICTURE_FRAMES);
     expect(audio.outputs.length).toBeGreaterThan(0);
     window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyW' }));
+  });
+
+  it('события, пришедшие в скрытую вкладку, после возврата не играются — ни звука, ни эффектов; новые играются', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 600, 650), tank(ENEMY, 900, 650)]);
+    enterFight(harness, world);
+    const socket = harness.socket();
+    window.dispatchEvent(new MouseEvent('mousedown'));
+    harness.frames(6);
+    const onEvent = vi.spyOn(harness.effects, 'onEvent');
+    setHidden(true);
+    for (let index = 0; index < 30; index++) {
+      step(world);
+      clock += TICK_MS;
+      socket.receive(
+        snapshotOf(world, { events: [event('shot', ENEMY, 930, 650), event('hit', ENEMY, 890, 650, ME)] }),
+      );
+    }
+    setHidden(false);
+    harness.frames(PICTURE_FRAMES * 3);
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(audio.outputs).toHaveLength(0);
+    step(world);
+    socket.receive(snapshotOf(world, { events: [event('shot', ENEMY, 930, 650), event('hit', ENEMY, 890, 650, ME)] }));
+    harness.frames(PICTURE_FRAMES);
+    expect(onEvent.mock.calls.map(([fx]) => fx.kind)).toEqual(['shot', 'hit']);
+    expect(audio.outputs.length).toBeGreaterThan(0);
   });
 
   it('вкладка пробыла скрытой долго — первый кадр после возврата не нагоняет пропущенное пачкой команд', () => {
@@ -896,6 +929,7 @@ describe('первая кровь', () => {
     harness.frames(1);
     step(world);
     socket.receive(snapshotOf(world, { events: [event('death', 6, 1000, 650, ME)] }));
+    harness.frames(PICTURE_FRAMES);
     return onEvent.mock.calls.map(([, options]) => options.announcement);
   }
 
@@ -1727,6 +1761,7 @@ describe('звук толпы', () => {
         events: [event('shot', ENEMY, 300, 1000), event('shot', ENEMY, 540, 1000), event('shot', ENEMY, 2200, 200)],
       }),
     );
+    harness.frames(PICTURE_FRAMES);
     expect(gains()).toEqual([SHOT_GAIN, SHOT_GAIN * (1 - (0.75 * 240) / 918)]);
   });
 
@@ -1751,6 +1786,7 @@ describe('звук толпы', () => {
         events: [event('shot', ENEMY, center.x, center.y), event('shot', ENEMY, center.x - 459, center.y)],
       }),
     );
+    harness.frames(PICTURE_FRAMES);
     expect(gains()).toEqual([SHOT_GAIN, SHOT_GAIN * 0.625]);
   });
 
@@ -1779,6 +1815,7 @@ describe('звук толпы', () => {
         events: [event('shot', 6, 1400, 650), event('shot', 6, center.x, center.y)],
       }),
     );
+    harness.frames(PICTURE_FRAMES);
     expect(gains()).toEqual([SHOT_GAIN, SHOT_GAIN * (1 - (0.75 * Math.hypot(center.x - 1400, center.y - 650)) / 918)]);
   });
 
@@ -1789,14 +1826,146 @@ describe('звук толпы', () => {
     step(world);
     const others = Array.from({ length: 12 }, () => event('shot', ENEMY, 700, 1200));
     harness.socket().receive(snapshotOf(world, { events: others }));
+    harness.frames(PICTURE_FRAMES);
     expect(audio.outputs).toHaveLength(8);
     expect(harness.state().voices).toBe(8);
     step(world);
     harness.socket().receive(snapshotOf(world, { events: [event('shot', ME, 300, 1000)] }));
+    harness.frames(1);
     expect(audio.outputs).toHaveLength(9);
     expect(audio.released).toEqual([audio.outputs[0]]);
     expect(harness.state().voices).toBe(8);
     clock += SOUND_DURATIONS.shot * 1000;
     expect(harness.state().voices).toBe(0);
+  });
+});
+
+describe('картинка совпадает с сервером', () => {
+  const ENEMY_GAS: Action = { ...IDLE_ACTION, throttle: 1 };
+
+  function enemyDrives(world: World): void {
+    stepWorld(
+      world,
+      world.tanks.map((candidate) => (candidate.id === ENEMY ? ENEMY_GAS : IDLE_ACTION)),
+    );
+  }
+
+  it('попадание по чужому танку — не в кадре снимка, а когда до него дошла картинка; точка — на нарисованном танке', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000)]);
+    enterFight(harness, world);
+    const socket = harness.socket();
+    for (let index = 0; index < 10; index++) {
+      enemyDrives(world);
+      socket.receive(snapshotOf(world));
+      harness.frames(2);
+    }
+    const onEvent = vi.spyOn(harness.effects, 'onEvent');
+    const hits = (): FfaSnapshotEvent[] =>
+      onEvent.mock.calls.map(([fx]) => fx as FfaSnapshotEvent).filter((fx) => fx.kind === 'hit');
+    enemyDrives(world);
+    const enemyOnServer = world.tanks.find((candidate) => candidate.id === ENEMY) ?? tank(ENEMY, 0, 0);
+    const hit = event('hit', ENEMY, enemyOnServer.x - 20, enemyOnServer.y + 5, ME);
+    socket.receive(snapshotOf(world, { events: [hit] }));
+    harness.frames(1);
+    expect(hits()).toEqual([]);
+    let waited = 1;
+    while (hits().length === 0 && waited < PICTURE_FRAMES * 2) {
+      harness.frames(1);
+      waited++;
+    }
+    expect(waited).toBeGreaterThan(1);
+    const drawn = (harness.state().others as { id: number; x: number; y: number }[]).find(
+      (other) => other.id === ENEMY,
+    );
+    expect(drawn?.x).toBeLessThan(enemyOnServer.x);
+    // Точка события в протоколе — f32: совпадение до тысячных.
+    expect(hits()[0]?.x).toBeCloseTo(hit.x + (drawn?.x ?? NaN) - enemyOnServer.x, 3);
+    expect(hits()[0]?.y).toBeCloseTo(hit.y + (drawn?.y ?? NaN) - enemyOnServer.y, 3);
+  });
+
+  it('попадание по своему танку — в первом же кадре', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000)]);
+    enterFight(harness, world);
+    const onEvent = vi.spyOn(harness.effects, 'onEvent');
+    step(world);
+    harness.socket().receive(snapshotOf(world, { events: [event('hit', ME, 320, 1000, ENEMY)] }));
+    harness.frames(1);
+    expect(onEvent.mock.calls.map(([fx]) => fx.kind)).toEqual(['hit']);
+  });
+
+  it('смертельное попадание по своему танку — в первом же кадре, хотя своего танка на поле уже нет', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 1300, 650), tank(ENEMY, 1700, 650)]);
+    enterFight(harness, world);
+    const onEvent = vi.spyOn(harness.effects, 'onEvent');
+    const me = world.tanks.find((candidate) => candidate.id === ME) ?? tank(ME, 0, 0);
+    me.isAlive = false;
+    me.hp = 0;
+    step(world);
+    harness
+      .socket()
+      .receive(
+        snapshotOf(world, { events: [event('hit', ME, 1320, 650, ENEMY), event('death', ME, 1300, 650, ENEMY)] }),
+      );
+    harness.frames(1);
+    expect(onEvent.mock.calls.map(([fx]) => fx.kind)).toEqual(['hit', 'death']);
+  });
+
+  it('событие у чужого танка, которое не сыграло за 500 мс (кадры стояли), выброшено молча', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000)]);
+    enterFight(harness, world);
+    harness.frames(6);
+    const onEvent = vi.spyOn(harness.effects, 'onEvent');
+    step(world);
+    harness.socket().receive(snapshotOf(world, { events: [event('hit', ENEMY, 690, 1000, ME)] }));
+    clock += EVENT_MAX_WAIT_MS;
+    harness.frames(PICTURE_FRAMES);
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it('кадр в отладке: тики своего танка и чужих, свой танк и снаряды с тиком картинки', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000, Math.PI)]);
+    enterFight(harness, world);
+    stepWorld(
+      world,
+      world.tanks.map((candidate) => (candidate.id === ENEMY ? { ...IDLE_ACTION, isFiring: true } : IDLE_ACTION)),
+    );
+    harness
+      .socket()
+      .receive(snapshotOf(world, { changes: { births: world.bullets.map(bulletSnapshot), bounces: [], deaths: [] } }));
+    harness.frames(PICTURE_FRAMES);
+    const picture = harness.state().picture as {
+      myTick: number;
+      othersTick: number;
+      me: { x: number; y: number } | null;
+      bullets: { id: number; owner: number; tick: number }[];
+    };
+    expect(picture.me).toEqual({ x: 300, y: 1000 });
+    expect(picture.myTick).toBeGreaterThanOrEqual(picture.othersTick);
+    expect(picture.bullets).toEqual([expect.objectContaining({ owner: ENEMY, tick: picture.othersTick })]);
+  });
+
+  function inputsAfterSnapshot(hasSpareInput: boolean): number {
+    const harness = makeGame();
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000)]);
+    enterFight(harness, world);
+    const socket = harness.socket();
+    harness.frames(10);
+    step(world);
+    socket.receive(snapshotOf(world, { ackSeq: socket.inputs.length, hasSpareInput }));
+    const before = socket.inputs.length;
+    harness.frames(20);
+    step(world);
+    socket.receive(snapshotOf(world, { ackSeq: before, hasSpareInput }));
+    harness.frames(20);
+    return socket.inputs.length - before;
+  }
+
+  it('снимок с запасом команд — пропущен ровно один шаг ввода; повтор флага до подтверждения — без пропуска', () => {
+    expect(inputsAfterSnapshot(true)).toBe(inputsAfterSnapshot(false) - 1);
   });
 });

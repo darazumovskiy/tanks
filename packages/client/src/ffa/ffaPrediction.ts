@@ -3,6 +3,7 @@ import {
   createWorld,
   deriveStats,
   DT,
+  flyBullets,
   IDLE_ACTION,
   makeTank,
   normalizeAngle,
@@ -25,17 +26,17 @@ import {
   type FfaSnapshotMessage,
   type FfaTankSnapshot,
 } from '@tanks/shared/protocol';
+import { BulletPicture, BulletTracks, OwnTime, type PictureBullet, type PictureClock } from '../pictureTime.js';
+import { PredictedShots, predictedBulletId, type ConfirmedBullet } from '../predictedShots.js';
 
 // Отставание картинки чужих — два тика; буфер — секунда снимков, как у дуэли.
 const INTERPOLATION_DELAY_MS = 2 * DT * 1000;
 const SNAPSHOT_BUFFER_MS = 1000;
+const SNAPSHOT_BUFFER_TICKS = Math.ceil(SNAPSHOT_BUFFER_MS / (DT * 1000));
 const APPEAR_MS = 150;
 const VANISH_MS = 200;
 // Скачок дальше этого между соседними снимками — перестановка, а не езда: не растягивается.
 const JUMP_LIMIT = 200;
-// Свой снаряд, рождённый предсказанием, получает номер от команды выстрела в диапазоне, куда номера сервера
-// не доходят: номер не меняется от снимка к снимку до подтверждения.
-export const PREDICTED_BULLET_ID_BASE = 2 ** 30;
 // Запас радиуса переигрывания на расталкивание танков при столкновениях.
 const REPLAY_MARGIN = TANK_RADIUS;
 
@@ -54,18 +55,15 @@ export interface FfaViewTank {
   presence: number;
 }
 
-export interface FfaViewBullet {
-  id: number;
-  owner: number;
-  x: number;
-  y: number;
-}
+export type FfaViewBullet = PictureBullet;
 
+// Снаряд кадра несёт свой тик картинки; clock — тики своего танка и чужих.
 export interface FfaFrameView {
   tanks: FfaViewTank[];
   bullets: FfaViewBullet[];
   kits: readonly Kit[];
   zoneRadius: number;
+  clock: PictureClock;
 }
 
 export interface FfaTankSetup {
@@ -80,9 +78,9 @@ interface PendingInput {
 
 interface BufferedSnapshot {
   receivedAt: number;
+  tick: number;
   order: number[];
   tanks: Map<number, FfaTankSnapshot>;
-  bullets: Map<number, FfaViewBullet>;
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -109,19 +107,19 @@ function applyTank(target: Tank, source: FfaTankSnapshot): void {
   target.shieldLeft = source.shieldLeft;
 }
 
-export interface ConfirmedBullet {
-  predictedId: number;
-  serverId: number;
-}
-
 // Своё предсказание среди N танков и картинка чужих. Поле предсказания — копия серверного поля из последнего
 // снимка: танки ровно снимка и в его порядке (столкновения и выстрелы движок обходит по порядку), снаряды — копии
 // зеркала. Свой танк переигрывается неподтверждёнными командами, чужие без команды тормозят со скорости снимка.
-// Переигрывается только то, что за окно переигрывания может дотянуться до своего танка, и свои снаряды.
-// Чужие танки и снаряды — интерполяция по номерам между двумя снимками с отставанием на два тика.
+// Переигрывается только то, что за окно переигрывания может дотянуться до своего танка, и свои снаряды; остальные
+// снаряды летят без танков — все снаряды поля стоят в тике своего танка. Чужие танки — интерполяция по номерам между
+// двумя снимками с отставанием на два тика; снаряды — во времени того, рядом с чем летят.
 export class FfaPrediction {
   private readonly world: World;
   private readonly mirror: BulletMirror;
+  private readonly tracks = new BulletTracks();
+  private readonly picture: BulletPicture;
+  private readonly ownTime = new OwnTime();
+  private readonly shots = new PredictedShots();
   private pending: PendingInput[] = [];
   private confirmed: ConfirmedBullet[] = [];
   private buffer: BufferedSnapshot[] = [];
@@ -141,6 +139,7 @@ export class FfaPrediction {
   ) {
     this.world = createWorld(map, [], rules, zonePlan);
     this.mirror = new BulletMirror(map);
+    this.picture = new BulletPicture(this.tracks, myId);
   }
 
   get me(): Tank | null {
@@ -168,13 +167,16 @@ export class FfaPrediction {
   resetConnection(): void {
     this.pending = [];
     this.buffer = [];
+    this.shots.clear();
   }
 
   predict(seq: number, action: Action): void {
     this.pending.push({ seq, action });
     if (this.isStepping) {
-      this.world.nextBulletId = PREDICTED_BULLET_ID_BASE + seq;
+      this.world.nextBulletId = predictedBulletId(seq);
       stepWorld(this.world, this.actionsFor(this.world.tanks, action));
+      this.tracks.record(this.world.tick, this.world.bullets);
+      this.shots.note(this.world.bullets);
     }
   }
 
@@ -191,6 +193,9 @@ export class FfaPrediction {
       this.isMatchOver = true;
     }
     this.mirror.apply(message.tick, message);
+    this.tracks.forgetFrom(message.tick);
+    this.tracks.record(message.tick, this.mirror.bullets);
+    this.tracks.forgetBefore(message.tick - SNAPSHOT_BUFFER_TICKS);
     this.remember(message, receivedAt);
     const before = this.me;
     const beforeX = before?.x ?? 0;
@@ -212,15 +217,14 @@ export class FfaPrediction {
         target.respawnIn = kit.respawnIn;
       }
     }
-    const predictedBefore = world.bullets
-      .filter((bullet) => bullet.id >= PREDICTED_BULLET_ID_BASE)
-      .map((bullet) => bullet.id);
     world.bullets = this.mirror.bullets.map((bullet) => ({ ...bullet }));
     this.pending = this.pending.filter((input) => input.seq > message.ackSeq);
     if (this.isStepping) {
       this.replay();
+    } else {
+      this.flyAhead();
     }
-    this.noteConfirmed(predictedBefore, message);
+    this.noteConfirmed(message);
     const me = this.me;
     this.lastCorrectionPx = before === null || me === null ? 0 : Math.hypot(me.x - beforeX, me.y - beforeY);
   }
@@ -254,31 +258,41 @@ export class FfaPrediction {
       bullet.owner === this.myId ||
       Math.hypot(bullet.x - me.x, bullet.y - me.y) <=
         tankReach + Math.hypot(bullet.vx, bullet.vy) * span + TANK_RADIUS + BULLET_RADIUS + REPLAY_MARGIN;
-    const farBullets = world.bullets.filter((bullet) => !isReplayed(bullet));
+    const far: World = { ...world, tanks: [], bullets: world.bullets.filter((bullet) => !isReplayed(bullet)) };
     const field: World = { ...world, tanks, bullets: world.bullets.filter(isReplayed) };
     for (const input of this.pending) {
-      field.nextBulletId = PREDICTED_BULLET_ID_BASE + input.seq;
+      const bornId = predictedBulletId(input.seq);
+      field.nextBulletId = bornId;
       stepWorld(field, this.actionsFor(tanks, input.action));
+      if (field.nextBulletId !== bornId && !field.bullets.some((bullet) => bullet.id === bornId)) {
+        this.tracks.markBornDead(bornId, field.tick);
+      }
+      flyBullets(far);
+      this.tracks.record(field.tick, [...field.bullets, ...far.bullets]);
+      this.shots.note(field.bullets);
     }
     world.tick = field.tick;
     world.time = field.time;
     world.nextBulletId = field.nextBulletId;
-    world.bullets = [...field.bullets, ...farBullets];
+    world.bullets = [...field.bullets, ...far.bullets];
   }
 
-  // Подтверждённый выстрел: снаряд предсказания с командой не новее подтверждённой пропал, а у сервера в этом
-  // снимке родился свой снаряд — пары по порядку.
-  private noteConfirmed(predictedBefore: readonly number[], message: FfaSnapshotMessage): void {
+  // Своего танка на поле нет: тик своего танка на картинке догоняет тик чужих не сразу, и снаряды зеркала до него
+  // досчитываются без танков на число неподтверждённых команд.
+  private flyAhead(): void {
+    const ahead: World = { ...this.world, tanks: [], bullets: this.world.bullets.map((bullet) => ({ ...bullet })) };
+    for (let left = this.pending.length; left > 0; left--) {
+      flyBullets(ahead);
+      this.tracks.record(ahead.tick, ahead.bullets);
+    }
+  }
+
+  private noteConfirmed(message: FfaSnapshotMessage): void {
     const predictedNow = new Set(this.world.bullets.map((bullet) => bullet.id));
-    const gone = predictedBefore
-      .filter((id) => !predictedNow.has(id) && id - PREDICTED_BULLET_ID_BASE <= message.ackSeq)
-      .sort((a, b) => a - b);
-    const born = message.births
-      .filter((bullet) => bullet.owner === this.myId)
-      .map((bullet) => bullet.id)
-      .sort((a, b) => a - b);
-    for (let index = 0; index < Math.min(gone.length, born.length); index++) {
-      this.confirmed.push({ predictedId: gone[index] ?? 0, serverId: born[index] ?? 0 });
+    const born = message.births.filter((bullet) => bullet.owner === this.myId).map((bullet) => bullet.id);
+    for (const pair of this.shots.confirm(predictedNow, message.ackSeq, born)) {
+      this.picture.rename(pair.predictedId, pair.serverId);
+      this.confirmed.push(pair);
     }
   }
 
@@ -286,6 +300,7 @@ export class FfaPrediction {
     const renderAt = now - INTERPOLATION_DELAY_MS;
     const [older, newer] = this.bracket(renderAt);
     const t = this.blend(older, newer, renderAt);
+    const othersTick = older === null || newer === null ? this.latestTick : lerp(older.tick, newer.tick, t);
     const tanks: FfaViewTank[] = [];
     for (const id of newer?.order ?? []) {
       const b = newer?.tanks.get(id);
@@ -297,6 +312,7 @@ export class FfaPrediction {
     if (me !== null && !tanks.some((tank) => tank.id === this.myId)) {
       tanks.push(this.shown(this.myId, this.poseOf(me), now));
     }
+    const onField = tanks.filter((tank) => tank.id !== this.myId && tank.isAlive);
     const shownIds = new Set(tanks.map((tank) => tank.id));
     for (const [id, pose] of this.lastSeen) {
       if (shownIds.has(id)) {
@@ -313,12 +329,23 @@ export class FfaPrediction {
         this.vanishedAt.delete(id);
       }
     }
+    const shown = tanks.map((tank) => this.withPrediction(tank));
+    const clock = this.clock(onField, othersTick);
     return {
-      tanks: tanks.map((tank) => this.withPrediction(tank)),
-      bullets: [...this.ownBullets(), ...this.otherBullets(older, newer, t)],
+      tanks: shown,
+      bullets: this.picture.frame(clock, this.latestTick),
       kits: this.world.kits,
       zoneRadius: this.world.zone.radius,
+      clock,
     };
+  }
+
+  // Тик своего танка — тик поля предсказания, пока свой танк на нём шагает; ушёл с поля — плавно догоняет тик
+  // чужих (OwnTime). others — живые чужие из снимка, без гаснущих.
+  private clock(others: readonly FfaViewTank[], othersTick: number): PictureClock {
+    const me = this.isStepping ? this.me : null;
+    const myTick = this.ownTime.next(me === null ? null : this.world.tick, othersTick);
+    return { myTick, othersTick, me: me === null ? null : { x: me.x, y: me.y }, others };
   }
 
   // Танк виден: место запоминается — пропав из снимков, он гаснет там, где его видели в последний раз.
@@ -335,15 +362,11 @@ export class FfaPrediction {
   }
 
   private remember(message: FfaSnapshotMessage, receivedAt: number): void {
-    const bullets = new Map<number, FfaViewBullet>();
-    for (const bullet of this.mirror.bullets) {
-      bullets.set(bullet.id, { id: bullet.id, owner: bullet.owner, x: bullet.x, y: bullet.y });
-    }
     this.buffer.push({
       receivedAt,
+      tick: message.tick,
       order: message.tanks.map((tank) => tank.id),
       tanks: new Map(message.tanks.map((tank) => [tank.id, tank])),
-      bullets,
     });
     while (this.buffer.length > 2 && receivedAt - (this.buffer[0]?.receivedAt ?? receivedAt) > SNAPSHOT_BUFFER_MS) {
       this.buffer.shift();
@@ -418,28 +441,5 @@ export class FfaPrediction {
       return tank;
     }
     return { ...this.poseOf(me), presence: tank.presence };
-  }
-
-  // Свои снаряды — только из поля предсказания: выстрел виден сразу, а смена источника дала бы прыжок назад.
-  private ownBullets(): FfaViewBullet[] {
-    return this.world.bullets
-      .filter((bullet) => bullet.owner === this.myId)
-      .map((bullet) => ({ id: bullet.id, owner: bullet.owner, x: bullet.x, y: bullet.y }));
-  }
-
-  private otherBullets(older: BufferedSnapshot | null, newer: BufferedSnapshot | null, t: number): FfaViewBullet[] {
-    const bullets: FfaViewBullet[] = [];
-    for (const bullet of newer?.bullets.values() ?? []) {
-      if (bullet.owner === this.myId) {
-        continue;
-      }
-      const was = older?.bullets.get(bullet.id);
-      if (was === undefined) {
-        bullets.push(bullet);
-        continue;
-      }
-      bullets.push({ ...bullet, x: lerp(was.x, bullet.x, t), y: lerp(was.y, bullet.y, t) });
-    }
-    return bullets;
   }
 }

@@ -11,6 +11,9 @@ export const INPUT_QUEUE_LIMIT = 3;
 // без слива поздняя пачка навсегда добавила бы тики задержки.
 export const INPUT_BACKLOG_TICKS = TICK_RATE;
 export const INPUT_BACKLOG_MIN = 2;
+// Запас, который столько тиков после каждого применения оставался в очереди и ни разу не понадобился (тика без
+// команды не было), сети не нужен: снимок просит клиента пропустить шаг ввода — без потери команд.
+export const INPUT_SPARE_TICKS = TICK_RATE;
 
 interface QueuedInput {
   seq: number;
@@ -24,13 +27,15 @@ export interface InputDrop {
 
 // Поток команд одного игрока: принятые ждут в очереди и применяются по одной за тик — столько же шагов, сколько
 // предсказал клиент; применённая подтверждается в снимке (ackSeq). backlogSinceTick — с какого тика очередь после
-// применения не опускалась ниже INPUT_BACKLOG_MIN. lastAction — действие самой команды, без перенесённого выстрела.
+// применения не опускалась ниже INPUT_BACKLOG_MIN; spareSinceTick — с какого тика после каждого применения в очереди
+// оставалась команда. lastAction — действие самой команды, без перенесённого выстрела.
 export interface InputChannel {
   lastSeq: number;
   lastInputTick: number;
   ackSeq: number;
   queue: QueuedInput[];
   backlogSinceTick: number;
+  spareSinceTick: number;
   hasCarriedFire: boolean;
   lastAction: Action;
   inputsThisSecond: number;
@@ -44,6 +49,7 @@ export function createInputChannel(tick: number): InputChannel {
     ackSeq: 0,
     queue: [],
     backlogSinceTick: tick,
+    spareSinceTick: tick,
     hasCarriedFire: false,
     lastAction: { ...IDLE_ACTION },
     inputsThisSecond: 0,
@@ -105,15 +111,23 @@ export function takeAction(channel: InputChannel, tick: number): Action {
   if (channel.queue.length < INPUT_BACKLOG_MIN) {
     channel.backlogSinceTick = tick;
   }
+  if (channel.queue.length === 0) {
+    channel.spareSinceTick = tick;
+  }
   if (isSilent(channel, tick)) {
     return IDLE_ACTION;
   }
   return isFireCarried ? { ...channel.lastAction, isFiring: true } : channel.lastAction;
 }
 
+export function hasSpareInput(channel: InputChannel, tick: number): boolean {
+  return tick - channel.spareSinceTick >= INPUT_SPARE_TICKS;
+}
+
 export function clearInput(channel: InputChannel, tick: number): void {
   channel.queue = [];
   channel.backlogSinceTick = tick;
+  channel.spareSinceTick = tick;
   channel.hasCarriedFire = false;
   channel.lastAction = { ...IDLE_ACTION };
 }

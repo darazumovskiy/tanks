@@ -184,6 +184,23 @@ describe('разбор журнала игры', () => {
     expect(result.games[0]?.summary.movement.dropped_inputs).toBe(3);
   });
 
+  it('журнал со строками клиента `in skip` — игра разбирается, пропуски в итогах и в отчёте', () => {
+    const game = startDuel()
+      .roundStart(0, 0)
+      .frames(countdownFrames(POSES))
+      .client(HUMAN, 'in seq=1 a=0.00,0.00,0.00,0')
+      .client(HUMAN, 'in skip next=2')
+      .client(HUMAN, 'in skip next=2')
+      .frames(standingFrames(POSES, 4))
+      .text();
+    const dir = makeLogDir({ 'SKIP.log': game });
+    const result = analyzeLogs(dir, { outDir: join(dir, 'out') });
+
+    expect(result.skipped).toEqual([]);
+    expect(result.games[0]?.summary.client_inputs).toMatchObject({ inputs: 1, skipped_inputs: 2 });
+    expect(readFileSync(result.reportPath, 'utf8')).toContain('Пропущенных шагов ввода');
+  });
+
   it('--only ограничивает разбор названными играми; выход по умолчанию — ../analysis', () => {
     const dir = makeLogDir(
       { 'ONE1.log': shortGame('r1', ['Бот', 'Дима']), 'TWO2.log': shortGame('r2', ['Бот', 'Дима']) },

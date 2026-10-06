@@ -11,7 +11,7 @@ import { decode, FfaPhase, MessageType, type FfaSnapshotMessage, type SnapshotMe
 import { createApp, type App } from '../src/app.js';
 import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaOptions } from '../src/ffaGame.js';
 import { NO_LOG } from '../src/gameLog.js';
-import { INPUT_BACKLOG_MIN, INPUT_BACKLOG_TICKS, INPUT_QUEUE_LIMIT } from '../src/inputs.js';
+import { INPUT_BACKLOG_MIN, INPUT_BACKLOG_TICKS, INPUT_QUEUE_LIMIT, INPUT_SPARE_TICKS } from '../src/inputs.js';
 import type { DropReason } from '../src/metrics.js';
 import { Room, type Seat } from '../src/room.js';
 import { TestClient } from './client.js';
@@ -185,6 +185,8 @@ describe('очередь команд: дуэль', () => {
 // Комната без сокета: тик крутит тест, команды приходят ровно между тиками — слив не зависит от скорости ответа.
 class ManualDuel {
   readonly drops: DropReason[] = [];
+  readonly acked = new Set<number>();
+  readonly spareFlags: boolean[] = [];
   private lastSeq = 0;
   private ackSeq = 0;
   private readonly room = new Room('manual', FAST_ROOM, NO_LOG, {
@@ -202,6 +204,8 @@ class ManualDuel {
           const message = decode(bytes);
           if (message.type === MessageType.Snapshot) {
             this.ackSeq = message.ackSeq;
+            this.acked.add(message.ackSeq);
+            this.spareFlags.push(message.hasSpareInput);
           }
         },
       },
@@ -216,6 +220,10 @@ class ManualDuel {
       this.lastSeq++;
       this.seat.input(this.lastSeq, IDLE_ACTION);
     }
+  }
+
+  get sent(): number {
+    return this.lastSeq;
   }
 
   // Каждый тик: шаг, задержка подтверждения в командах, затем perTick новых команд.
@@ -251,6 +259,37 @@ describe('очередь команд: слив на ручном тике', () 
       ...Array<number>(INPUT_BACKLOG_TICKS - 1).fill(1),
     ]);
     expect(duel.drops).toEqual(['backlog']);
+  });
+
+  it('запас, который секунду не понадобился, помечается в снимке; пропуск шага клиентом убирает его без потери команд', () => {
+    const duel = new ManualDuel();
+    duel.sendIdle(2);
+    duel.run(INPUT_SPARE_TICKS + 5, 1);
+    expect(duel.spareFlags).toEqual([
+      ...Array<boolean>(INPUT_SPARE_TICKS - 1).fill(false),
+      ...Array<boolean>(6).fill(true),
+    ]);
+    duel.run(1, 0);
+    const flagsBefore = duel.spareFlags.length;
+    expect(duel.run(INPUT_SPARE_TICKS - 1, 1)).toEqual(Array<number>(INPUT_SPARE_TICKS - 1).fill(0));
+    expect(duel.spareFlags.slice(flagsBefore)).toEqual(Array<boolean>(INPUT_SPARE_TICKS - 1).fill(false));
+    expect(duel.drops).toEqual([]);
+    for (let seq = 1; seq <= duel.sent - 1; seq++) {
+      expect(duel.acked.has(seq)).toBe(true);
+    }
+  });
+
+  it('тик без команды посреди окна начинает окно запаса заново', () => {
+    const duel = new ManualDuel();
+    duel.sendIdle(2);
+    duel.run(INPUT_SPARE_TICKS / 2, 1);
+    duel.run(1, 0);
+    duel.run(1, 2);
+    const flagsBefore = duel.spareFlags.length;
+    duel.run(INPUT_SPARE_TICKS, 1);
+    // Окно считается с тика, на котором запас кончился: этот тик прошёл до отрезка.
+    expect(duel.spareFlags.slice(flagsBefore).indexOf(true)).toBe(INPUT_SPARE_TICKS - 1);
+    expect(duel.spareFlags.slice(0, flagsBefore).some((flag) => flag)).toBe(false);
   });
 
   it('общий бой: начало матча очищает очередь и отметку слива, пачка отсчёта применяется целиком', () => {
@@ -338,6 +377,31 @@ describe('очередь команд: общий бой', () => {
     expect(snapshots.map((snapshot) => snapshot.ackSeq)).toEqual(snapshots.map(() => 0));
     const headings = snapshots.map((snapshot) => headingOf(snapshot, fighter.id));
     expect(headings).toEqual(headings.map(() => headings[0]));
+  });
+
+  it('запас команд: флаг через секунду ровной сети; пропуск шага — флага нет, команда подтверждается на тик раньше', async () => {
+    const { fighter } = await ffaFight();
+    fighter.client.input({});
+    let lastSent = fighter.client.input({});
+    // Ответ на каждый снимок — одна команда; сколько снимков от отправки до подтверждения.
+    const lagOf = (snapshot: FfaSnapshotMessage): number => lastSent - snapshot.ackSeq;
+    let snapshot = await fighter.client.nextOfType(MessageType.FfaSnapshot);
+    while (!snapshot.hasSpareInput) {
+      lastSent = fighter.client.input({});
+      snapshot = await fighter.client.nextOfType(MessageType.FfaSnapshot);
+    }
+    const lagWithSpare = lagOf(snapshot);
+    snapshot = await fighter.client.nextOfType(MessageType.FfaSnapshot);
+    const flags: boolean[] = [];
+    const lags: number[] = [];
+    for (let i = 0; i < TICK_RATE / 2; i++) {
+      lastSent = fighter.client.input({});
+      snapshot = await fighter.client.nextOfType(MessageType.FfaSnapshot);
+      flags.push(snapshot.hasSpareInput);
+      lags.push(lagOf(snapshot));
+    }
+    expect(flags.slice(2)).toEqual(flags.slice(2).map(() => false));
+    expect(Math.max(...lags.slice(2))).toBe(lagWithSpare - 1);
   });
 
   it('пачка нового соединения сразу после возврата применяется целиком', async () => {

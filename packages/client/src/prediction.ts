@@ -10,7 +10,9 @@ import {
   type Side,
   type Stats,
 } from '@tanks/shared/engine';
-import type { BulletSnapshot, SnapshotMessage, TankSnapshot } from '@tanks/shared/protocol';
+import type { SnapshotMessage, TankSnapshot } from '@tanks/shared/protocol';
+import { BulletPicture, BulletTracks, OwnTime, type PictureClock } from './pictureTime.js';
+import { PredictedShots, predictedBulletId, type ConfirmedBullet } from './predictedShots.js';
 
 export interface InterpolatedTank {
   x: number;
@@ -36,6 +38,12 @@ export interface WorldView {
   bullets: InterpolatedBullet[];
 }
 
+// Кадр боя: снаряд несёт свой тик картинки, clock — тики своего танка и противника.
+export interface PictureView extends WorldView {
+  bullets: (InterpolatedBullet & { tick: number })[];
+  clock: PictureClock;
+}
+
 interface PendingInput {
   seq: number;
   action: Action;
@@ -48,6 +56,7 @@ interface TimedSnapshot {
 
 const INTERPOLATION_DELAY_TICKS = 2;
 const SNAPSHOT_BUFFER_MS = 1000;
+const SNAPSHOT_BUFFER_TICKS = Math.ceil(SNAPSHOT_BUFFER_MS / (DT * 1000));
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -68,12 +77,18 @@ function applyTank(target: Round['tanks'][number], source: TankSnapshot): void {
   target.isAlive = source.isAlive;
 }
 
-// Свой танк — предсказание по собственному вводу с переигрыванием после снимка сервера;
-// чужой танк и снаряды — интерполяция между двумя снимками с отставанием на два тика.
+// Свой танк — предсказание по собственному вводу с переигрыванием после снимка сервера; чужой танк — интерполяция
+// между двумя снимками с отставанием на два тика; снаряды — во времени того, рядом с чем летят.
 export class Prediction {
   private round: Round;
   private readonly pending: PendingInput[] = [];
   private readonly snapshots: TimedSnapshot[] = [];
+  private readonly tracks = new BulletTracks();
+  private readonly picture: BulletPicture;
+  private readonly ownTime = new OwnTime();
+  private readonly shots = new PredictedShots();
+  private serverBulletIds = new Set<number>();
+  private confirmed: ConfirmedBullet[] = [];
   private seq: number;
   lastCorrectionPx = 0;
   latestTick = 0;
@@ -90,6 +105,7 @@ export class Prediction {
     rules: Readonly<RoundRules>,
   ) {
     this.seq = lastSeq;
+    this.picture = new BulletPicture(this.tracks, side);
     this.round = createRound(
       mapIndex,
       [
@@ -125,9 +141,16 @@ export class Prediction {
     this.seq++;
     this.pending.push({ seq: this.seq, action });
     if (this.isFighting) {
-      stepRound(this.round, this.actionsFor(action));
+      this.step(this.seq, action);
     }
     return this.seq;
+  }
+
+  // Свои снаряды, которые сервер подтвердил с прошлого вызова: номер предсказания → номер сервера.
+  takeConfirmedBullets(): ConfirmedBullet[] {
+    const confirmed = this.confirmed;
+    this.confirmed = [];
+    return confirmed;
   }
 
   applySnapshot(message: SnapshotMessage, receivedAt: number): void {
@@ -148,7 +171,9 @@ export class Prediction {
     applyTank(this.round.tanks[0], message.tanks[0]);
     applyTank(this.round.tanks[1], message.tanks[1]);
     this.round.bullets = message.bullets.map((bullet) => ({ ...bullet, damage: 0, isDead: false }));
-    this.round.nextBulletId = Math.max(0, ...message.bullets.map((bullet) => bullet.id)) + 1000;
+    this.tracks.forgetFrom(message.tick);
+    this.tracks.record(message.tick, message.bullets);
+    this.tracks.forgetBefore(message.tick - SNAPSHOT_BUFFER_TICKS);
     for (const [index, kit] of message.kits.entries()) {
       const target = this.round.kits[index];
       if (target !== undefined) {
@@ -162,13 +187,37 @@ export class Prediction {
     }
     if (this.isFighting) {
       for (const input of this.pending) {
-        stepRound(this.round, this.actionsFor(input.action));
+        this.step(input.seq, input.action);
       }
     }
+    this.noteConfirmed(message);
     this.lastCorrectionPx = Math.hypot(this.me.x - before.x, this.me.y - before.y);
   }
 
-  view(now: number): WorldView {
+  private step(seq: number, action: Action): void {
+    const bornId = predictedBulletId(seq);
+    this.round.nextBulletId = bornId;
+    stepRound(this.round, this.actionsFor(action));
+    if (this.round.nextBulletId !== bornId && !this.round.bullets.some((bullet) => bullet.id === bornId)) {
+      this.tracks.markBornDead(bornId, this.round.tick);
+    }
+    this.tracks.record(this.round.tick, this.round.bullets);
+    this.shots.note(this.round.bullets);
+  }
+
+  private noteConfirmed(message: SnapshotMessage): void {
+    const predictedNow = new Set(this.round.bullets.map((bullet) => bullet.id));
+    const born = message.bullets
+      .filter((bullet) => bullet.owner === this.side && !this.serverBulletIds.has(bullet.id))
+      .map((bullet) => bullet.id);
+    this.serverBulletIds = new Set(message.bullets.map((bullet) => bullet.id));
+    for (const pair of this.shots.confirm(predictedNow, message.ackSeq, born)) {
+      this.picture.rename(pair.predictedId, pair.serverId);
+      this.confirmed.push(pair);
+    }
+  }
+
+  view(now: number): PictureView {
     const enemySide: Side = this.side === 0 ? 1 : 0;
     const renderAt = now - INTERPOLATION_DELAY_TICKS * DT * 1000;
     const [older, newer] = this.bracket(renderAt);
@@ -177,6 +226,8 @@ export class Prediction {
         ? 1
         : (renderAt - older.receivedAt) / (newer.receivedAt - older.receivedAt);
     const clampedT = Math.max(0, Math.min(1, t));
+    const othersTick =
+      older === null || newer === null ? this.latestTick : lerp(older.message.tick, newer.message.tick, clampedT);
     const mine: InterpolatedTank = {
       x: this.me.x,
       y: this.me.y,
@@ -189,7 +240,24 @@ export class Prediction {
     };
     const enemy = this.interpolateTank(older, newer, enemySide, clampedT);
     const tanks: [InterpolatedTank, InterpolatedTank] = this.side === 0 ? [mine, enemy] : [enemy, mine];
-    return { round: this.round, tanks, bullets: this.interpolateBullets(older, newer, clampedT) };
+    const clock = this.clock(mine, enemy, othersTick);
+    return {
+      round: this.round,
+      tanks,
+      bullets: this.picture
+        .frame(clock, this.latestTick)
+        .map((bullet) => ({ ...bullet, owner: bullet.owner === 0 ? 0 : 1 })),
+      clock,
+    };
+  }
+
+  // Тик своего танка — тик раунда предсказания, пока свой танк жив в бою; иначе плавно догоняет тик противника
+  // (OwnTime). Снаряды после конца раунда не досчитываются: сервер останавливает раунд, снаряды в снимках стоят.
+  private clock(mine: InterpolatedTank, enemy: InterpolatedTank, othersTick: number): PictureClock {
+    const others = enemy.isAlive ? [enemy] : [];
+    const isOnField = this.isFighting && mine.isAlive;
+    const myTick = this.ownTime.next(isOnField ? this.round.tick : null, othersTick);
+    return { myTick, othersTick, me: isOnField ? mine : null, others };
   }
 
   private actionsFor(mine: Action): [Action, Action] {
@@ -243,31 +311,5 @@ export class Prediction {
       maxHp: fallback.stats.maxHp,
       isAlive: b.isAlive,
     };
-  }
-
-  // Свои снаряды — только из предсказания: оно идёт впереди снимков, и смена источника дала бы прыжок назад.
-  // Чужие — из интерполяции снимков, как и чужой танк.
-  private interpolateBullets(
-    older: TimedSnapshot | null,
-    newer: TimedSnapshot | null,
-    t: number,
-  ): InterpolatedBullet[] {
-    const mine: InterpolatedBullet[] = this.round.bullets
-      .filter((bullet) => bullet.owner === this.side)
-      .map((bullet) => ({ id: bullet.id, owner: this.side, x: bullet.x, y: bullet.y }));
-    if (older === null || newer === null) {
-      return mine;
-    }
-    const previous = new Map<number, BulletSnapshot>(older.message.bullets.map((bullet) => [bullet.id, bullet]));
-    const theirs: InterpolatedBullet[] = newer.message.bullets
-      .filter((bullet) => bullet.owner !== this.side)
-      .map((bullet) => {
-        const was = previous.get(bullet.id);
-        if (was === undefined) {
-          return { id: bullet.id, owner: bullet.owner, x: bullet.x, y: bullet.y };
-        }
-        return { id: bullet.id, owner: bullet.owner, x: lerp(was.x, bullet.x, t), y: lerp(was.y, bullet.y, t) };
-      });
-    return [...mine, ...theirs];
   }
 }

@@ -20,15 +20,18 @@ import type { AimLine, AimLineState } from './aimLine.js';
 import type { AimLineStyleId } from './render/aimLineStyles.js';
 import { DiagLog } from './diag.js';
 import { DuelPresenter, duelNames } from './duelPresenter.js';
-import { InputReader, type ShotContext } from './input.js';
+import { InputReader, type ShotContext, type Viewport } from './input.js';
 import { browserInviteActions, renderInvite } from './invite.js';
-import { NetClient, websocketUrl } from './net.js';
-import { Prediction, type InterpolatedTank } from './prediction.js';
+import { NetClient, websocketUrl, type SocketLike } from './net.js';
+import { pictureDebug, type PictureDebug } from './pictureTime.js';
+import { Prediction, type InterpolatedTank, type PictureView } from './prediction.js';
 import { hideRoundEnd, showRoundEnd, type RoundResult } from './roundEnd.js';
 import type { Camera } from './render/camera.js';
+import type { Effects } from './render/effects.js';
 import { createDuelEffects, Renderer, type Overlay } from './render/renderer.js';
 import type { Settings } from './settings.js';
 import { Sfx } from './sfx.js';
+import { SpareInput } from './spareInput.js';
 import type { Telemetry } from './telemetry.js';
 import { isShotInZone } from './zoneFire.js';
 
@@ -43,6 +46,20 @@ export interface GameOptions {
   settings: Readonly<Settings>;
   isTouchDevice: boolean;
   telemetry: Telemetry;
+}
+
+// Зависимости игры от браузера: тесты подставляют сокет, рендер, звук, журнал, часы и кадры.
+export type DuelRendererLike = Viewport & Pick<Renderer, 'currentCamera' | 'activeCameraMode' | 'resetCamera' | 'draw'>;
+
+export interface GameDeps {
+  url: string;
+  createSocket: (url: string) => SocketLike;
+  createEffects: (names: () => readonly [string, string]) => Effects;
+  createRenderer: (canvas: HTMLCanvasElement, effects: Effects) => DuelRendererLike;
+  createSfx: () => Sfx;
+  createDiag: (roomCode: string) => DiagLog;
+  now: () => number;
+  requestFrame: (callback: (now: number) => void) => void;
 }
 
 const TICK_MS = DT * 1000;
@@ -77,10 +94,14 @@ function formatFlags(settings: Readonly<Settings>): string {
 
 // Связывает сеть, предсказание, ввод, эффекты, звук и рендер; держит цикл кадров и фиксированный шаг ввода.
 export class Game {
-  private readonly renderer: Renderer;
+  private readonly deps: GameDeps;
+  private readonly renderer: DuelRendererLike;
+  private readonly effects: Effects;
   private readonly duel: DuelPresenter;
+  private readonly spareInput = new SpareInput();
+  private lastView: PictureView | null = null;
   private readonly input: InputReader;
-  private readonly sfx = new Sfx();
+  private readonly sfx: Sfx;
   private readonly net: NetClient;
   private prediction: Prediction | null = null;
   private side: Side | null = null;
@@ -89,40 +110,67 @@ export class Game {
   private countdownBeeped = 0;
   private lastInputSeq = 0;
   private accumulator = 0;
-  private lastFrame = performance.now();
+  private lastFrame: number;
   private frames = 0;
   private fps = 0;
-  private fpsWindowStart = performance.now();
+  private fpsWindowStart: number;
   private readonly frameTimes: number[] = [];
   private worstFrameMs = 0;
-  private worstFrameWindowStart = performance.now();
+  private worstFrameWindowStart: number;
   private worstFrameCandidate = 0;
   private isClosed = false;
   private readonly diag: DiagLog;
   private lastSnapshotAt: number | null = null;
   private snapshotsThisSecond = 0;
   private inputsThisSecond = 0;
-  private summaryAt = performance.now();
+  private summaryAt: number;
   private loggedCamera: { mode: string; height: number } | null = null;
   private loggedFlags: string | null = null;
   private aimLine: AimLine | null = null;
 
-  constructor(private readonly options: GameOptions) {
-    this.diag = new DiagLog(options.roomCode);
+  constructor(
+    private readonly options: GameOptions,
+    deps: Partial<GameDeps> = {},
+  ) {
+    this.deps = {
+      url: deps.url ?? websocketUrl(),
+      createSocket: deps.createSocket ?? ((url): SocketLike => new WebSocket(url)),
+      createEffects: deps.createEffects ?? createDuelEffects,
+      createRenderer:
+        deps.createRenderer ??
+        ((canvas, effects): DuelRendererLike => new Renderer(canvas, effects, options.settings, options.isTouchDevice)),
+      createSfx: deps.createSfx ?? ((): Sfx => new Sfx()),
+      createDiag: deps.createDiag ?? ((roomCode): DiagLog => new DiagLog(roomCode)),
+      now: deps.now ?? ((): number => performance.now()),
+      requestFrame:
+        deps.requestFrame ??
+        ((callback): void => {
+          requestAnimationFrame(callback);
+        }),
+    };
+    const startedAt = this.deps.now();
+    this.lastFrame = startedAt;
+    this.fpsWindowStart = startedAt;
+    this.worstFrameWindowStart = startedAt;
+    this.summaryAt = startedAt;
+    this.sfx = this.deps.createSfx();
+    this.diag = this.deps.createDiag(options.roomCode);
     this.diag.write(
       `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'}`,
     );
-    const effects = createDuelEffects(() => this.names());
-    this.renderer = new Renderer(options.canvas, effects, options.settings, options.isTouchDevice);
+    const effects = this.deps.createEffects(() => this.names());
+    this.effects = effects;
+    this.renderer = this.deps.createRenderer(options.canvas, effects);
     this.duel = new DuelPresenter(this.renderer, effects, options.settings);
     this.input = new InputReader(options.canvas, this.renderer, options.settings, {
+      now: this.deps.now,
       onGuard: (event): void => {
         this.diag.write(`guard ${event}`);
       },
     });
-    this.bindAudioUnlock();
+    this.bindPage();
     this.net = new NetClient(
-      websocketUrl(),
+      this.deps.url,
       {
         onWelcome: (message): void => {
           this.side = message.side;
@@ -137,6 +185,7 @@ export class Game {
           this.options.telemetry.event('net', 'room', { slots });
           if (message.slots.some((slot) => !slot.isTaken)) {
             this.prediction = null;
+            this.lastView = null;
             this.roundStart = null;
             this.showWaiting();
           }
@@ -154,12 +203,13 @@ export class Game {
           );
           this.options.telemetry.event('net', 'roundstart', { idx: message.roundIndex, map: message.mapIndex });
           this.roundStart = message;
-          this.roundStartedAt = performance.now();
+          this.roundStartedAt = this.deps.now();
           this.countdownBeeped = 0;
           hideRoundEnd(this.options.roundEnd);
           // Забытый авто-огонь на старте раунда расстреливает стену перед собой и ловит рикошеты.
           this.setAutoFire(false);
           this.logFlags(true);
+          this.lastView = null;
           this.prediction = new Prediction(
             this.side,
             message.mapIndex,
@@ -175,15 +225,18 @@ export class Game {
             return;
           }
           this.prediction.applySnapshot(message, receivedAt);
+          for (const { predictedId, serverId } of this.prediction.takeConfirmedBullets()) {
+            this.effects.renameTrail(predictedId, serverId);
+          }
+          this.spareInput.noteSnapshot(message.ackSeq, message.hasSpareInput);
           this.diag.markSnapshot(message.gameTick, receivedAt);
           this.logSnapshot(this.prediction, message, receivedAt);
-          this.duel.applySnapshot(message.tick, message.tanks, message.events);
+          this.duel.applySnapshot(message.tick, message.tanks, message.events, receivedAt, this.side);
           for (const event of message.events) {
             if (event.kind === 'roundOver') {
               this.onRoundOver(event, message);
             }
           }
-          this.sfx.events(message.events);
         },
         onError: (message): void => {
           this.diag.write(`net error code=${String(message.code)} text=${message.text}`);
@@ -197,6 +250,7 @@ export class Game {
           this.diag.write(`net disconnect retry=${String(retryInMs)}`);
           this.options.telemetry.event('net', 'disconnect', { retryInMs });
           this.prediction = null;
+          this.lastView = null;
           this.roundStart = null;
           this.lastSnapshotAt = null;
           this.showOverlay(`Связь потеряна, переподключаюсь через ${String(Math.round(retryInMs / 1000))} с…`, true);
@@ -209,9 +263,10 @@ export class Game {
         token: '',
         gameId: '',
       },
+      { createSocket: this.deps.createSocket, now: this.deps.now },
     );
     this.showOverlay('Подключаюсь…', false);
-    requestAnimationFrame((now) => {
+    this.deps.requestFrame((now) => {
       this.frame(now);
     });
   }
@@ -323,11 +378,12 @@ export class Game {
     worstFrameMs: number;
     correctionPx: number;
     camera: { x: number; y: number; height: number };
+    picture: PictureDebug | null;
   } | null {
     if (this.prediction === null || this.roundStart === null || this.side === null) {
       return null;
     }
-    const view = this.prediction.view(performance.now());
+    const view = this.prediction.view(this.deps.now());
     const enemy = view.tanks[this.side === 0 ? 1 : 0];
     return {
       side: this.side,
@@ -358,6 +414,10 @@ export class Game {
         y: this.renderer.currentCamera.y,
         height: this.renderer.currentCamera.height,
       },
+      picture:
+        this.lastView === null
+          ? null
+          : pictureDebug(this.lastView.clock, this.prediction.latestTick, this.lastView.bullets),
     };
   }
 
@@ -368,7 +428,11 @@ export class Game {
     return duelNames(this.roundStart);
   }
 
-  private bindAudioUnlock(): void {
+  // Вкладка вернулась из фона: события, накопленные, пока цикл кадров стоял, не играются.
+  private bindPage(): void {
+    document.addEventListener('visibilitychange', () => {
+      this.duel.clearEvents();
+    });
     const unlock = (): void => {
       this.sfx.unlock();
     };
@@ -410,7 +474,7 @@ export class Game {
     if (this.isClosed) {
       return;
     }
-    requestAnimationFrame((next) => {
+    this.deps.requestFrame((next) => {
       this.frame(next);
     });
     const elapsed = Math.min(250, now - this.lastFrame);
@@ -449,6 +513,10 @@ export class Game {
     const field = frameView.round.map;
     while (this.accumulator >= TICK_MS) {
       this.accumulator -= TICK_MS;
+      if (this.spareInput.shouldSkip(prediction.lastSeq + 1)) {
+        this.diag.write(`in skip next=${String(prediction.lastSeq + 1)}`);
+        continue;
+      }
       const action = quantizeAction(this.input.read(prediction.me, this.shotContextFor(prediction, field, enemy)));
       const bulletsBefore = prediction.myBulletCount;
       const seq = prediction.predict(action);
@@ -483,6 +551,8 @@ export class Game {
     }
 
     const view = prediction.view(now);
+    this.lastView = view;
+    this.sfx.events(this.duel.releaseEvents(view, now));
     this.duel.update(elapsed / 1000, view);
     const drawn = this.duel.draw({
       view,
