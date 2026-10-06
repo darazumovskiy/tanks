@@ -1,9 +1,15 @@
 import {
+  COURSE_BANDS,
   DISTANCE_BUCKET_LABELS,
+  distanceBucketOf,
   type Coefficients,
+  type CourseBandLabel,
   type DistanceBucketLabel,
+  HIDDEN_AIM_TARGETS,
   type Distribution,
   type FireContext,
+  type HiddenAimTarget,
+  type KitSide,
   type MovementMetrics,
   type ProfileMetrics,
   type ProfilePeriod,
@@ -39,13 +45,26 @@ export const SIGHT_KEYS = ['sight', 'hidden'] as const;
 export type SightKey = (typeof SIGHT_KEYS)[number];
 export const SIGHT_NAMES: Readonly<Record<SightKey, string>> = { sight: 'на виду', hidden: 'без видимости' };
 
-// Параметры, которые подбираются калибровкой по своим метрикам-входам.
+export const HIDDEN_AIM_NAMES: Readonly<Record<HiddenAimTarget, string>> = {
+  bearing: 'пеленге',
+  exit: 'точке выхода',
+  ricochet: 'рикошете',
+  lastSeen: 'месте, где видел последний раз',
+};
+
+// Параметры, которые подбираются калибровкой по своим метрикам-входам. hiddenAim — доли решений, на которых
+// башня без видимости ведётся на цель; kitShare — доля решений манёвра, на которых танк едет к аптечке.
 export interface TwinCalibration {
   correlationTicks: number;
   lagTicks: number;
   holdShare: Record<FireContext, number>;
+  decisionMeanS: number;
+  courseReach: number;
   reverseChance: number;
+  kitShare: Record<KitSide, number>;
+  hiddenAim: Record<HiddenAimTarget, number>;
   coverHoldShare: number;
+  returnAvoidShare: number;
 }
 
 export interface Band {
@@ -67,12 +86,12 @@ export interface TwinProfile {
     longPauseDecilesS: number[];
   };
   manoeuvre: {
-    decisionDecilesS: number[];
     stickDeciles: number[];
-    courseDecilesDeg: Record<SightKey, Record<DistanceBucketLabel, number[]>>;
+    courseDecilesDeg: Record<SightKey, Record<CourseBandLabel, number[]>>;
   };
   cover: { distanceBand: Band; wallDistanceBand: Band } | null;
   modeSwitch: { enter: Coefficients | null; leave: Coefficients | null };
+  hiddenAimTargets: HiddenAimTarget[];
   calibration: TwinCalibration | null;
 }
 
@@ -98,8 +117,11 @@ const GAME_ID_SEPARATOR = ' ';
 const LEAD_SHARE = 0;
 // Меньше 25 выстрелов по стоящему в корзине дистанции — распределение корзины ненадёжно.
 const MIN_BAND_SHOTS = 25;
-// Угол хода в корзине — не меньше чем по 10 с движения.
+// Угол хода в корзине — не меньше чем по 10 с с газом.
 const MIN_BAND_COURSE_TICKS = 10 * TICK_RATE;
+// Цель башни без видимости входит в модель, если башня человека на ней чаще случайной хотя бы на 2 пункта:
+// корпус, которым башню не ведут, из-за геометрии коридоров даёт превышение до 1 пункта.
+const MIN_HIDDEN_AIM_EXCESS_PCT = 2;
 
 function gameIds(ids: string): string[] {
   return ids.split(GAME_ID_SEPARATOR);
@@ -207,16 +229,27 @@ function handErrorDeciles(aim: ProfileMetrics['aim']): Record<DistanceBucketLabe
   return result;
 }
 
-// Угол хода к линии — по видимости и корзине дистанции, где у человека не меньше MIN_BAND_COURSE_TICKS тиков
-// движения; в остальных — по всем тикам движения.
-function courseDeciles(movement: MovementMetrics): Record<SightKey, Record<DistanceBucketLabel, number[]>> {
+function hasCourseTicks(value: Distribution | null | undefined): value is Distribution {
+  return value !== null && value !== undefined && value.n >= MIN_BAND_COURSE_TICKS;
+}
+
+// Угол хода к линии — по видимости и корзине дистанции по 100, где у человека не меньше MIN_BAND_COURSE_TICKS
+// тиков с газом; иначе — по корзине огня, в которую она входит, а там, где и этого мало, — по всем тикам с газом.
+function courseDeciles(movement: MovementMetrics): Record<SightKey, Record<CourseBandLabel, number[]>> {
   const overall = deciles(movement.courseAllDeg, 'угол хода к линии на противника');
-  const result = {} as Record<SightKey, Record<DistanceBucketLabel, number[]>>;
+  const result = {} as Record<SightKey, Record<CourseBandLabel, number[]>>;
   for (const key of SIGHT_KEYS) {
-    result[key] = {} as Record<DistanceBucketLabel, number[]>;
-    for (const band of DISTANCE_BUCKET_LABELS) {
-      const inBand = movement.courseDeg[key][band] ?? null;
-      result[key][band] = inBand !== null && inBand.n >= MIN_BAND_COURSE_TICKS ? inBand.deciles.slice() : overall;
+    result[key] = {} as Record<CourseBandLabel, number[]>;
+    for (const band of COURSE_BANDS) {
+      const inBand = movement.courseByBandDeg[key][band.label];
+      const inBucket = movement.courseDeg[key][distanceBucketOf(band.low)];
+      let chosen = overall;
+      if (hasCourseTicks(inBand)) {
+        chosen = inBand.deciles.slice();
+      } else if (hasCourseTicks(inBucket)) {
+        chosen = inBucket.deciles.slice();
+      }
+      result[key][band.label] = chosen;
     }
   }
   return result;
@@ -237,6 +270,10 @@ function coverOf(main: ProfileMetrics): TwinProfile['cover'] {
     distanceBand: band(distance, 'дистанция в позиции'),
     wallDistanceBand: band(wallDistance, 'стена в позиции'),
   };
+}
+
+export function hiddenAimTargetsOf(aim: ProfileMetrics['aim']): HiddenAimTarget[] {
+  return HIDDEN_AIM_TARGETS.filter((target) => (aim.hiddenAim[target].excessPct ?? 0) >= MIN_HIDDEN_AIM_EXCESS_PCT);
 }
 
 export function twinProfile(reference: TwinReference, calibration: TwinCalibration | null): TwinProfile {
@@ -261,12 +298,12 @@ export function twinProfile(reference: TwinReference, calibration: TwinCalibrati
       longPauseDecilesS: deciles(main.fire.longPauseS, 'длинные паузы огня'),
     },
     manoeuvre: {
-      decisionDecilesS: deciles(reference.movement.radialRunTicks, 'отрезки сближения и отдаления', 1 / TICK_RATE),
       stickDeciles: deciles(reference.movement.straightThrottle, 'газ на прямой'),
       courseDecilesDeg: courseDeciles(reference.movement),
     },
     cover: coverOf(main),
     modeSwitch: { enter: main.modeSwitch.enter, leave: main.modeSwitch.leave },
+    hiddenAimTargets: hiddenAimTargetsOf(main.aim),
     calibration,
   };
 }

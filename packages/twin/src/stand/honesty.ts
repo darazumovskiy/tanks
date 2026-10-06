@@ -1,5 +1,6 @@
 import {
   DISTANCE_BUCKET_LABELS,
+  HIDDEN_AIM_TARGETS,
   MOTION_KINDS,
   wilson,
   type Distribution,
@@ -11,13 +12,22 @@ import {
   type WinCount,
 } from '@tanks/analysis';
 import type { BotLevel } from '@tanks/shared/protocol';
-import { PROFILE_WINDOWS, SIGHT_KEYS, SIGHT_NAMES, type TwinReference } from '../profile.js';
+import {
+  HIDDEN_AIM_NAMES,
+  hiddenAimTargetsOf,
+  PROFILE_WINDOWS,
+  SIGHT_KEYS,
+  SIGHT_NAMES,
+  type TwinReference,
+} from '../profile.js';
 import type { InputCheck } from './calibrate.js';
 import type { ExclusionCounts } from './match.js';
 
-// Уровень, где у Димы меньше 10 раундов, и метрика с n меньше 30 у Димы печатаются без вердикта.
+// Уровень, где у Димы меньше 10 раундов, метрика с n меньше 30 у Димы и доля события, которое у Димы случилось
+// меньше 5 раз, печатаются без вердикта.
 const MIN_REFERENCE_ROUNDS = 10;
 const MIN_REFERENCE_SAMPLES = 30;
+const MIN_REFERENCE_EVENTS = 5;
 const PERCENT = 100;
 // Граница интервала при 0 из n или n из n считается с погрешностью плавающей точки: 0 % выходит за 1e-15 %.
 const BOUND_EPSILON = 1e-9;
@@ -105,6 +115,7 @@ function winShare(count: WinCount): Measure {
 // здесь же: между рукой и выстрелом стоит поворот башни.
 function outcomeChecks(reference: TwinReference): OutcomeCheck[] {
   const levelKeys = Object.keys(reference.main.position.byLevel);
+  const modelled = hiddenAimTargetsOf(reference.main.aim);
   return [
     { name: 'Ошибка по стоящему, °', of: (m) => median(m.main.aim.standingErrDeg) },
     ...DISTANCE_BUCKET_LABELS.map((band) => ({
@@ -124,6 +135,12 @@ function outcomeChecks(reference: TwinReference): OutcomeCheck[] {
     { name: 'Выстрел по готовности', of: (m) => share(m.main.fire.readyShots) },
     { name: 'Выстрелы без видимости', of: (m) => share(m.main.fire.noSightShots) },
     { name: 'Попадания без видимости', of: (m) => share(m.main.fire.noSightHits) },
+    { name: 'Прямые попадания без видимости', of: (m) => share(m.main.fire.noSightDirectHits) },
+    { name: 'Башня на точке появления за 0,5 с', of: (m) => share(m.main.aim.preAppear) },
+    ...HIDDEN_AIM_TARGETS.filter((target) => !modelled.includes(target)).map((target) => ({
+      name: `Башня без видимости на ${HIDDEN_AIM_NAMES[target]} сверх случайной, п.`,
+      of: (m: PlayerMetrics): Measure => ({ kind: 'rate', value: m.main.aim.hiddenAim[target].excessPct }),
+    })),
     { name: 'Самопопадания', of: (m) => share(m.main.fire.selfHits) },
     {
       name: 'Удержаний предохранителем в минуту',
@@ -142,6 +159,10 @@ function outcomeChecks(reference: TwinReference): OutcomeCheck[] {
     })),
     { name: 'Урон в минуту', of: (m) => ({ kind: 'rate', value: m.main.outcomes.damagePerMinute }) },
     { name: 'Урон бота в минуту', of: (m) => ({ kind: 'rate', value: m.main.outcomes.damageTakenPerMinute }) },
+    { name: 'Первое попадание моё', of: (m) => share(m.main.outcomes.firstHit) },
+    { name: 'Подобрано аптечек из появившихся', of: (m) => share(m.main.kits.picked) },
+    { name: 'Аптечки мои из подобранных', of: (m) => share(m.main.kits.mine) },
+    { name: 'Лечение в минуту', of: (m) => ({ kind: 'rate', value: m.main.kits.healPerMinute }) },
     { name: 'Отрезок сближения или отдаления, тиков', of: (m) => median(m.movement.radialRunTicks) },
     { name: 'Отрезок хода поперёк в одну сторону, тиков', of: (m) => median(m.movement.sideRunTicks) },
     { name: 'Кайтинг', of: (m) => share(m.movement.kite) },
@@ -206,7 +227,7 @@ function outcomeVerdict(dima: Measure, twin: Measure): Verdict {
     return value !== null && value >= dima.value.q1 && value <= dima.value.q3 ? 'честно' : 'нарушение';
   }
   if (dima.kind === 'share' && twin.kind === 'share') {
-    if (dima.value.total < MIN_REFERENCE_SAMPLES) {
+    if (dima.value.total < MIN_REFERENCE_SAMPLES || dima.value.part < MIN_REFERENCE_EVENTS) {
       return 'без вердикта';
     }
     return isOverlapping(twin.value, dima.value) ? 'честно' : 'нарушение';
@@ -260,7 +281,8 @@ function pctOf(count: WinCount): number | null {
 }
 
 // Критерии честности: винрейт по уровням и сводный — в интервале Уилсона Димы (без округления), исходы
-// поведения — медиана в квартилях Димы, доля — интервал двойника пересекается с интервалом Димы, входы — в допуске.
+// поведения — медиана в квартилях Димы, доля — интервал двойника пересекается с интервалом Димы, входы — в допуске,
+// и ни один параметр не на краю своего физического диапазона.
 export function judge(
   reference: TwinReference,
   levels: readonly BotLevel[],
@@ -305,5 +327,11 @@ export function judge(
     ...outcomes.map((row) => row.verdict),
     ...inputs.map((input) => input.verdict),
   ];
-  return { levels: levelRows, overall, outcomes, inputs: [...inputs], isHonest: !verdicts.includes('нарушение') };
+  return {
+    levels: levelRows,
+    overall,
+    outcomes,
+    inputs: [...inputs],
+    isHonest: !verdicts.includes('нарушение'),
+  };
 }

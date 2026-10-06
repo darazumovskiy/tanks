@@ -7,11 +7,15 @@ import {
   TICK_RATE,
   checkStats,
   deriveStats,
+  isSegmentClear,
+  isShotReturning,
   mapByIndex,
   normalizeAngle,
   type MapDef,
+  type Point,
   type Side,
   type Stats,
+  type Wall,
 } from '@tanks/shared/engine';
 import type { BotLevel } from '@tanks/shared/protocol';
 import { EVENT_KIND } from '../bullets.js';
@@ -45,7 +49,16 @@ import {
   MIN_DISTANCE,
   MOVING_SPEED,
 } from '../shots.js';
-import { hasCoverWithin } from './cover.js';
+import { hasCoverWithin, pathFieldTo, pathLengthFrom, pathPointFrom, type PathField } from './cover.js';
+import {
+  bearingOf,
+  HIDDEN_AIM_TARGETS,
+  HIDDEN_AIM_WINDOW,
+  hiddenAimDirections,
+  soleChance,
+  soleHiddenAim,
+  type HiddenAimTarget,
+} from './hiddenAim.js';
 import { upperMedian } from './stats.js';
 import { counterfactualHit, fitBulletSpeed, replayRound, shotAngle, type ReplayOutcome } from './replay.js';
 
@@ -107,6 +120,26 @@ const ROUND_CLIENT_WINDOW_TICKS = 3 * TICK_RATE;
 const RECENT_DAMAGE_TICKS = 5 * TICK_RATE;
 // Газ на прямой — модуль газа в тиках, где поворот меньше 0,3 и танк едет.
 const STRAIGHT_TURN_MAX = 0.3;
+// Сдвиг собственного пути — насколько танк через 20 тиков ушёл от продолжения своей скорости по прямой; от
+// каждого третьего тика движения, окно целиком дальше 60 от стен: там путь задают команды, а не скольжение.
+const PATH_SHIFT_TICKS = 20;
+const PATH_SHIFT_STRIDE = 3;
+const PATH_SHIFT_CLEARANCE = 60;
+// Башня без видимости сверяется с целями на каждом десятом тике боя.
+const HIDDEN_AIM_STRIDE = 10;
+// Появление противника — видимость после секунды без неё; башня сверяется с точкой появления за 0,5 с до него.
+const APPEAR_HIDDEN_TICKS = TICK_RATE;
+const APPEAR_LOOKBACK_TICKS = TICK_RATE / 2;
+// Ход к аптечке — на каждом пятом тике боя, пока на поле есть аптечка: танк едет быстрее порога кайтинга, и
+// курс отличается меньше чем на 30° от направления на точку пути к ближайшей аптечке в 75 впереди.
+const KIT_STRIDE = 5;
+const KIT_TOWARD_RAD = Math.PI / 6;
+const KIT_PATH_REACH = 75;
+// Свободный путь по курсу — от центра танка вдоль курса корпуса и газа до первой стены или края поля, не дальше
+// 600, с точностью 5; от каждого третьего тика с газом.
+const FREE_RUN_STRIDE = 3;
+const FREE_RUN_CAP = 600;
+const FREE_RUN_PRECISION = 5;
 const BOT_CLASS_EDGES = [8, 9, 10] as const;
 const BOT_CLASSES = ['3–7', '8', '9', '10'] as const;
 export type BotClass = (typeof BOT_CLASSES)[number];
@@ -141,6 +174,9 @@ export interface ProfileShot {
   hasSight: boolean;
   sightRunTicks: number;
   outcome: ReplayOutcome | null;
+  isDirectHit: boolean;
+  // Снаряд после отскока вернётся в стрелка — расчёт предохранителя клиента по позам выстрела.
+  isReturning: boolean;
 }
 
 export interface ProfileThreat {
@@ -178,7 +214,8 @@ export interface FirePause {
 }
 
 // Тик боя для движения, огня и позиции; первый тик раунда в счёт не идёт — у него нет предыдущей позы.
-// courseDeg — угол между скоростью и направлением на противника от 0 до 180°; null — танк стоит.
+// courseDeg — угол между курсом, который задают корпус и газ (на заднем ходу — корма), и направлением на
+// противника от 0 до 180°; null — газа нет. Курс по корпусу не зависит от скольжения вдоль стен, скорость — зависит.
 export interface FightSample {
   gt: number;
   speed: number;
@@ -249,6 +286,39 @@ export interface SecondSample {
   features: ModeFeatures;
 }
 
+// Башня без видимости: sole — тики, где башня в окне одной этой цели, chance — сумма долей круга, где там же была
+// бы случайная башня.
+export interface HiddenAimCounts {
+  samples: number;
+  sole: Record<HiddenAimTarget, number>;
+  chance: Record<HiddenAimTarget, number>;
+}
+
+// Аптечка ближе по пути мне или противнику.
+export const KIT_SIDES = ['closer', 'farther'] as const;
+export type KitSide = (typeof KIT_SIDES)[number];
+
+export interface TowardCount {
+  toward: number;
+  total: number;
+}
+
+export interface KitCounts {
+  spawns: number;
+  pickups: number;
+  botPickups: number;
+  healed: number;
+  toward: Record<KitSide, TowardCount>;
+}
+
+export interface AppearCounts {
+  appearances: number;
+  onPoint: number;
+}
+
+// Чей снаряд первым в раунде попал в противника.
+export type FirstHit = 'mine' | 'enemy';
+
 export interface RoundDetail {
   shots: ProfileShot[];
   threats: ProfileThreat[];
@@ -263,6 +333,11 @@ export interface RoundDetail {
   movement: MovementCounts;
   radialRuns: number[];
   sideRuns: number[];
+  pathShifts: number[];
+  freeRuns: number[];
+  hiddenAims: HiddenAimCounts;
+  appear: AppearCounts;
+  kits: KitCounts;
   startPauseTicks: number;
   fireCells: FireCell[];
   pauses: FirePause[];
@@ -273,17 +348,19 @@ export interface RoundDetail {
   damageTaken: number;
   enemyHits: number;
   selfHits: number;
+  firstHit: FirstHit | null;
   botShots: number;
   botHitsLog: number;
 }
 
 // order — место игры в периодах выборки, а без периодов — в порядке загрузки: по нему идёт последняя
 // настройка клиента. Предохранитель — по строке `flags` на старте раунда или последней до него; до появления
-// этих строк он выключен.
+// этих строк он выключен. gameRounds — сколько раундов в журнале игры, включая отсечённые выборкой.
 export interface ProfileRound {
   id: string;
   game: string;
   idx: number;
+  gameRounds: number;
   order: number;
   level: BotLevel;
   botName: string;
@@ -334,6 +411,66 @@ const DEFAULT_MAX_HP = deriveStats(DEFAULT_STATS).maxHp;
 
 function emptyAxisCounts(): Record<AxisBucket, number> {
   return Object.fromEntries(AXIS_BUCKETS.map((bucket) => [bucket, 0])) as Record<AxisBucket, number>;
+}
+
+function emptyTargetCounts(): Record<HiddenAimTarget, number> {
+  return Object.fromEntries(HIDDEN_AIM_TARGETS.map((target) => [target, 0])) as Record<HiddenAimTarget, number>;
+}
+
+// Сдвиг пути через PATH_SHIFT_TICKS от продолжения скорости по прямой; null — танк едет медленнее порога
+// кайтинга, окно выходит за бой или проходит у стены.
+function pathShiftAt(ticks: readonly Tick[], index: number, side: Side, walls: readonly Wall[]): number | null {
+  const earlier = ticks[index - THREAT_VELOCITY_TICKS];
+  const tick = ticks[index];
+  const later = ticks[index + PATH_SHIFT_TICKS];
+  if (earlier === undefined || tick === undefined || later?.phase !== FIGHT_PHASE) {
+    return null;
+  }
+  const me = tick.poses[side];
+  const vx = (me.x - earlier.poses[side].x) / THREAT_VELOCITY_TICKS;
+  const vy = (me.y - earlier.poses[side].y) / THREAT_VELOCITY_TICKS;
+  if (Math.hypot(vx, vy) * TICK_RATE <= KITE_SPEED) {
+    return null;
+  }
+  for (let k = 0; k <= PATH_SHIFT_TICKS; k++) {
+    const pose = ticks[index + k]?.poses[side];
+    if (pose === undefined || wallClearance(walls, pose.x, pose.y) <= PATH_SHIFT_CLEARANCE) {
+      return null;
+    }
+  }
+  const end = later.poses[side];
+  return Math.hypot(end.x - (me.x + vx * PATH_SHIFT_TICKS), end.y - (me.y + vy * PATH_SHIFT_TICKS));
+}
+
+// Расстояние вдоль луча до края поля по одной оси; Infinity — луч вдоль края.
+function edgeDistance(origin: number, direction: number, size: number): number {
+  if (direction > 0) {
+    return (size - origin) / direction;
+  }
+  return direction < 0 ? -origin / direction : Infinity;
+}
+
+// Отрезок от точки свободен на любой длине до первой стены, поэтому её ищет деление пополам.
+function freeRunAhead(map: MapDef, from: Point, direction: number): number {
+  const dx = Math.cos(direction);
+  const dy = Math.sin(direction);
+  const isClearTo = (length: number): boolean =>
+    isSegmentClear(map.walls, from.x, from.y, from.x + dx * length, from.y + dy * length, 0);
+  const toEdge = Math.min(edgeDistance(from.x, dx, map.width), edgeDistance(from.y, dy, map.height), FREE_RUN_CAP);
+  if (isClearTo(toEdge)) {
+    return toEdge;
+  }
+  let low = 0;
+  let high = toEdge;
+  while (high - low > FREE_RUN_PRECISION) {
+    const middle = (low + high) / 2;
+    if (isClearTo(middle)) {
+      low = middle;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
 }
 
 function emptyMotionCounts(): Record<MotionKind, SightSplit> {
@@ -520,11 +657,14 @@ function lossStreaks(rounds: readonly RoundSummary[], bot: Side): Map<number, nu
   return streaks;
 }
 
+// direct — выстрелы, попавшие в противника без отскока; firstHit — сторона, чей снаряд первым попал в противника.
 interface SimHits {
   outcomes: Map<string, ReplayOutcome>;
+  direct: Set<string>;
   damage: [number, number];
   enemyHits: number;
   selfHits: number;
+  firstHit: Side | null;
 }
 
 function shotKey(gt: number, owner: Side): string {
@@ -538,8 +678,10 @@ function matchSimHits(round: ParsedRound, context: GameContext): SimHits {
   const used = new Set<number>();
   const damage: [number, number] = [0, 0];
   const outcomes = new Map<string, ReplayOutcome>();
+  const direct = new Set<string>();
   let enemyHits = 0;
   let selfHits = 0;
+  let first: { side: Side; gt: number } | null = null;
   for (const bullet of bullets) {
     const isHit = bullet.outcome === 'enemy' || bullet.outcome === 'self';
     if (isHit) {
@@ -558,11 +700,27 @@ function matchSimHits(round: ParsedRound, context: GameContext): SimHits {
       }
     }
     const isHuman = bullet.owner === context.human;
-    enemyHits += isHuman && bullet.outcome === 'enemy' ? 1 : 0;
+    const isEnemyHit = bullet.outcome === 'enemy';
+    enemyHits += isHuman && isEnemyHit ? 1 : 0;
     selfHits += isHuman && bullet.outcome === 'self' ? 1 : 0;
-    outcomes.set(shotKey(bullet.shotGt, bullet.owner), bullet.outcome);
+    const key = shotKey(bullet.shotGt, bullet.owner);
+    outcomes.set(key, bullet.outcome);
+    if (isEnemyHit && !bullet.hasBounced) {
+      direct.add(key);
+    }
+    const endGt = bullet.endGt ?? Infinity;
+    if (isEnemyHit && (first === null || endGt < first.gt)) {
+      first = { side: bullet.owner, gt: endGt };
+    }
   }
-  return { outcomes, damage, enemyHits, selfHits };
+  return { outcomes, direct, damage, enemyHits, selfHits, firstHit: first?.side ?? null };
+}
+
+function firstHitOf(side: Side | null, human: Side): FirstHit | null {
+  if (side === null) {
+    return null;
+  }
+  return side === human ? 'mine' : 'enemy';
 }
 
 function firstCommandChange(actions: readonly LogAction[], from: number): number | null {
@@ -643,6 +801,8 @@ function roundDetail(
       hasSight: isClear(walls, me.x, me.y, enemy.x, enemy.y),
       sightRunTicks: sightRun.get(index) ?? 0,
       outcome: sim.outcomes.get(shotKey(event.gt, human)) ?? null,
+      isDirectHit: sim.direct.has(shotKey(event.gt, human)),
+      isReturning: isShotReturning(map, me, turret, speeds[human], enemy),
     });
   }
   const shotByGt = new Map(shots.map((shot) => [shot.gt, shot]));
@@ -835,6 +995,7 @@ function roundDetail(
   const straightThrottle: number[] = [];
   const radialRuns: number[] = [];
   const sideRuns: number[] = [];
+  const freeRuns: number[] = [];
   let lateral: { sign: number; ticks: number; gap: number } | null = null;
   let radialSign = 0;
   let radialRun = 0;
@@ -920,10 +1081,15 @@ function roundDetail(
     radialRun++;
     previousDistance = distance;
     previousBearing = toEnemy;
+    const drivenCourse = action.throttle < 0 ? me.heading + Math.PI : me.heading;
+    const isDriving = Math.abs(action.throttle) > AXIS_TOUCH;
+    if (isDriving && samples.length % FREE_RUN_STRIDE === 0) {
+      freeRuns.push(freeRunAhead(map, me, drivenCourse));
+    }
     samples.push({
       gt: tick.gt,
       speed,
-      courseDeg: speed > KITE_SPEED ? toDegrees(Math.abs(courseToEnemy)) : null,
+      courseDeg: isDriving ? toDegrees(Math.abs(normalizeAngle(drivenCourse - toEnemy))) : null,
       distance,
       hasSight,
       isFiring: action.isFiring,
@@ -934,6 +1100,15 @@ function roundDetail(
   if (lateral !== null) {
     sideRuns.push(lateral.ticks);
   }
+  const pathShifts = fight.flatMap((index, n) => {
+    const shift = n % PATH_SHIFT_STRIDE === 0 ? pathShiftAt(ticks, index, human, walls) : null;
+    return shift === null ? [] : [shift];
+  });
+  const fightFrames = fight.flatMap((index) => {
+    const tick = ticks[index];
+    return tick === undefined ? [] : [{ tick, hasSight: sight.get(index) === true }];
+  });
+  const hiddenAims = hiddenAimCounts(fightFrames, map, context);
 
   const intentIndex = firstIntentIndex(ticks, fight, human, guardGts);
   const cells = new Map<string, FireCell>();
@@ -1028,6 +1203,11 @@ function roundDetail(
     movement,
     radialRuns,
     sideRuns,
+    pathShifts,
+    freeRuns,
+    hiddenAims,
+    appear: appearCounts(fightFrames, context),
+    kits: kitCounts(round, fightFrames, map, context),
     startPauseTicks: Math.min(intentIndex, fight.length),
     fireCells: [...cells.values()],
     pauses,
@@ -1038,9 +1218,143 @@ function roundDetail(
     damageTaken: sim.damage[bot],
     enemyHits: sim.enemyHits,
     selfHits: sim.selfHits,
+    firstHit: firstHitOf(sim.firstHit, human),
     botShots: round.events.filter((event) => event.kind === EVENT_KIND.shot && event.side === bot).length,
     botHitsLog: summaryRound?.bot_hits ?? 0,
   };
+}
+
+interface FightFrame {
+  tick: Tick;
+  hasSight: boolean;
+}
+
+function hiddenAimCounts(frames: readonly FightFrame[], map: MapDef, context: GameContext): HiddenAimCounts {
+  const { human, bot, speeds } = context;
+  const counts: HiddenAimCounts = { samples: 0, sole: emptyTargetCounts(), chance: emptyTargetCounts() };
+  let lastSeen: Point | null = null;
+  frames.forEach(({ tick, hasSight }, n) => {
+    const { poses } = tick;
+    if (hasSight) {
+      lastSeen = { x: poses[bot].x, y: poses[bot].y };
+      return;
+    }
+    if (n % HIDDEN_AIM_STRIDE !== 0) {
+      return;
+    }
+    const me = poses[human];
+    const directions = hiddenAimDirections(map, me, poses[bot], lastSeen, speeds[human]);
+    counts.samples++;
+    const sole = soleHiddenAim(me.turret, directions);
+    if (sole !== null) {
+      counts.sole[sole]++;
+    }
+    const chance = soleChance(directions);
+    for (const target of HIDDEN_AIM_TARGETS) {
+      counts.chance[target] += chance[target];
+    }
+  });
+  return counts;
+}
+
+function appearCounts(frames: readonly FightFrame[], context: GameContext): AppearCounts {
+  const { human, bot } = context;
+  const counts: AppearCounts = { appearances: 0, onPoint: 0 };
+  let hiddenRun = 0;
+  frames.forEach(({ tick, hasSight }, n) => {
+    if (!hasSight) {
+      hiddenRun++;
+      return;
+    }
+    const before = frames[n - APPEAR_LOOKBACK_TICKS];
+    const isAppearance = hiddenRun >= APPEAR_HIDDEN_TICKS && before !== undefined;
+    hiddenRun = 0;
+    if (!isAppearance) {
+      return;
+    }
+    const me = before.tick.poses[human];
+    counts.appearances++;
+    counts.onPoint += Math.abs(normalizeAngle(me.turret - bearingOf(me, tick.poses[bot]))) < HIDDEN_AIM_WINDOW ? 1 : 0;
+  });
+  return counts;
+}
+
+function kitKey(point: Point): string {
+  return `${String(point.x)}:${String(point.y)}`;
+}
+
+interface NearestKit {
+  field: PathField;
+  mine: number;
+  theirs: number;
+}
+
+function nearestKit(map: MapDef, kits: Iterable<Point>, me: Point, enemy: Point): NearestKit | null {
+  let nearest: NearestKit | null = null;
+  for (const kit of kits) {
+    const field = pathFieldTo(map, kit);
+    const mine = pathLengthFrom(field, me);
+    if (mine < (nearest?.mine ?? Infinity)) {
+      nearest = { field, mine, theirs: pathLengthFrom(field, enemy) };
+    }
+  }
+  return nearest;
+}
+
+// Подборы и лечение — по событиям раунда; ход к аптечке — по тикам боя, пока на поле есть аптечка.
+function kitCounts(round: ParsedRound, frames: readonly FightFrame[], map: MapDef, context: GameContext): KitCounts {
+  const { human, bot } = context;
+  const counts: KitCounts = {
+    spawns: 0,
+    pickups: 0,
+    botPickups: 0,
+    healed: 0,
+    toward: { closer: { toward: 0, total: 0 }, farther: { toward: 0, total: 0 } },
+  };
+  const events = round.events.filter((event) => event.kind === EVENT_KIND.kitSpawn || event.kind === EVENT_KIND.pickup);
+  for (const event of events) {
+    counts.spawns += event.kind === EVENT_KIND.kitSpawn ? 1 : 0;
+    const isPickup = event.kind === EVENT_KIND.pickup;
+    counts.pickups += isPickup && event.side === human ? 1 : 0;
+    counts.botPickups += isPickup && event.side === bot ? 1 : 0;
+    counts.healed += isPickup && event.side === human ? event.v : 0;
+  }
+  const active = new Map<string, Point>();
+  let next = 0;
+  frames.forEach(({ tick }, n) => {
+    let event = events[next];
+    while (event !== undefined && event.gt <= tick.gt) {
+      const kit = { x: event.x, y: event.y };
+      if (event.kind === EVENT_KIND.kitSpawn) {
+        active.set(kitKey(kit), kit);
+      } else {
+        active.delete(kitKey(kit));
+      }
+      next++;
+      event = events[next];
+    }
+    const previous = frames[n - 1];
+    if (n % KIT_STRIDE !== 0 || previous === undefined) {
+      return;
+    }
+    const me = tick.poses[human];
+    const nearest = nearestKit(map, active.values(), me, tick.poses[bot]);
+    if (nearest === null) {
+      return;
+    }
+    const vx = me.x - previous.tick.poses[human].x;
+    const vy = me.y - previous.tick.poses[human].y;
+    const point = pathPointFrom(nearest.field, me, KIT_PATH_REACH);
+    const isMoving = Math.hypot(vx, vy) * TICK_RATE > KITE_SPEED;
+    const isToward =
+      isMoving &&
+      point !== null &&
+      Math.abs(normalizeAngle(Math.atan2(vy, vx) - bearingOf(me, point))) < KIT_TOWARD_RAD;
+    const count = counts.toward[nearest.mine < nearest.theirs ? 'closer' : 'farther'];
+    count.total++;
+    count.toward += isToward ? 1 : 0;
+  });
+  return counts;
 }
 
 // Признаки в начале каждой полной секунды боя: последняя неполная секунда раунда в обучение не идёт.
@@ -1176,6 +1490,7 @@ export function selectProfileRounds(games: readonly LoggedGame[], selection: Pro
         id,
         game: game.parsed.id,
         idx: round.idx,
+        gameRounds: rounds.length,
         order: place.order,
         level,
         botName: summary.bot_name,

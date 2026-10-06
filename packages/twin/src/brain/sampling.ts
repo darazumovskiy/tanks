@@ -36,6 +36,11 @@ export function normalCdf(z: number): number {
   return (1 + erf(z / Math.SQRT2)) / 2;
 }
 
+// Показательное распределение со средним mean; 1 − u не даёт логарифма нуля.
+export function sampleExponential(random: Random, mean: number): number {
+  return -Math.log(1 - nextRandom(random)) * mean;
+}
+
 export function chance(random: Random, probability: number): boolean {
   return nextRandom(random) < probability;
 }

@@ -108,7 +108,7 @@ afterEach(() => {
 });
 
 describe('условия, настройки и сеть', () => {
-  it('условия по уровню: билд, скольжение и предохранитель раунда; доля предохранителя; настройки — последняя строка', () => {
+  it('условия по уровню: билд, скольжение и предохранитель раунда; доля предохранителя; длины игр; настройки — последняя строка', () => {
     const metrics = profileMetrics(profileRoundsOf({ 'EARL.log': gameLog(EARLY), 'LATE.log': gameLog(LATE) }));
 
     expect(metrics.conditions['5']).toEqual({
@@ -118,6 +118,7 @@ describe('условия, настройки и сеть', () => {
         { build: '3/3/2/2', wallSlidePercent: 30, hasRicochetGuard: true, rounds: 2 },
         { build: '3/3/2/2', wallSlidePercent: 0, hasRicochetGuard: false, rounds: 1 },
       ],
+      gameRounds: [3, 1],
     });
     expect(metrics.skippedBuilds).toEqual([]);
     expect(metrics.settings).toEqual({ pivotThrottle: 0.7 });

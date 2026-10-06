@@ -13,7 +13,7 @@ import {
   shotEvent,
   type Pose,
 } from '@tanks/analysis/logFixture';
-import { DISTANCE_BUCKET_LABELS, type Distribution } from '@tanks/analysis';
+import { COURSE_BAND_LABELS, DISTANCE_BUCKET_LABELS, type Distribution } from '@tanks/analysis';
 import { TICK_RATE } from '@tanks/shared/engine';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -33,6 +33,11 @@ const C2_GAME = 'JUBW';
 const C2_WEAK_GAME = 'MFAK';
 const OLD_LADDER_GAME = 'DF9T';
 const PHONE_GAMES = PROFILE_WINDOWS.phone.periods.flatMap((period) => period.games);
+const NO_SHARE = { part: 0, total: 0, pct: null };
+
+function summary(n: number, value: number): Distribution {
+  return { n, q1: value, median: value, q3: value, deciles: new Array<number>(11).fill(value) };
+}
 
 // Бой человека с телефона против уровня 8: стартовая пауза огня, езда с поворотами, позиция с огнём,
 // короткая и длинная паузы, выстрелы по стоящему боту, строки настроек и задержки сети.
@@ -205,12 +210,13 @@ describe('профиль двойника', () => {
     expect(profile.fire.noStartPauseShare).toBe(0);
     for (const band of DISTANCE_BUCKET_LABELS) {
       expect(profile.hand.errorDecilesDeg[band]).toHaveLength(11);
+    }
+    for (const band of COURSE_BAND_LABELS) {
       expect(profile.manoeuvre.courseDecilesDeg.sight[band]).toHaveLength(11);
     }
     expect(profile.fire.longPausePerMinute).toBeGreaterThan(0);
     expect(profile.fire.releaseMeanS).toBeCloseTo(10 / TICK_RATE, 4);
     expect(profile.manoeuvre.stickDeciles.every((value) => value === 0.8)).toBe(true);
-    expect(profile.manoeuvre.decisionDecilesS[0]).toBeGreaterThan(0);
     expect(profile.cover?.distanceBand.near).toBeGreaterThan(0);
   });
 
@@ -226,8 +232,13 @@ describe('профиль двойника', () => {
         'hidden|300–600': 0.8,
         'hidden|>600': 0.3,
       },
+      decisionMeanS: 0.7,
+      courseReach: 240,
       reverseChance: 0,
+      kitShare: { closer: 0.4, farther: 0.2 },
+      hiddenAim: { bearing: 0.1, exit: 0.2, ricochet: 0.3, lastSeen: 0.1 },
       coverHoldShare: 0.9,
+      returnAvoidShare: 0.5,
     };
     const source = await reference();
     expect(twinProfile(source, calibration).calibration).toEqual(calibration);
@@ -241,46 +252,56 @@ describe('профиль двойника', () => {
     expect(() => twinProfile(noSettings, null)).toThrow('настройки клиента');
   });
 
-  it('ошибка руки и угол хода по корзине — от 25 выстрелов и 10 с движения в корзине, иначе по всем', async () => {
+  it('ошибка руки по корзине — от 25 выстрелов в корзине, иначе по всем', async () => {
     const source = await reference();
-    const summary = (n: number, value: number): Distribution => ({
-      n,
-      q1: value,
-      median: value,
-      q3: value,
-      deciles: new Array<number>(11).fill(value),
-    });
-    const noShare = { part: 0, total: 0, pct: null };
-    const valueOf = (base: number, index: number): number => base + index;
-    const withBands = (shots: number, courseTicks: number): TwinReference => {
+    const withBands = (shots: number): TwinReference => {
       const copy = structuredClone(source);
       copy.main.aim.standingErrDeg = summary(100, 20);
-      copy.movement.courseAllDeg = summary(1000, 90);
       DISTANCE_BUCKET_LABELS.forEach((band, index) => {
         copy.main.aim.byBucket[band] = {
-          standingErrDeg: summary(shots, valueOf(7, index)),
+          standingErrDeg: summary(shots, 7 + index),
           movingErrCurDeg: null,
           movingErrLeadDeg: null,
           tankSizeDeg: null,
-          hitAll: noShare,
-          hitStanding: noShare,
-          hitMoving: noShare,
+          hitAll: NO_SHARE,
+          hitStanding: NO_SHARE,
+          hitMoving: NO_SHARE,
         };
-        copy.movement.courseDeg.sight[band] = summary(courseTicks, valueOf(40, index));
-        copy.movement.courseDeg.hidden[band] = summary(courseTicks, valueOf(50, index));
       });
       return copy;
     };
 
-    const enough = twinProfile(withBands(25, 10 * TICK_RATE), null);
-    const scarce = twinProfile(withBands(24, 10 * TICK_RATE - 1), null);
+    const enough = twinProfile(withBands(25), null);
+    const scarce = twinProfile(withBands(24), null);
     DISTANCE_BUCKET_LABELS.forEach((band, index) => {
-      expect(enough.hand.errorDecilesDeg[band][5]).toBe(valueOf(7, index));
-      expect(enough.manoeuvre.courseDecilesDeg.sight[band][5]).toBe(valueOf(40, index));
-      expect(enough.manoeuvre.courseDecilesDeg.hidden[band][5]).toBe(valueOf(50, index));
+      expect(enough.hand.errorDecilesDeg[band][5]).toBe(7 + index);
       expect(scarce.hand.errorDecilesDeg[band][5]).toBe(20);
-      expect(scarce.manoeuvre.courseDecilesDeg.sight[band][5]).toBe(90);
-      expect(scarce.manoeuvre.courseDecilesDeg.hidden[band][5]).toBe(90);
     });
+  });
+
+  it('угол хода — по корзине в 100 от 10 с с газом; иначе по корзине огня, в которую она входит; иначе по всем', async () => {
+    const source = await reference();
+    const enough = 10 * TICK_RATE;
+    const copy = structuredClone(source);
+    copy.movement.courseAllDeg = summary(1000, 90);
+    COURSE_BAND_LABELS.forEach((band, index) => {
+      copy.movement.courseByBandDeg.sight[band] = summary(index % 2 === 0 ? enough : enough - 1, 10 + index);
+      copy.movement.courseByBandDeg.hidden[band] = summary(enough - 1, 10 + index);
+    });
+    DISTANCE_BUCKET_LABELS.forEach((band, index) => {
+      copy.movement.courseDeg.sight[band] = summary(enough, 40 + index);
+      copy.movement.courseDeg.hidden[band] = summary(index === 1 ? enough : enough - 1, 50 + index);
+    });
+    const course = twinProfile(copy, null).manoeuvre.courseDecilesDeg;
+
+    expect(course.sight['<200'][5]).toBe(10);
+    expect(course.sight['200–300'][5]).toBe(40);
+    expect(course.sight['300–400'][5]).toBe(12);
+    expect(course.sight['400–500'][5]).toBe(41);
+    expect(course.sight['600–700'][5]).toBe(42);
+    expect(course.sight['700–800'][5]).toBe(16);
+    expect(course.hidden['<200'][5]).toBe(90);
+    expect(course.hidden['400–500'][5]).toBe(51);
+    expect(course.hidden['>800'][5]).toBe(90);
   });
 });

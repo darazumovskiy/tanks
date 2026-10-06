@@ -39,8 +39,9 @@ describe('мозг двойника', () => {
 
   it('телефон: намерение огня снято — огня нет и башня стоит; компьютер — башня продолжает вести', () => {
     const paused = { ...profileWith().fire, noStartPauseShare: 0, startPauseDecilesS: LONG_START_PAUSE };
-    const phone = brainOf(profileWith({ fire: paused }));
-    const pc = brainOf(profileWith({ control: 'mouseKeys', fire: paused }));
+    const calibration = calibrationWith({ hiddenAim: { bearing: 1, exit: 0, ricochet: 0, lastSeen: 0 } });
+    const phone = brainOf(profileWith({ fire: paused, calibration }));
+    const pc = brainOf(profileWith({ control: 'mouseKeys', fire: paused, calibration }));
     const view: ViewSpec = { me: { x: 300, y: 120, turret: 0 }, enemy: { x: 600, y: 300 } };
     const phoneDecision = phone.tick(craftView(view));
     const pcDecision = pc.tick(craftView(view));
@@ -66,6 +67,41 @@ describe('мозг двойника', () => {
     expect(guarded).toMatchObject({ action: { isFiring: false }, isGuardHolding: true });
     expect(enemyOnPath).toMatchObject({ action: { isFiring: true }, isGuardHolding: false });
     expect(unguarded).toMatchObject({ action: { isFiring: true }, isGuardHolding: false });
+  });
+
+  it('без предохранителя рикошет вернётся: заметил — не стреляет весь отрезок опасности, не заметил — стреляет', () => {
+    const unguarded = { hasRicochetGuard: false };
+    const avoiding = brainOf(profileWith({ calibration: calibrationWith({ returnAvoidShare: 1 }) }), unguarded);
+    const careless = brainOf(profileWith({ calibration: calibrationWith({ returnAvoidShare: 0 }) }), unguarded);
+    const guarded = brainOf(profileWith({ calibration: calibrationWith({ returnAvoidShare: 1 }) }));
+    const danger = Array.from({ length: 5 }, (_, tick) => ({ ...RETURNING, tick: tick + 1 }));
+    const safe: ViewSpec = { me: { x: 300, y: 120, turret: 0 }, enemy: { x: 600, y: 120 }, tick: 6 };
+
+    const avoided = playScript(avoiding, [...danger, safe]);
+    expect(avoided.slice(0, 5).every((decision) => !decision.action.isFiring && !decision.isGuardHolding)).toBe(true);
+    expect(avoided[5]?.action.isFiring).toBe(true);
+    expect(playScript(careless, danger).every((decision) => decision.action.isFiring)).toBe(true);
+    expect(guarded.tick(craftView(RETURNING))).toMatchObject({ action: { isFiring: false }, isGuardHolding: true });
+  });
+
+  it('доля «заметил» — одно испытание на отрезок опасности: внутри отрезка решение одно, по отрезкам — около доли', () => {
+    const brain = brainOf(profileWith({ calibration: calibrationWith({ returnAvoidShare: 0.5 }) }), {
+      hasRicochetGuard: false,
+    });
+    const episodes = 200;
+    const length = 4;
+    let avoided = 0;
+    for (let episode = 0; episode < episodes; episode++) {
+      const start = episode * (length + 1);
+      const danger = Array.from({ length }, (_, k) => ({ ...RETURNING, tick: start + k + 1 }));
+      const safe: ViewSpec = { me: { x: 300, y: 120, turret: 0 }, enemy: { x: 600, y: 120 }, tick: start + length + 1 };
+      const firing = playScript(brain, [...danger, safe]).map((decision) => decision.action.isFiring);
+      expect(new Set(firing.slice(0, length)).size).toBe(1);
+      avoided += firing[0] === true ? 0 : 1;
+    }
+
+    expect(avoided / episodes).toBeGreaterThan(0.4);
+    expect(avoided / episodes).toBeLessThan(0.6);
   });
 
   it('огонь не зажат — предохранитель не держит, даже когда рикошет вернётся', () => {

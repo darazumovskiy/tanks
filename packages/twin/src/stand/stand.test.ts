@@ -8,15 +8,7 @@ import { calibrationWith } from '../fixture.js';
 import { twinProfile, type TwinReference } from '../profile.js';
 import { playGame } from './match.js';
 import { MemoryGameLog } from './memoryLog.js';
-import {
-  calibrationPlan,
-  checkPlan,
-  DEFAULT_ROUNDS,
-  SERIES_ROUNDS,
-  STAND_LEVELS,
-  standPlan,
-  type GamePlan,
-} from './plan.js';
+import { calibrationPlan, checkPlan, DEFAULT_ROUNDS, STAND_LEVELS, standPlan, type GamePlan } from './plan.js';
 import { runStand } from './run.js';
 
 const PHONE = JSON.parse(readFileSync(new URL('../../reference/phone.json', import.meta.url), 'utf8')) as TwinReference;
@@ -48,40 +40,64 @@ afterEach(() => {
 });
 
 describe('раскладка стенда', () => {
-  it('на уровне раунды поровну по сторонам, каждая карта дважды за игру; условия — в долях раундов Димы', () => {
-    const games = standPlan(PHONE, { levels: [8], roundsOf: () => 47 * 16, mixOf: () => 0, seed: 1 });
+  it('на уровне — пары игр длиной в игры Димы этого уровня по кругу, пока не наберётся; условия — в долях раундов', () => {
+    const rounds = 47 * 16;
+    const lengths = PHONE.main.conditions['8']?.gameRounds ?? [];
+    const games = standPlan(PHONE, { levels: [8], roundsOf: () => rounds, mixOf: () => 0, seed: 1 });
+    const pairs = games.filter((_, index) => index % 2 === 0);
+    const total = games.reduce((sum, game) => sum + game.rounds, 0);
     const counts = new Map<string, number>();
     for (const game of games) {
       const key = `${String(game.condition.wallSlidePercent)}|${String(game.condition.hasRicochetGuard)}|${String(game.condition.stats.engine)}`;
       counts.set(key, (counts.get(key) ?? 0) + game.rounds);
     }
+    const longest = 2 * Math.max(...lengths);
 
-    expect(games.every((game) => game.rounds === SERIES_ROUNDS)).toBe(true);
-    expect(games.filter((game) => game.twinSide === 0)).toHaveLength(games.length / 2);
-    expect(Object.fromEntries(counts)).toEqual({
-      '30|true|2': 6 * 16,
-      '0|true|3': 11 * 16,
-      '0|false|3': 13 * 16,
-      '30|true|3': 17 * 16,
-    });
+    expect(lengths.length).toBeGreaterThan(1);
+    expect(pairs.map((game) => game.rounds)).toEqual(pairs.map((_, pair) => lengths[pair % lengths.length]));
+    expect(games.every((game, index) => game.rounds === games[index - (index % 2)]?.rounds)).toBe(true);
+    expect(games.every((game, index) => game.twinSide === (index % 2 === 0 ? 1 : 0))).toBe(true);
+    expect(total).toBeGreaterThanOrEqual(rounds);
+    expect(total - 2 * (pairs.at(-1)?.rounds ?? 0)).toBeLessThan(rounds);
+    const dima: Record<string, number> = { '30|true|2': 6, '0|true|3': 11, '0|false|3': 13, '30|true|3': 17 };
+    for (const [key, share] of Object.entries(dima)) {
+      expect(Math.abs((counts.get(key) ?? 0) - (share / 47) * total)).toBeLessThanOrEqual(longest);
+    }
   });
 
-  it('уровень без раундов Димы — доли всей выборки; число раундов округляется вверх до пары игр', () => {
+  it('уровень без игр Димы — длины и условия всей выборки; смесь — первые раунды пар, сиды раундов разные', () => {
+    const lengths = Object.values(PHONE.main.conditions).flatMap((conditions) => conditions.gameRounds);
     const games = standPlan(PHONE, { levels: [3], roundsOf: () => 70, mixOf: () => 20, seed: 1 });
     const guarded = games.filter((game) => game.condition.hasRicochetGuard).length;
+    const total = games.reduce((sum, game) => sum + game.rounds, 0);
+    let left = 20;
+    const mix = games.map((game, index) => {
+      if (index % 2 === 0) {
+        const pairMix = Math.min(2 * game.rounds, left);
+        left -= pairMix;
+        return [Math.ceil(pairMix / 2), Math.floor(pairMix / 2)];
+      }
+      return [];
+    });
 
-    expect(games).toHaveLength(10);
-    expect(guarded).toBeGreaterThanOrEqual(8);
-    expect(games.map((game) => game.mixRounds)).toEqual([8, 8, 2, 2, 0, 0, 0, 0, 0, 0]);
-    expect(new Set(games.flatMap((game) => game.roundSeeds)).size).toBe(80);
+    expect(games.filter((_, index) => index % 2 === 0).map((game) => game.rounds)).toEqual(
+      lengths.slice(0, games.length / 2),
+    );
+    expect(guarded).toBeGreaterThan(games.length / 2);
+    expect(games.map((game) => game.mixRounds)).toEqual(mix.flat());
+    expect(new Set(games.flatMap((game) => game.roundSeeds)).size).toBe(total);
   });
 
-  it('смесь меньше 8 раундов — обе стороны поровну, нечётный раунд — первой игре пары', () => {
-    const games = standPlan(PHONE, { levels: [3], roundsOf: () => 16, mixOf: () => 5, seed: 1 });
+  it('смесь — обе стороны пары поровну, нечётный раунд — первой игре пары', () => {
+    const games = standPlan(PHONE, { levels: [8], roundsOf: () => 16, mixOf: () => 7, seed: 1 });
+    const [first] = PHONE.main.conditions['8']?.gameRounds ?? [];
 
+    expect(first).toBe(2);
     expect(games.map((game) => [game.twinSide, game.mixRounds])).toEqual([
-      [1, 3],
+      [1, 2],
       [0, 2],
+      [1, 2],
+      [0, 1],
     ]);
   });
 
@@ -144,7 +160,7 @@ describe('стенд', () => {
       device: 'tanks-twin/phone',
     });
     expect(result.rounds.reduce((total, round) => total + round.shotEvents, 0)).toBeLessThanOrEqual(twinShots);
-    expect(game?.parsed.rounds.length).toBe(SERIES_ROUNDS);
+    expect(game?.parsed.rounds.length).toBe(plan.rounds);
     expect(
       game?.parsed.rounds.reduce(
         (total, round) =>
@@ -159,8 +175,14 @@ describe('стенд', () => {
     await runStand({ profile: PROFILE, games: planOf(16, 4), logDir: dir }, 1);
     const result = analyzeLogs(dir);
 
-    expect(readdirSync(dir).sort()).toEqual(['T080000.log', 'T080001.log', 'room-bot08twin.log']);
-    expect(result.games.map((game) => game.summary.human_name)).toEqual(['Двойник', 'Двойник']);
+    expect(readdirSync(dir).sort()).toEqual([
+      'T080000.log',
+      'T080001.log',
+      'T080002.log',
+      'T080003.log',
+      'room-bot08twin.log',
+    ]);
+    expect(result.games.map((game) => game.summary.human_name)).toEqual(['Двойник', 'Двойник', 'Двойник', 'Двойник']);
     expect(result.skipped).toEqual([]);
   });
 

@@ -18,6 +18,7 @@ import {
   type TwinProfileName,
   type TwinReference,
 } from './profile.js';
+import { missingParams } from './stand/calibrate.js';
 
 const JSON_INDENT = 1;
 const REFERENCE_SUFFIX = '.json';
@@ -121,13 +122,31 @@ export function writeCalibration(name: TwinProfileName, calibration: TwinCalibra
   return writeJson(dir, `${name}${CALIBRATION_SUFFIX}`, calibration);
 }
 
-// Файлы пакета пишет этот же модуль, поэтому их форма известна; null — файла нет.
+// Справку пишет этот же модуль, её форма не проверяется; null — файла нет.
 export function loadReference(name: TwinProfileName, dir: string): TwinReference | null {
   return readJson(dir, `${name}${REFERENCE_SUFFIX}`) as TwinReference | null;
 }
 
-export function loadCalibration(name: TwinProfileName, dir: string): TwinCalibration | null {
-  return readJson(dir, `${name}${CALIBRATION_SUFFIX}`) as TwinCalibration | null;
+export type CalibrationFile = { calibration: TwinCalibration } | { error: string } | null;
+
+// Файл калибровки переживает смену модели: в старом файле может не быть нового параметра. Каждый параметр
+// проверяется, кроме групп skippedGroups, которые сейчас перекалибруют; null — файла нет.
+export function loadCalibration(
+  name: TwinProfileName,
+  dir: string,
+  skippedGroups: readonly string[] = [],
+): CalibrationFile {
+  const raw = readJson(dir, `${name}${CALIBRATION_SUFFIX}`);
+  if (raw === null) {
+    return null;
+  }
+  const missing = missingParams(raw, skippedGroups);
+  if (missing.length > 0) {
+    return {
+      error: `в калибровке ${name} нет параметров или они не числа: ${missing.join(', ')} — пересоберите twin calibrate`,
+    };
+  }
+  return { calibration: raw as TwinCalibration };
 }
 
 export function loadPlayerGames(logDir: string, name: TwinProfileName): LoggedGame[] {

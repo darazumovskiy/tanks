@@ -1,5 +1,7 @@
 export * from './metrics.js';
 export { hasCoverWithin } from './cover.js';
+export { exitPointOf, HIDDEN_AIM_TARGETS, ricochetAngleOf, type HiddenAimTarget } from './hiddenAim.js';
+export { KIT_SIDES, type KitSide } from './rounds.js';
 export { switchProbability, type Coefficients } from './modeSwitch.js';
 export {
   botClassOf,

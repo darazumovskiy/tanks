@@ -74,8 +74,11 @@ function ricochetRound(builder: LogBuilder, idx: number, shots: number): void {
   }
 }
 
-function ricochetLog(shotsByRound: readonly number[]): string {
+function ricochetLog(shotsByRound: readonly number[], hasGuard = false): string {
   const builder = new LogBuilder(3600).gameStart('bot05side', 'Дима', 'Ветеран');
+  if (hasGuard) {
+    builder.client(HUMAN_SIDE, 'flags autoaim=0 guard=1');
+  }
   builder.client(HUMAN_SIDE, 'net roundstart game=TEST idx=0 map=0 score=0:0');
   shotsByRound.forEach((shots, idx) => {
     ricochetRound(builder, idx, shots);
@@ -125,6 +128,14 @@ describe('снаряды движком по позам журнала', () => {
     expect(metrics.fire.selfHits).toMatchObject({ part: 50, total: 50 });
   });
 
+  it('выстрелы в себя без предохранителя — по позам выстрела; раунды с предохранителем не считаются', () => {
+    const unguarded = profileMetrics(profileRoundsOf({ 'OFF.log': ricochetLog([SHOTS]) }));
+    const guarded = profileMetrics(profileRoundsOf({ 'ON.log': ricochetLog([SHOTS], true) }));
+
+    expect(unguarded.fire.returningShotsGuardOff).toMatchObject({ part: SHOTS, total: SHOTS });
+    expect(guarded.fire.returningShotsGuardOff).toMatchObject({ part: 0, total: 0 });
+  });
+
   it('дуло в стене: снаряд гибнет, не вылетев, — ни попадания, ни угрозы', () => {
     // Стена Полигона x 330–374, y 160–360: дула обоих танков на полосе y = 260 внутри неё.
     const human = pose(310, 260);
@@ -157,5 +168,36 @@ describe('снаряды движком по позам журнала', () => {
     const dodge = profileMetrics(profileRoundsOf({ 'EDGE.log': log })).dodge;
 
     expect(dodge.threatsOfBotShots).toMatchObject({ part: 1, total: 1 });
+  });
+
+  it('попадание без видимости — прямое или после отскока; первое попадание раунда — по стороне снаряда', () => {
+    // Выстрел, пока бот за стеной Полигона (x 330–374, y 160–360); со следующего тика бот на линии y = 100.
+    // Первый выстрел — прямо вправо, второй — в верхний край поля, отражение которого приходит в бота.
+    const human = pose(300, OPEN_Y, 0, 0);
+    const shown = pose(700, OPEN_Y, Math.PI, Math.PI);
+    const hidden = pose(352, 450, Math.PI, Math.PI);
+    const bounceTurret = Math.atan2(-2 * OPEN_Y, shown.x - human.x);
+    const bounceTick = 60;
+    const hitWindow = (from: number): number[] => Array.from({ length: 12 }, (_, k) => from + 12 + k);
+    const log = duelLog(150, (tick) => {
+      const events: EventSpec[] = [];
+      if (tick === 0) {
+        events.push(shotEvent(HUMAN_SIDE, human));
+      }
+      if (tick === bounceTick) {
+        events.push(shotEvent(HUMAN_SIDE, { ...human, turret: bounceTurret }));
+      }
+      if (hitWindow(0).includes(tick) || hitWindow(bounceTick).includes(tick)) {
+        events.push({ kind: 'hit', side: BOT_SIDE, x: shown.x, y: shown.y, v: 1 });
+      }
+      const turret = tick === bounceTick ? bounceTurret : 0;
+      return { human: { ...human, turret }, bot: tick === 0 || tick === bounceTick ? hidden : shown, events };
+    });
+    const metrics = profileMetrics(profileRoundsOf({ 'BLIND.log': log }));
+
+    expect(metrics.fire.noSightShots).toMatchObject({ part: 2, total: 2 });
+    expect(metrics.fire.noSightHits).toMatchObject({ part: 2, total: 2 });
+    expect(metrics.fire.noSightDirectHits).toMatchObject({ part: 1, total: 2 });
+    expect(metrics.outcomes.firstHit).toMatchObject({ part: 1, total: 1 });
   });
 });

@@ -82,17 +82,93 @@ describe('движение', () => {
     expect(movement.motionBySight.still.sight).toMatchObject({ part: 1, total: ticks });
     expect(movement.motionBySight.away.sight).toMatchObject({ part: half, total: ticks });
     expect(movement.motionBySight.toward.sight).toMatchObject({ part: half - 1, total: ticks });
-    // Весь ход дальше 600: угол 180° от противника и 0° к нему, стоящий тик в угол не идёт.
+    // Весь ход дальше 600: курс корпуса и газа — 180° от противника и 0° к нему на заднем ходу; газ есть
+    // с первого тика, поэтому в угол идут все тики.
     const far = movement.courseDeg.sight['>600'];
-    expect(far?.n).toBe(ticks - 1);
-    expect(far?.deciles[0]).toBeCloseTo(0, 6);
-    expect(far?.deciles[10]).toBeCloseTo(180, 6);
+    expect(far?.n).toBe(ticks);
+    // Курс корпуса в журнале округлён до тысячных радиана.
+    expect(far?.deciles[0]).toBeCloseTo(0, 0);
+    expect(far?.deciles[10]).toBeCloseTo(180, 0);
     expect(movement.courseAllDeg).toEqual(far);
     expect(movement.courseDeg.sight['<300']).toBeNull();
     expect(Object.values(movement.courseDeg.hidden).every((value) => value === null)).toBe(true);
     expect(movement.sight).toMatchObject({ part: ticks, total: ticks });
     expect(movement.wallDistance?.median).toBeCloseTo(OPEN_Y, 6);
     expect(movement.nearWall.part).toBe(0);
+  });
+});
+
+describe('угол хода к линии на противника', () => {
+  it('курс — по корпусу и газу, а не по скорости: танк ползёт вбок от корпуса, тик без газа в угол не идёт', () => {
+    const ticks = 40;
+    const log = roundLog(ticks, (tick) => ({
+      human: pose(700 - 4 * tick, OPEN_Y, Math.PI / 2, 0),
+      humanAction: tick === ticks - 1 ? IDLE : action(1),
+    }));
+    const movement = profileMetrics(profileRoundsOf({ 'SLID.log': log })).movement;
+
+    expect(movement.courseAllDeg?.n).toBe(ticks - 1);
+    expect(movement.courseAllDeg?.median).toBeCloseTo(90, 0);
+    expect(movement.motionBySight.away.sight.part).toBe(ticks - 1);
+  });
+
+  it('корзины по 100: дистанция 250 и 650 — свои корзины, остальные пусты', () => {
+    const half = 30;
+    const log = roundLog(2 * half, (tick) => ({
+      human: tick < half ? pose(BOT_POSE.x - 250, OPEN_Y, Math.PI) : pose(BOT_POSE.x - 650, OPEN_Y, 0),
+      humanAction: action(1),
+    }));
+    const bands = profileMetrics(profileRoundsOf({ 'BAND.log': log })).movement.courseByBandDeg;
+
+    expect(bands.sight['200–300']?.n).toBe(half);
+    expect(bands.sight['200–300']?.median).toBeCloseTo(180, 0);
+    expect(bands.sight['600–700']?.n).toBe(half);
+    expect(bands.sight['600–700']?.median).toBeCloseTo(0, 0);
+    const filled = Object.values(bands.sight).filter((value) => value !== null);
+    expect(filled).toHaveLength(2);
+    expect(Object.values(bands.hidden).every((value) => value === null)).toBe(true);
+  });
+});
+
+describe('сдвиг пути от прямой', () => {
+  const run = 40;
+  // 40 тиков по 4 за тик, затем стоит: сдвиг от тика n — на сколько танк не доехал до продолжения по прямой.
+  function stopLog(y: number): string {
+    return roundLog(2 * run, (tick) => ({
+      human: pose(500 + 4 * Math.min(tick, run - 1), y),
+      humanAction: tick < run ? action(1) : IDLE,
+    }));
+  }
+
+  it('от каждого третьего тика движения: прямо — 0, перед остановкой — недоезд', () => {
+    const shift = profileMetrics(profileRoundsOf({ 'STOP.log': stopLog(OPEN_Y) })).movement.pathShift;
+
+    expect(shift?.n).toBe(13);
+    expect(shift?.deciles[0]).toBe(0);
+    expect(shift?.median).toBeCloseTo(8, 6);
+    expect(shift?.deciles[10]).toBeCloseTo(80, 6);
+  });
+
+  it('окно у стены ближе 60 — не в счёт', () => {
+    const shift = profileMetrics(profileRoundsOf({ 'WALL.log': stopLog(50) })).movement.pathShift;
+
+    expect(shift).toBeNull();
+  });
+});
+
+describe('свободный путь по курсу', () => {
+  const ticks = 30;
+  const freeRunOf = (x: number, heading: number): number | undefined => {
+    const log = roundLog(ticks, () => ({ human: pose(x, OPEN_Y, heading), humanAction: action(1) }));
+    return profileMetrics(profileRoundsOf({ 'FREE.log': log })).movement.freeRunAhead?.median;
+  };
+
+  it('до края поля, до стены, не дальше 600', () => {
+    expect(freeRunOf(500, -Math.PI / 2)).toBeCloseTo(OPEN_Y, 2);
+    const toWall = freeRunOf(350, Math.PI / 2) ?? 0;
+    expect(toWall).toBeLessThanOrEqual(60);
+    expect(toWall).toBeGreaterThan(55);
+    expect(freeRunOf(500, 0)).toBe(600);
   });
 });
 
@@ -117,7 +193,7 @@ describe('кружение', () => {
     expect(hidden.total).toBeGreaterThan(0);
     expect(sight.part + hidden.part).toBe(ticks - 1);
     const courses = [...Object.values(movement.courseDeg.sight), ...Object.values(movement.courseDeg.hidden)];
-    expect(courses.reduce((total, course) => total + (course?.n ?? 0), 0)).toBe(ticks - 1);
+    expect(courses.reduce((total, course) => total + (course?.n ?? 0), 0)).toBe(ticks);
     for (const course of courses) {
       expect(course === null || Math.abs(course.median - 90) < 1).toBe(true);
     }

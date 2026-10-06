@@ -1,12 +1,37 @@
-import { FIRE_CONTEXTS, movementMetrics, profileMetrics, type FireContext, type ProfileRound } from '@tanks/analysis';
-import { twinProfile, type TwinCalibration, type TwinProfile, type TwinReference } from '../profile.js';
+import {
+  FIRE_CONTEXTS,
+  HIDDEN_AIM_TARGETS,
+  KIT_SIDES,
+  movementMetrics,
+  profileMetrics,
+  type FireContext,
+  type HiddenAimTarget,
+  type KitSide,
+  type ProfileRound,
+} from '@tanks/analysis';
+import {
+  HIDDEN_AIM_NAMES,
+  twinProfile,
+  type TwinCalibration,
+  type TwinProfile,
+  type TwinReference,
+} from '../profile.js';
 import type { PlayerMetrics, Verdict } from './honesty.js';
 import { calibrationPlan, type GamePlan } from './plan.js';
 import { runStand } from './run.js';
 
 // Калибруемые параметры — по одному на метрику-вход; исходы сюда не входят.
 export type CalibrationParam =
-  'correlationTicks' | 'lagTicks' | `hold ${FireContext}` | 'coverHoldShare' | 'reverseChance';
+  | 'correlationTicks'
+  | 'lagTicks'
+  | `hold ${FireContext}`
+  | 'coverHoldShare'
+  | 'returnAvoidShare'
+  | 'courseReach'
+  | 'decisionMeanS'
+  | 'reverseChance'
+  | `kit ${KitSide}`
+  | `hiddenAim ${HiddenAimTarget}`;
 
 // Сетка поиска — равномерная по значению или по логарифму значения.
 type GridScale = 'linear' | 'log';
@@ -32,9 +57,16 @@ export interface InputCheck {
   verdict: Verdict;
 }
 
-// Допуски — в пределах округления профиля: тики до половины, доли до пункта.
+// Допуски — в пределах округления профиля: тики до половины, доли до пункта, расстояния до единицы.
 const TICKS_TOLERANCE = 0.5;
 const SHARE_TOLERANCE = 1;
+const DISTANCE_TOLERANCE = 1;
+const KIT_NAMES: Readonly<Record<KitSide, string>> = {
+  closer: 'я ближе бота',
+  farther: 'бот ближе',
+};
+// Запаздывание руки человека — от 0 до 30 тиков; опережение цели — упреждение, оно задано отдельно.
+const LAG_RANGE: readonly [number, number] = [0, 30];
 // Погрешность входа — полуширина 95 %: 1,96 стандартной ошибки, оценённой по 10 частям раундов.
 const SPREAD_PARTS = 10;
 const SPREAD_Z = 1.96;
@@ -43,12 +75,14 @@ const GRID_POINTS = 7;
 const REFINE_STEPS = 4;
 const COARSE_PAIR_STRIDE = 4;
 const MAX_PASSES = 3;
-// Параметр ближе 2 % диапазона к краю — на краю: метрика Димы, возможно, вне досягаемости модели.
+// Параметр ближе 2 % диапазона к краю — на краю. Диапазоны физические, поэтому край — не найденное значение,
+// а признак, что модели не хватает свойства, которое двигает метрику дальше.
 const EDGE_SHARE = 0.02;
 const ALWAYS = (): boolean => true;
 const GAMES_PER_PAIR = 2;
 
-// Закрытый список метрик-входов в порядке зависимостей: рука, огонь, манёвр. У каждого параметра — своя метрика.
+// Закрытый список метрик-входов в порядке зависимостей: рука, огонь, манёвр, аптечки, башня без видимости. У
+// каждого параметра — своя метрика.
 export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
   {
     param: 'correlationTicks',
@@ -63,7 +97,7 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     param: 'lagTicks',
     name: 'Отставание башни по ходу цели, тиков',
     tolerance: TICKS_TOLERANCE,
-    range: [-30, 20],
+    range: LAG_RANGE,
     scale: 'linear',
     isApplicable: ALWAYS,
     measure: (m) => m.main.aim.aimFit.lagTicks,
@@ -87,6 +121,33 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     measure: (m) => m.main.position.hold.firing.pct,
   },
   {
+    param: 'returnAvoidShare',
+    name: 'Выстрелы в себя без предохранителя, %',
+    tolerance: SHARE_TOLERANCE,
+    range: [0, 1],
+    scale: 'linear',
+    isApplicable: ALWAYS,
+    measure: (m) => m.main.fire.returningShotsGuardOff.pct,
+  },
+  {
+    param: 'courseReach',
+    name: 'Свободный путь по курсу',
+    tolerance: DISTANCE_TOLERANCE,
+    range: [50, 600],
+    scale: 'log',
+    isApplicable: ALWAYS,
+    measure: (m) => m.movement.freeRunAhead?.median ?? null,
+  },
+  {
+    param: 'decisionMeanS',
+    name: 'Сдвиг пути от прямой за 20 тиков, вдали от стен',
+    tolerance: DISTANCE_TOLERANCE,
+    range: [0.1, 5],
+    scale: 'log',
+    isApplicable: ALWAYS,
+    measure: (m) => m.movement.pathShift?.median ?? null,
+  },
+  {
     param: 'reverseChance',
     name: 'Задний ход, %',
     tolerance: SHARE_TOLERANCE,
@@ -95,6 +156,24 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     isApplicable: (profile) => profile.control === 'mouseKeys',
     measure: (m) => m.movement.reverse.pct,
   },
+  ...KIT_SIDES.map((side): CalibrationInput => ({
+    param: `kit ${side}`,
+    name: `Ход к аптечке, ${KIT_NAMES[side]}, %`,
+    tolerance: SHARE_TOLERANCE,
+    range: [0, 1],
+    scale: 'linear',
+    isApplicable: ALWAYS,
+    measure: (m) => m.main.kits.toward[side].pct,
+  })),
+  ...HIDDEN_AIM_TARGETS.map((target): CalibrationInput => ({
+    param: `hiddenAim ${target}`,
+    name: `Башня без видимости на ${HIDDEN_AIM_NAMES[target]} сверх случайной, п.`,
+    tolerance: SHARE_TOLERANCE,
+    range: [0, 1],
+    scale: 'linear',
+    isApplicable: (profile) => profile.hiddenAimTargets.includes(target),
+    measure: (m) => m.main.aim.hiddenAim[target].excessPct,
+  })),
 ];
 
 export type ParamValues = Record<CalibrationParam, number>;
@@ -104,12 +183,25 @@ export function calibrationOf(values: Readonly<ParamValues>): TwinCalibration {
   for (const context of FIRE_CONTEXTS) {
     holdShare[context] = values[`hold ${context}`];
   }
+  const kitShare = {} as Record<KitSide, number>;
+  for (const side of KIT_SIDES) {
+    kitShare[side] = values[`kit ${side}`];
+  }
+  const hiddenAim = {} as Record<HiddenAimTarget, number>;
+  for (const target of HIDDEN_AIM_TARGETS) {
+    hiddenAim[target] = values[`hiddenAim ${target}`];
+  }
   return {
     correlationTicks: values.correlationTicks,
     lagTicks: values.lagTicks,
     holdShare,
+    decisionMeanS: values.decisionMeanS,
+    courseReach: values.courseReach,
     reverseChance: values.reverseChance,
+    kitShare,
+    hiddenAim,
     coverHoldShare: values.coverHoldShare,
+    returnAvoidShare: values.returnAvoidShare,
   };
 }
 
@@ -117,11 +209,20 @@ export function valuesOf(calibration: TwinCalibration): ParamValues {
   const values = {
     correlationTicks: calibration.correlationTicks,
     lagTicks: calibration.lagTicks,
+    decisionMeanS: calibration.decisionMeanS,
+    courseReach: calibration.courseReach,
     reverseChance: calibration.reverseChance,
     coverHoldShare: calibration.coverHoldShare,
+    returnAvoidShare: calibration.returnAvoidShare,
   } as ParamValues;
   for (const context of FIRE_CONTEXTS) {
     values[`hold ${context}`] = calibration.holdShare[context];
+  }
+  for (const side of KIT_SIDES) {
+    values[`kit ${side}`] = calibration.kitShare[side];
+  }
+  for (const target of HIDDEN_AIM_TARGETS) {
+    values[`hiddenAim ${target}`] = calibration.hiddenAim[target];
   }
   return values;
 }
@@ -149,11 +250,22 @@ export function isAtEdge(input: Pick<CalibrationInput, 'range' | 'scale'>, value
   return unit <= EDGE_SHARE || unit >= 1 - EDGE_SHARE;
 }
 
-// Неприменимый параметр (задний ход на телефоне, позиция без позиции в журналах) — 0: он ни на что не влияет.
+// Край — нехватка свойства, только когда и метрика не дотянулась: параметр на краю при сошедшемся входе значит,
+// что метрику двигает другой параметр, а не что модели чего-то не хватает.
+export function isEdgeViolation(input: Pick<InputCheck, 'isAtEdge' | 'verdict'>): boolean {
+  return input.isAtEdge && input.verdict === 'нарушение';
+}
+
+// Неприменимый параметр (задний ход на телефоне, позиция без позиции в журналах, цель башни без подтверждения)
+// — 0: он ни на что не влияет. Доли целей башни делят единицу поровну с остатком: при сумме больше 1 последние
+// цели не достались бы ни одному решению.
 function startValues(profile: TwinProfile): ParamValues {
   const values = {} as ParamValues;
   for (const input of CALIBRATION_INPUTS) {
     values[input.param] = input.isApplicable(profile) ? fromUnit(input, 1 / 2) : 0;
+  }
+  for (const target of profile.hiddenAimTargets) {
+    values[`hiddenAim ${target}`] = 1 / (profile.hiddenAimTargets.length + 1);
   }
   return values;
 }
@@ -342,19 +454,84 @@ export interface CalibrationRun {
   isConverged: boolean;
 }
 
+// Группа параметра — имя до пробела: `hold`, `kit`, `hiddenAim` или имя одиночного параметра.
+export function groupOf(param: CalibrationParam): string {
+  return param.split(' ')[0] ?? param;
+}
+
+export const CALIBRATION_GROUPS: readonly string[] = [
+  ...new Set(CALIBRATION_INPUTS.map((input) => groupOf(input.param))),
+];
+
+const GROUP_FIELDS: Readonly<Record<string, keyof TwinCalibration>> = {
+  hold: 'holdShare',
+  kit: 'kitShare',
+  hiddenAim: 'hiddenAim',
+};
+
+function fieldOf(value: unknown, key: string): unknown {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  return (value as Record<string, unknown>)[key];
+}
+
+function rawParam(raw: unknown, param: CalibrationParam): unknown {
+  const [group = param, key] = param.split(' ');
+  const field = GROUP_FIELDS[group];
+  if (field === undefined || key === undefined) {
+    return fieldOf(raw, param);
+  }
+  return fieldOf(fieldOf(raw, field), key);
+}
+
+// Параметры, которых в прочитанном файле калибровки нет или которые не числа. Группы skippedGroups не
+// проверяются: их перекалибровывают.
+export function missingParams(raw: unknown, skippedGroups: readonly string[] = []): CalibrationParam[] {
+  return CALIBRATION_INPUTS.map((input) => input.param).filter((param) => {
+    const value = rawParam(raw, param);
+    const isChecked = !skippedGroups.includes(groupOf(param));
+    return isChecked && (typeof value !== 'number' || !Number.isFinite(value));
+  });
+}
+
+// Перекалибровка части групп: остальные параметры берутся из прежней калибровки. Прежний файл проверен
+// `missingParams` без этих групп — параметры групп в нём могут отсутствовать.
+export interface PartialCalibration {
+  previous: TwinCalibration;
+  groups: readonly string[];
+}
+
+function partialStart(start: ParamValues, partial: PartialCalibration): ParamValues {
+  const values = { ...start };
+  for (const input of CALIBRATION_INPUTS) {
+    if (!partial.groups.includes(groupOf(input.param))) {
+      values[input.param] = rawParam(partial.previous, input.param) as number;
+    }
+  }
+  return values;
+}
+
 // Калибровка входов: двойник играет раунды смеси проверки, модуль метрик меряет входы, параметры подбираются
 // по своим метрикам. Входы, которых у Димы нет, не калибруются.
-export async function calibrate(reference: TwinReference, seed: number, threads: number): Promise<CalibrationRun> {
+export async function calibrate(
+  reference: TwinReference,
+  seed: number,
+  threads: number,
+  partial: PartialCalibration | null = null,
+): Promise<CalibrationRun> {
   const base = twinProfile(reference, null);
   const games = calibrationPlan(reference, seed);
   const coarse = coarseGames(games);
   const dimaMetrics: PlayerMetrics = { main: reference.main, movement: reference.movement };
   const applicable = applicableInputs(base);
-  const inputs = applicable.flatMap((input): SearchInput[] => {
+  const searched = applicable.filter((input) => partial === null || partial.groups.includes(groupOf(input.param)));
+  const inputs = searched.flatMap((input): SearchInput[] => {
     const target = input.measure(dimaMetrics);
     return target === null ? [] : [{ ...input, target }];
   });
-  const result = await searchInputs(inputs, startValues(base), async (values, isCoarse) => {
+  const start = partial === null ? startValues(base) : partialStart(startValues(base), partial);
+  const result = await searchInputs(inputs, start, async (values, isCoarse) => {
     const profile = { ...base, calibration: calibrationOf(values) };
     const metrics = await standMetrics(profile, isCoarse ? coarse : games, threads);
     return Object.fromEntries(CALIBRATION_INPUTS.map((input) => [input.param, input.measure(metrics)]));

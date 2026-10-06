@@ -2,7 +2,7 @@ import { wilson, type ProfileRound } from '@tanks/analysis';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { calibrationWith } from '../fixture.js';
-import { twinProfile, type TwinCalibration, type TwinReference } from '../profile.js';
+import { PROFILE_WINDOWS, twinProfile, type TwinCalibration, type TwinReference } from '../profile.js';
 import {
   CALIBRATION_INPUTS,
   calibrationOf,
@@ -25,6 +25,7 @@ import { runStand } from './run.js';
 
 const PHONE = JSON.parse(readFileSync(new URL('../../reference/phone.json', import.meta.url), 'utf8')) as TwinReference;
 const DIMA: PlayerMetrics = { main: PHONE.main, movement: PHONE.movement };
+const MAIN_GAME = PROFILE_WINDOWS.phone.periods.find((period) => period.name === 'C2')?.games[0] ?? '';
 // Доли раундов вне выборки как у Димы в главном окне.
 const STAND: StandCount = { played: 94, excluded: { ...emptyExclusionCounts(), short: 6, noShot: 10, idle: 1 } };
 
@@ -135,6 +136,19 @@ describe('критерии честности', () => {
     expect(report).toContain('Отпечаток команд: 00000abc');
     expect(report).toContain('| 8 | 47 | 8.5 % [3.4–19.9] | 4 из 47 [3.4–19.9] | честно |');
   });
+
+  it('параметр на краю при входе вне допуска — нечестен, «край» в итоге; на краю при сошедшемся входе — честен', () => {
+    const rounds = [...roundsOf(6, 1, 8), ...roundsOf(7, 2, 9), ...roundsOf(8, 4, 47), ...roundsOf(9, 0, 13)];
+    const missed = judge(PHONE, [6, 7, 8, 9], rounds, STAND, DIMA, [{ ...input('нарушение'), isAtEdge: true }]);
+    const settled = judge(PHONE, [6, 7, 8, 9], rounds, STAND, DIMA, [{ ...input('честно'), isAtEdge: true }]);
+    const settledReport = checkReport(settled, 1);
+
+    expect(missed.isHonest).toBe(false);
+    expect(checkReport(missed, 1).at(-1)).toBe('Итог: нарушения — вход: Вход; край: lagTicks');
+    expect(settled.isHonest).toBe(true);
+    expect(settledReport.at(-1)).toBe('Итог: честен');
+    expect(settledReport.some((line) => line.startsWith('Нарушение честности'))).toBe(false);
+  });
 });
 
 describe('раунды вне выборки', () => {
@@ -148,6 +162,21 @@ describe('раунды вне выборки', () => {
     expect(verdictOf(same, 'Вне выборки: не играл')).toBe('честно');
     expect(verdictOf(dying, 'Вне выборки: короткий бой')).toBe('нарушение');
     expect(verdictOf(dying, 'Вне выборки: не играл')).toBe('нарушение');
+  });
+
+  it('событие, которое у Димы случилось меньше 5 раз, — без вердикта даже при явном расхождении; 5 раз — с вердиктом', () => {
+    const rounds = roundsOf(8, 4, 47);
+    const verdictOf = (dimaIdle: number): string | undefined => {
+      const reference = structuredClone(PHONE);
+      reference.rounds.excluded.idle = Array.from({ length: dimaIdle }, (_, round) => `${MAIN_GAME}#${String(round)}`);
+      const stand = { played: 94, excluded: { ...STAND.excluded, idle: 60 } };
+      return judge(reference, [8], rounds, stand, DIMA, []).outcomes.find(
+        (row) => row.name === 'Вне выборки: без управления',
+      )?.verdict;
+    };
+
+    expect(verdictOf(4)).toBe('без вердикта');
+    expect(verdictOf(5)).toBe('нарушение');
   });
 });
 
@@ -194,14 +223,15 @@ describe('калибровка входов', () => {
     expect(isAtEdge(memory, result.values.correlationTicks)).toBe(true);
   });
 
-  it('у каждого калибруемого параметра — ровно одна метрика-вход, имена входов не совпадают с исходами', () => {
+  it('у каждого калибруемого параметра — ровно одна метрика-вход, имена входов профиля не совпадают с исходами', () => {
     const outcomes = new Set(outcomeNames(PHONE));
+    const applicable = CALIBRATION_INPUTS.filter((item) => item.isApplicable(twinProfile(PHONE, null)));
     const params = CALIBRATION_INPUTS.map((item) => item.param);
     const calibration: TwinCalibration = calibrationOf(
       valuesOf(calibrationOf(Object.fromEntries(params.map((param) => [param, 0.5])) as ParamValues)),
     );
 
-    expect(CALIBRATION_INPUTS.filter((item) => outcomes.has(item.name))).toEqual([]);
+    expect(applicable.filter((item) => outcomes.has(item.name))).toEqual([]);
     expect(new Set(params).size).toBe(params.length);
     expect(Object.keys(valuesOf(calibration)).sort()).toEqual([...params].sort());
   });
@@ -217,13 +247,14 @@ describe('калибровка входов', () => {
       }
     }
     const inputReads = new Set<string>();
-    for (const item of CALIBRATION_INPUTS) {
+    const applicable = CALIBRATION_INPUTS.filter((item) => item.isApplicable(twinProfile(PHONE, null)));
+    for (const item of applicable) {
       item.measure(recording(DIMA, inputReads, paths));
     }
     const isRelated = (a: string, b: string): boolean => a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`);
 
     expect(outcomeReads.size).toBeGreaterThan(outcomeNames(PHONE).length);
-    expect(inputReads.size).toBeGreaterThanOrEqual(CALIBRATION_INPUTS.length);
+    expect(inputReads.size).toBeGreaterThanOrEqual(applicable.length);
     expect([...inputReads].filter((input) => [...outcomeReads].some((outcome) => isRelated(input, outcome)))).toEqual(
       [],
     );
@@ -253,10 +284,17 @@ describe('калибровка входов', () => {
     expect(checkOf('correlationTicks')).toMatchObject({ tolerance: 0.5, verdict: 'нарушение' });
   });
 
-  it('отчёт калибровки: вход — Дима, двойник, параметр; край диапазона и сетка чувствительности', () => {
-    const edge = { ...input('честно'), value: -1, isAtEdge: true };
+  it('отчёт калибровки: вход — Дима, двойник, параметр; край при входе вне допуска и сетка чувствительности', () => {
+    const edge = { ...input('нарушение'), twin: 3.5, value: 0, isAtEdge: true };
+    const settled = {
+      ...input('честно'),
+      name: 'Пеленг',
+      param: 'hiddenAim bearing' as const,
+      value: 0,
+      isAtEdge: true,
+    };
     const report = calibrationReport({
-      inputs: [edge],
+      inputs: [edge, settled],
       sensitivity: [
         {
           name: 'Вход',
@@ -267,21 +305,22 @@ describe('калибровка входов', () => {
         },
       ],
       evaluations: 7,
-      isConverged: true,
+      isConverged: false,
     });
 
     expect(report).toEqual([
       '| Вход | Дима | Двойник | Параметр |',
       '| --- | --- | --- | --- |',
-      '| Вход | 0.50 | 0.50 | lagTicks = -1.000 |',
-      'Внимание: lagTicks = -1.000 на краю диапазона (вход «Вход»)',
+      '| Вход | 0.50 | 3.50 | lagTicks = 0.000 |',
+      '| Пеленг | 0.50 | 0.50 | hiddenAim bearing = 0.000 |',
+      'Нарушение честности: lagTicks = 0.000 на краю физического диапазона, вход вне допуска — модели не хватает свойства (вход «Вход»)',
       '',
       'Чувствительность: параметр → метрика по грубой сетке первого прохода',
       '| Вход | Сетка |',
       '| --- | --- |',
       '| Вход | 0.00 → 0.30; 1.00 → — |',
       '',
-      'Прогонов стенда: 7; все входы в допуске',
+      'Прогонов стенда: 7; не все входы в допуске',
     ]);
   });
 });

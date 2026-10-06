@@ -1,10 +1,11 @@
 import { wallClearance, type Coefficients } from '@tanks/analysis';
 import { mapByIndex, type Point } from '@tanks/shared/engine';
-import { describe, expect, it } from 'vitest';
-import { craftView, profileWith, type ViewSpec } from '../fixture.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { calibrationWith, craftView, profileWith, type ViewSpec } from '../fixture.js';
 import type { Band } from '../profile.js';
 import { TwinBrain } from './brain.js';
 import { Ambush, hasLineOfSight } from './cover.js';
+import { HiddenAim } from './hiddenAim.js';
 import { gridOf } from './path.js';
 import { aimTurret } from './steering.js';
 
@@ -128,5 +129,53 @@ describe('позиция за укрытием', () => {
     }
 
     expect(modes).toEqual(['cover', 'manoeuvre', 'cover']);
+  });
+
+  describe('цель башни без видимости', () => {
+    const OPEN: ViewSpec = { me: { x: 500, y: 100 }, enemy: { x: 900, y: 100 } };
+    // Вход в позицию на первой секунде боя, не раньше.
+    const AFTER_FIRST_SECOND: Coefficients = { intercept: -50, weights: { ...ALWAYS.weights, fightSeconds: 100 } };
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    function brainOf(enter: Coefficients, leave: Coefficients): TwinBrain {
+      const profile = profileWith({
+        cover: COVER,
+        modeSwitch: { enter, leave },
+        calibration: calibrationWith({ decisionMeanS: 1000 }),
+      });
+      const brain = new TwinBrain(profile);
+      brain.init({ level: 8, roundIndex: 0, lossStreak: 0, mapIndex: 0, hasRicochetGuard: false, seed: 6 });
+      return brain;
+    }
+
+    it('противник скрылся, пока танк в позиции, — цель выбирается', () => {
+      const pick = vi.spyOn(HiddenAim.prototype, 'pick');
+      const brain = brainOf(ALWAYS, NEVER);
+      brain.tick(craftView({ ...OPEN, tick: 1 }));
+      const before = pick.mock.calls.length;
+      brain.tick(craftView({ ...OPEN, enemy: { x: 900, y: 450 }, tick: 2 }));
+
+      expect(brain.mode).toBe('cover');
+      expect(pick.mock.calls.length).toBe(before + 1);
+    });
+
+    it('выход из позиции — цель выбирается заново, старая не держится до решения манёвра', () => {
+      const pick = vi.spyOn(HiddenAim.prototype, 'pick');
+      const brain = brainOf(AFTER_FIRST_SECOND, ALWAYS);
+      const modes: string[] = [];
+      const picks: number[] = [];
+      for (let tick = 0; tick < 61; tick++) {
+        brain.tick(craftView({ ...START, tick: tick + 1 }));
+        modes.push(brain.mode);
+        picks.push(pick.mock.calls.length);
+      }
+
+      expect([modes[29], modes[30], modes[59], modes[60]]).toEqual(['manoeuvre', 'cover', 'cover', 'manoeuvre']);
+      expect(picks[59]).toBe(picks[29]);
+      expect(picks[60]).toBe((picks[59] ?? 0) + 1);
+    });
   });
 });

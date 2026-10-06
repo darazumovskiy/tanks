@@ -1,5 +1,5 @@
 import { wilson, type WinCount } from '@tanks/analysis';
-import type { InputCheck, Sensitivity } from './calibrate.js';
+import { isEdgeViolation, type InputCheck, type Sensitivity } from './calibrate.js';
 import type { Honesty, Measure, Verdict } from './honesty.js';
 
 const PERCENT = 100;
@@ -75,11 +75,13 @@ function inputRows(inputs: readonly InputCheck[]): string[][] {
   ]);
 }
 
-// Параметр на краю диапазона — метрика Димы, возможно, вне досягаемости модели.
 function edgeLines(inputs: readonly InputCheck[]): string[] {
   return inputs
-    .filter((input) => input.isAtEdge)
-    .map((input) => `Внимание: ${input.param} = ${input.value.toFixed(3)} на краю диапазона (вход «${input.name}»)`);
+    .filter(isEdgeViolation)
+    .map(
+      (input) =>
+        `Нарушение честности: ${input.param} = ${input.value.toFixed(3)} на краю физического диапазона, вход вне допуска — модели не хватает свойства (вход «${input.name}»)`,
+    );
 }
 
 function violations(honesty: Honesty): string[] {
@@ -91,6 +93,7 @@ function violations(honesty: Honesty): string[] {
     ...(isViolation(honesty.overall.verdict) ? ['винрейт сводный'] : []),
     ...honesty.outcomes.filter((item) => isViolation(item.verdict)).map((item) => item.name),
     ...honesty.inputs.filter((item) => isViolation(item.verdict)).map((item) => `вход: ${item.name}`),
+    ...honesty.inputs.filter(isEdgeViolation).map((item) => `край: ${item.param}`),
   ];
 }
 

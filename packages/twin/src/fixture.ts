@@ -1,6 +1,6 @@
-import { botView, createRound, DEFAULT_STATS, type BulletView, type Side } from '@tanks/shared/engine';
+import { botView, createRound, DEFAULT_STATS, type BulletView, type Kit, type Side } from '@tanks/shared/engine';
 import type { TwinView } from './brain/brain.js';
-import type { DistanceBucketLabel } from '@tanks/analysis';
+import { COURSE_BAND_LABELS, type CourseBandLabel, type DistanceBucketLabel } from '@tanks/analysis';
 import type { SightKey, TwinCalibration, TwinProfile } from './profile.js';
 
 // Крафтовые виды и профили для тестов мозга, игрока и стенда.
@@ -11,13 +11,19 @@ const ALWAYS_HELD = 1;
 const HALF_TURN_DEG = 180;
 // Угол хода к линии на противника равномерно от 0 до 180° в любой видимости и на любой дистанции.
 const UNIFORM_COURSE_DEG = UNIFORM_DECILES.map((value) => (value * HALF_TURN_DEG) / 10);
+const DECISION_MEAN_S = 0.5;
+const COURSE_REACH = 150;
 
 export function byBand<T>(value: T): Record<DistanceBucketLabel, T> {
   return { '<300': value, '300–600': value, '>600': value };
 }
 
-export function courseWith(deciles: number[]): Record<SightKey, Record<DistanceBucketLabel, number[]>> {
-  return { sight: byBand(deciles), hidden: byBand(deciles) };
+export function byCourseBand<T>(value: T): Record<CourseBandLabel, T> {
+  return Object.fromEntries(COURSE_BAND_LABELS.map((label) => [label, value])) as Record<CourseBandLabel, T>;
+}
+
+export function courseWith(deciles: number[]): Record<SightKey, Record<CourseBandLabel, number[]>> {
+  return { sight: byCourseBand(deciles), hidden: byCourseBand(deciles) };
 }
 
 export function calibrationWith(overrides: Partial<TwinCalibration> = {}): TwinCalibration {
@@ -32,8 +38,13 @@ export function calibrationWith(overrides: Partial<TwinCalibration> = {}): TwinC
       'hidden|300–600': ALWAYS_HELD,
       'hidden|>600': ALWAYS_HELD,
     },
+    decisionMeanS: DECISION_MEAN_S,
+    courseReach: COURSE_REACH,
     reverseChance: 0,
+    kitShare: { closer: 0, farther: 0 },
+    hiddenAim: { bearing: 0, exit: 0, ricochet: 0, lastSeen: 0 },
     coverHoldShare: ALWAYS_HELD,
+    returnAvoidShare: 0,
     ...overrides,
   };
 }
@@ -54,12 +65,12 @@ export function profileWith(overrides: Partial<TwinProfile> = {}): TwinProfile {
       longPauseDecilesS: UNIFORM_DECILES,
     },
     manoeuvre: {
-      decisionDecilesS: UNIFORM_DECILES.map((value) => value / 10),
       stickDeciles: UNIFORM_DECILES.map(() => 1),
       courseDecilesDeg: courseWith(UNIFORM_COURSE_DEG),
     },
     cover: null,
     modeSwitch: { enter: null, leave: null },
+    hiddenAimTargets: [],
     calibration: calibrationWith(),
     ...overrides,
   };
@@ -81,6 +92,7 @@ export interface ViewSpec {
   tick?: number;
   bullets?: BulletView[];
   zoneRadius?: number;
+  kits?: Kit[];
 }
 
 export function craftView(spec: ViewSpec): TwinView {
@@ -102,6 +114,9 @@ export function craftView(spec: ViewSpec): TwinView {
   round.tick = spec.tick ?? 1;
   if (spec.zoneRadius !== undefined) {
     round.zone.radius = spec.zoneRadius;
+  }
+  if (spec.kits !== undefined) {
+    round.kits = spec.kits.map((kit) => ({ ...kit }));
   }
   const view = botView(round, side);
   return { ...view, bullets: spec.bullets ?? [], hits: [] };

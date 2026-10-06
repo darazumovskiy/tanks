@@ -14,6 +14,7 @@ import type { TwinCalibration, TwinProfile } from '../profile.js';
 import { Ambush, hasLineOfSight } from './cover.js';
 import { FireIntent, fireContextOf } from './fire.js';
 import { Hand } from './hand.js';
+import { HiddenAim } from './hiddenAim.js';
 import { isNearZoneEdge, Manoeuvre, type Drive } from './manoeuvre.js';
 import { modeFeatures, type HitRecord, type MatchState } from './modeSwitch.js';
 import { gridOf, type Grid } from './path.js';
@@ -43,6 +44,7 @@ interface RoundParts {
   hand: Hand;
   fire: FireIntent;
   manoeuvre: Manoeuvre;
+  hiddenAim: HiddenAim;
   ambush: Ambush | null;
 }
 
@@ -72,6 +74,10 @@ export class TwinBrain {
   private fightTick = 0;
   private modeState: TwinMode = 'manoeuvre';
   private coverSinceTick = 0;
+  private isEnemyInSight = true;
+  private wasInCover = false;
+  private wasReturning = false;
+  private isReturnAvoided = false;
 
   constructor(private readonly profile: TwinProfile) {
     this.calibration = requireCalibration(profile);
@@ -89,9 +95,14 @@ export class TwinBrain {
     this.parts.hand.reset();
     this.parts.fire.reset();
     this.parts.manoeuvre.reset();
+    this.parts.hiddenAim.reset();
     this.fightTick = 0;
     this.modeState = 'manoeuvre';
     this.coverSinceTick = 0;
+    this.isEnemyInSight = true;
+    this.wasInCover = false;
+    this.wasReturning = false;
+    this.isReturnAvoided = false;
   }
 
   tick(view: TwinView): TwinDecision {
@@ -103,24 +114,38 @@ export class TwinBrain {
       this.switchMode(view, grid, hasSight, distance);
     }
     this.fightTick++;
+    const decisions = this.parts.manoeuvre.decisions;
     const drive = this.drive(view, grid, hasSight, distance);
-    const isAimingAtExit = this.modeState === 'cover' && !hasSight;
-    const target = isAimingAtExit ? this.exitPoint(grid, view) : enemy;
-    const wanted = this.parts.hand.wanted(me, target, isAimingAtExit ? STANDING : { x: enemy.vx, y: enemy.vy });
+    const target = this.aimPoint(view, grid, hasSight, this.parts.manoeuvre.decisions !== decisions);
+    const wanted = this.parts.hand.wanted(
+      me,
+      target ?? enemy,
+      target === null ? { x: enemy.vx, y: enemy.vy } : STANDING,
+    );
     const isHeld = this.parts.fire.tick(this.modeState === 'cover' ? 'cover' : fireContextOf(hasSight, distance));
-    const isTurretIdle = this.profile.control === 'sticks' && !isHeld;
-    const isGuardHolding =
-      this.situation.hasRicochetGuard &&
-      isHeld &&
-      isShotReturning(this.map, me, me.turret, me.stats.bulletSpeed, enemy);
+    const isAimHolding = !hasSight && this.modeState === 'manoeuvre' && this.parts.hiddenAim.current === 'hold';
+    const isTurretIdle = (this.profile.control === 'sticks' && !isHeld) || isAimHolding;
+    const isReturning = isHeld && isShotReturning(this.map, me, me.turret, me.stats.bulletSpeed, enemy);
+    const isGuardHolding = this.situation.hasRicochetGuard && isReturning;
+    const isAvoiding = !this.situation.hasRicochetGuard && this.avoidsReturn(isReturning);
     return {
       action: {
         ...drive,
         turretTurn: isTurretIdle ? 0 : aimTurret(wanted, me.turret),
-        isFiring: isHeld && !isGuardHolding,
+        isFiring: isHeld && !isGuardHolding && !isAvoiding,
       },
       isGuardHolding,
     };
+  }
+
+  // Без предохранителя человек сам замечает, что выстрел вернётся в него: одно испытание на отрезок опасности,
+  // заметил — не стреляет до конца отрезка.
+  private avoidsReturn(isReturning: boolean): boolean {
+    if (isReturning && !this.wasReturning) {
+      this.isReturnAvoided = chance(this.parts.random, this.calibration.returnAvoidShare);
+    }
+    this.wasReturning = isReturning;
+    return isReturning && this.isReturnAvoided;
   }
 
   private partsFor(random: Random): RoundParts {
@@ -144,13 +169,16 @@ export class TwinBrain {
         {
           control: profile.control,
           pivotThrottle: profile.settings.pivotThrottle,
-          decisionDecilesS: profile.manoeuvre.decisionDecilesS,
+          decisionMeanS: calibration.decisionMeanS,
+          courseReach: calibration.courseReach,
           stickDeciles: profile.manoeuvre.stickDeciles,
           courseDecilesDeg: profile.manoeuvre.courseDecilesDeg,
           reverseChance: calibration.reverseChance,
+          kitShare: calibration.kitShare,
         },
         random,
       ),
+      hiddenAim: new HiddenAim(calibration.hiddenAim, random),
       ambush: profile.cover === null ? null : new Ambush(profile.cover),
     };
   }
@@ -191,8 +219,26 @@ export class TwinBrain {
     }
   }
 
-  private exitPoint(grid: Grid, view: TwinView): Point {
-    return this.parts.ambush?.exit(grid, view.enemy, view.tick) ?? view.enemy;
+  // Точка, на которую рука ведёт башню, когда противник не виден; null — на самого противника. В позиции — на точку
+  // выхода к засаде; в манёвре — на цель, выбранную при потере видимости, на решении манёвра и при выходе из
+  // позиции.
+  private aimPoint(view: TwinView, grid: Grid, hasSight: boolean, hasDecided: boolean): Point | null {
+    const { hiddenAim, ambush } = this.parts;
+    const hasLostSight = this.isEnemyInSight && !hasSight;
+    const hasLeftCover = this.wasInCover && this.modeState === 'manoeuvre';
+    this.isEnemyInSight = hasSight;
+    this.wasInCover = this.modeState === 'cover';
+    if (hasSight) {
+      hiddenAim.see(view.enemy);
+      return null;
+    }
+    if (hasLostSight || hasDecided || hasLeftCover) {
+      hiddenAim.pick();
+    }
+    if (this.modeState === 'cover') {
+      return ambush?.exit(grid, view.enemy, view.tick) ?? null;
+    }
+    return hiddenAim.point(this.map, view.me, view.enemy, view.tick);
   }
 
   private drive(view: TwinView, grid: Grid, hasSight: boolean, distance: number): Drive {

@@ -31,11 +31,13 @@ import { mostCommon } from '../numbers.js';
 
 export type ReplayOutcome = 'enemy' | 'self' | 'wall' | 'fizzle' | 'clash' | 'open' | 'unmatched';
 
+// hasBounced — снаряд отскакивал до конца полёта.
 export interface ReplayBullet {
   owner: Side;
   shotGt: number;
   endGt: number | null;
   outcome: ReplayOutcome;
+  hasBounced: boolean;
 }
 
 // Точка выстрела в журнале округлена: ближе к центру танка направление по ней неточно — берётся угол башни.
@@ -234,7 +236,7 @@ export function replayRound(round: ParsedRound, speeds: readonly [number, number
   for (const tick of round.ticks) {
     const shots = [...(shotsByGt.get(tick.gt) ?? [])].sort((a, b) => a.owner - b.owner);
     for (const { shot, owner } of shots) {
-      const replay: ReplayBullet = { owner, shotGt: tick.gt, endGt: null, outcome: 'open' };
+      const replay: ReplayBullet = { owner, shotGt: tick.gt, endGt: null, outcome: 'open', hasBounced: false };
       all.push(replay);
       const bullet = launch(world, owner, shot, shotAngle(shot, tick.poses[owner]), speeds[owner]);
       if (bullet === null) {
@@ -248,6 +250,7 @@ export function replayRound(round: ParsedRound, speeds: readonly [number, number
     placeTank(tanks[1], tick.poses[1], deathGts[1] >= tick.gt);
     const events = stepWorld(world, [IDLE_ACTION, IDLE_ACTION]);
     for (const entry of live) {
+      entry.replay.hasBounced = entry.bullet.hasBounced;
       if (entry.bullet.isDead) {
         entry.replay.outcome = outcomeOf(entry.bullet, events);
         entry.replay.endGt = tick.gt;

@@ -1,5 +1,6 @@
 import {
   isSegmentClear,
+  nextRandom,
   normalizeAngle,
   TANK_RADIUS,
   TICK_RATE,
@@ -10,25 +11,27 @@ import {
   type TankView,
 } from '@tanks/shared/engine';
 import type { SightKey } from '../profile.js';
-import { distanceBucketOf, type DistanceBucketLabel } from '@tanks/analysis';
-import { isFreeAt, PathFollower, WAYPOINT_REACHED, type Grid } from './path.js';
-import { chance, sampleDeciles } from './sampling.js';
+import { COURSE_BANDS, type CourseBandLabel, type KitSide } from '@tanks/analysis';
+import { findPath, isFreeAt, nearestFree, PathFollower, WAYPOINT_REACHED, type Grid } from './path.js';
+import { chance, fromDeciles, sampleDeciles, sampleExponential } from './sampling.js';
 import { IDLE_HULL, keysToward, steerHull, type HullSteering } from './steering.js';
 
-export type CourseDeciles = Readonly<Record<SightKey, Readonly<Record<DistanceBucketLabel, readonly number[]>>>>;
+export type CourseDeciles = Readonly<Record<SightKey, Readonly<Record<CourseBandLabel, readonly number[]>>>>;
 
 export interface ManoeuvreSettings {
   control: 'sticks' | 'mouseKeys';
   pivotThrottle: number;
-  decisionDecilesS: readonly number[];
+  decisionMeanS: number;
+  courseReach: number;
   stickDeciles: readonly number[];
   courseDecilesDeg: CourseDeciles;
   reverseChance: number;
+  kitShare: Readonly<Record<KitSide, number>>;
 }
 
-// course — ход под углом к линии на противника; chase — путём к противнику, когда стена загородила сближение
-// или вокруг танка ни одно направление не свободно; unstick — назад от препятствия.
-export type IntentKind = 'course' | 'chase' | 'unstick';
+// course — ход под углом к линии на противника; chase — путём к противнику, когда вокруг танка ни одно
+// направление не свободно; unstick — назад от препятствия; kit — путём к аптечке.
+export type IntentKind = 'course' | 'chase' | 'unstick' | 'kit';
 
 // angle — угол хода к линии на противника со знаком стороны: 0 — к нему, ±π — от него.
 export interface ManoeuvreIntent {
@@ -50,16 +53,16 @@ const STUCK_THROTTLE = 0.5;
 const UNSTICK_DISTANCE = 80;
 const ZONE_MARGIN = 80;
 const DEGREES_TO_RADIANS = Math.PI / 180;
-// Курс смотрит на 150 вперёд; занятый стеной курс отклоняется шагами по 15° в обе стороны, вплоть до обратного.
-const COURSE_REACH = 150;
+// Курс смотрит вперёд на courseReach; занятый стеной курс отклоняется шагами по 15° в обе стороны, вплоть до
+// обратного.
 const DEFLECT_STEP = 15 * DEGREES_TO_RADIANS;
 const DEFLECT_STEPS = 12;
-// Сближение, которое стена отклоняет больше чем на 45°, идёт путём в обход стены.
-const APPROACH_DEFLECT_MAX = 45 * DEGREES_TO_RADIANS;
-// Запас курса — полкорпуса: центр танка не подходит к стене ближе радиуса, и запас в радиус запер бы
-// прижатый к стене танк.
-const COURSE_PAD = TANK_RADIUS / 2;
+// Курс свободен, если корпус по нему не задевает стен: запас — радиус корпуса. Отрезок проверяется с удаления
+// в радиус корпуса, иначе прижатый к стене танк не нашёл бы курса и от неё.
+const COURSE_PAD = TANK_RADIUS;
 const SIDE_LEFT_CHANCE = 0.5;
+// Угол хода корзины относится к её середине, у последней корзины без верхней границы — к нижней.
+const BAND_ANCHORS = COURSE_BANDS.map((band) => (Number.isFinite(band.high) ? (band.low + band.high) / 2 : band.low));
 
 interface TrackPoint {
   x: number;
@@ -67,23 +70,59 @@ interface TrackPoint {
   isPushing: boolean;
 }
 
+function activeKits(view: BotView): Point[] {
+  return view.repairKits.filter((kit) => kit.isActive).map((kit) => ({ x: kit.x, y: kit.y }));
+}
+
+function pathCells(grid: Grid, from: Point, to: Point): number {
+  const start = nearestFree(grid, from);
+  const goal = nearestFree(grid, to);
+  if (start === goal) {
+    return 0;
+  }
+  const path = findPath(grid, start, goal);
+  return path.length === 0 ? Infinity : path.length;
+}
+
+interface KitChoice {
+  point: Point;
+  side: KitSide;
+}
+
+// Ближайшая ко мне по пути аптечка на поле и кому она ближе; null — аптечек нет или до них не доехать.
+export function nearestKit(view: BotView, grid: Grid): KitChoice | null {
+  let best: { point: Point; mine: number } | null = null;
+  for (const kit of activeKits(view)) {
+    const mine = pathCells(grid, view.me, kit);
+    if (mine < (best?.mine ?? Infinity)) {
+      best = { point: kit, mine };
+    }
+  }
+  if (best === null) {
+    return null;
+  }
+  const theirs = pathCells(grid, view.enemy, best.point);
+  return { point: best.point, side: best.mine < theirs ? 'closer' : 'farther' };
+}
+
 export function isNearZoneEdge(view: BotView): boolean {
   const distance = Math.hypot(view.me.x - view.zone.x, view.me.y - view.zone.y);
   return distance > view.zone.radius - ZONE_MARGIN;
 }
 
-function pointAt(from: Point, direction: number): Point {
-  return { x: from.x + Math.cos(direction) * COURSE_REACH, y: from.y + Math.sin(direction) * COURSE_REACH };
+function pointAt(from: Point, direction: number, reach: number): Point {
+  return { x: from.x + Math.cos(direction) * reach, y: from.y + Math.sin(direction) * reach };
 }
 
 // Ближайший к желаемому свободный курс: отклонение 0, +15°, −15°, +30°… — свободны отрезок и клетка в его конце.
 // null — вокруг танка всё занято.
-export function freeCourse(grid: Grid, me: Point, bearing: number, angle: number): number | null {
+export function freeCourse(grid: Grid, me: Point, bearing: number, angle: number, reach: number): number | null {
   for (let step = 0; step <= DEFLECT_STEPS; step++) {
     for (const sign of step === 0 ? [1] : [1, -1]) {
       const candidate = normalizeAngle(angle + sign * step * DEFLECT_STEP);
-      const end = pointAt(me, bearing + candidate);
-      if (isFreeAt(grid, end) && isSegmentClear(grid.walls, me.x, me.y, end.x, end.y, COURSE_PAD)) {
+      const end = pointAt(me, bearing + candidate, reach);
+      const start = pointAt(me, bearing + candidate, COURSE_PAD);
+      if (isFreeAt(grid, end) && isSegmentClear(grid.walls, start.x, start.y, end.x, end.y, COURSE_PAD)) {
         return candidate;
       }
     }
@@ -91,10 +130,27 @@ export function freeCourse(grid: Grid, me: Point, bearing: number, angle: number
   return null;
 }
 
-// Режим «манёвр»: в моменты решений танк берёт угол хода к линии на противника из распределения человека для
-// своей видимости и корзины дистанции и держит этот угол до следующего решения. Решение — по интервалу профиля
-// и при смене видимости. Сторона линии держится, пока стена не отклонит курс на другую сторону или танк
-// не упрётся.
+// Угол хода к линии на дистанции distance для доли u распределения: значения по децилям корзин дистанции,
+// между опорами соседних корзин — линейно, ближе первой и дальше последней опоры — как у крайней корзины.
+export function courseAngleAt(deciles: CourseDeciles[SightKey], distance: number, u: number): number {
+  const valueAt = (band: (typeof COURSE_BANDS)[number]): number => fromDeciles(deciles[band.label], u);
+  const above = BAND_ANCHORS.findIndex((anchor) => anchor > distance);
+  const upper = COURSE_BANDS[above];
+  const lower = COURSE_BANDS[above - 1];
+  if (upper === undefined || lower === undefined) {
+    const edge = above === 0 ? COURSE_BANDS[0] : COURSE_BANDS.at(-1);
+    return edge === undefined ? 0 : valueAt(edge) * DEGREES_TO_RADIANS;
+  }
+  const from = BAND_ANCHORS[above - 1] ?? 0;
+  const to = BAND_ANCHORS[above] ?? 0;
+  const position = (distance - from) / (to - from);
+  return (valueAt(lower) + (valueAt(upper) - valueAt(lower)) * position) * DEGREES_TO_RADIANS;
+}
+
+// Режим «манёвр»: в моменты решений танк берёт долю u распределения угла хода к линии на противника и держит её
+// до следующего решения; угол каждый тик — значение этой доли в распределении человека для своей видимости и
+// нынешней дистанции. Решение — по интервалу, при смене видимости и когда аптечку, к которой ехал, забрали.
+// Сторона линии держится, пока стена не отклонит курс на другую сторону или танк не упрётся.
 export class Manoeuvre {
   private intentState: ManoeuvreIntent = {
     kind: 'course',
@@ -104,11 +160,13 @@ export class Manoeuvre {
     isReverse: false,
   };
   private courseAngle = 0;
+  private courseShare = 0;
   private side = 1;
   private sightKey: SightKey = 'sight';
   private ticksLeft = 0;
   private hull: HullSteering = { ...IDLE_HULL };
   private track: TrackPoint[] = [];
+  private decisionCount = 0;
   private readonly follower = new PathFollower();
 
   constructor(
@@ -120,8 +178,14 @@ export class Manoeuvre {
     return this.intentState;
   }
 
+  // Сколько решений о манёвре принято с начала раунда.
+  get decisions(): number {
+    return this.decisionCount;
+  }
+
   reset(): void {
     this.ticksLeft = 0;
+    this.decisionCount = 0;
     this.side = chance(this.random, SIDE_LEFT_CHANCE) ? 1 : -1;
     this.hull = { ...IDLE_HULL };
     this.track = [];
@@ -137,16 +201,22 @@ export class Manoeuvre {
       this.unstick(view.me);
       return this.followIntent(view, grid);
     }
-    const isUnstuck = this.intentState.kind === 'unstick' && this.isNear(view.me, this.intentState.goal);
-    const isDeciding = this.ticksLeft <= 0 || sightKey !== this.sightKey || isUnstuck;
+    const { kind, goal } = this.intentState;
+    const isUnstuck = kind === 'unstick' && this.isNear(view.me, goal);
+    const isKitGone = kind === 'kit' && !activeKits(view).some((kit) => kit.x === goal.x && kit.y === goal.y);
+    const isDeciding = this.ticksLeft <= 0 || sightKey !== this.sightKey || isUnstuck || isKitGone;
     this.sightKey = sightKey;
-    if (!isDeciding && this.intentState.kind === 'unstick') {
+    const isHeld = kind === 'unstick' || kind === 'kit';
+    if (!isDeciding && isHeld) {
       return this.followIntent(view, grid);
     }
     if (isDeciding) {
-      this.decide(sightKey, distance);
+      this.decide(view, grid);
     }
-    this.aimCourse(view, grid);
+    if (this.intentState.kind !== 'kit') {
+      this.courseAngle = courseAngleAt(this.settings.courseDecilesDeg[sightKey], distance, this.courseShare);
+      this.aimCourse(view, grid);
+    }
     if (isDeciding) {
       this.intentState.isReverse = this.wantsReverse(view.me, this.intentState.goal);
     }
@@ -170,11 +240,18 @@ export class Manoeuvre {
     return HOLD;
   }
 
-  private decide(sightKey: SightKey, distance: number): void {
-    const deciles = this.settings.courseDecilesDeg[sightKey][distanceBucketOf(distance)];
-    this.courseAngle = sampleDeciles(this.random, deciles) * DEGREES_TO_RADIANS;
+  // Решение: доля угла хода, сила стика, срок до следующего решения и, если на поле есть аптечка, — ехать ли к
+  // ближайшей по пути с долей решений своей для случая «я ближе к ней, чем противник» и обратного.
+  private decide(view: BotView, grid: Grid): void {
+    this.courseShare = nextRandom(this.random);
     this.intentState.strength = sampleDeciles(this.random, this.settings.stickDeciles);
     this.ticksLeft = this.intervalTicks();
+    this.decisionCount++;
+    this.intentState.kind = 'course';
+    const kit = nearestKit(view, grid);
+    if (kit !== null && chance(this.random, this.settings.kitShare[kit.side])) {
+      this.intentState = { ...this.intentState, kind: 'kit', goal: kit.point, angle: 0 };
+    }
   }
 
   private unstick(me: TankView): void {
@@ -188,7 +265,7 @@ export class Manoeuvre {
   }
 
   private intervalTicks(): number {
-    return Math.max(1, Math.round(sampleDeciles(this.random, this.settings.decisionDecilesS) * TICK_RATE));
+    return Math.max(1, Math.round(sampleExponential(this.random, this.settings.decisionMeanS) * TICK_RATE));
   }
 
   // Курс считается каждый тик от текущего пеленга: угол к линии держится, пока танк и противник движутся.
@@ -196,10 +273,9 @@ export class Manoeuvre {
     const { me, enemy } = view;
     const bearing = Math.atan2(enemy.y - me.y, enemy.x - me.x);
     const wanted = this.side * this.courseAngle;
-    const angle = freeCourse(grid, me, bearing, wanted);
-    const isApproach = this.courseAngle < Math.PI / 2;
-    const isDetour = angle !== null && Math.abs(normalizeAngle(angle - wanted)) > APPROACH_DEFLECT_MAX;
-    if (angle === null || (isApproach && isDetour)) {
+    const reach = this.settings.courseReach;
+    const angle = freeCourse(grid, me, bearing, wanted, reach);
+    if (angle === null) {
       this.intentState = { ...this.intentState, kind: 'chase', goal: { x: enemy.x, y: enemy.y } };
       return;
     }
@@ -207,7 +283,7 @@ export class Manoeuvre {
     if (isAcross && Math.sign(angle) !== this.side) {
       this.side = -this.side;
     }
-    this.intentState = { ...this.intentState, kind: 'course', goal: pointAt(me, bearing + angle), angle };
+    this.intentState = { ...this.intentState, kind: 'course', goal: pointAt(me, bearing + angle, reach), angle };
   }
 
   private wantsReverse(me: TankView, goal: Point): boolean {
@@ -235,7 +311,7 @@ export class Manoeuvre {
     return Math.hypot(me.x - first.x, me.y - first.y) < STUCK_SHIFT;
   }
 
-  // Свободный курс — прямо на его точку; противник и отъезд от препятствия — по пути в обход стен.
+  // Свободный курс — прямо на его точку; противник, аптечка и отъезд от препятствия — по пути в обход стен.
   private followIntent(view: BotView, grid: Grid): Drive {
     const { kind, goal, isReverse } = this.intentState;
     const waypoint = kind === 'course' ? goal : this.follower.waypoint(grid, view.me, goal, view.tick);

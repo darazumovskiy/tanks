@@ -13,19 +13,19 @@ import {
   writeCalibration,
   writeReference,
 } from './reference.js';
-import { calibrate, checkInputs, inputSpread } from './stand/calibrate.js';
+import { CALIBRATION_GROUPS, calibrate, checkInputs, inputSpread, type PartialCalibration } from './stand/calibrate.js';
 import { judge, type PlayerMetrics } from './stand/honesty.js';
-import { checkPlan, DEFAULT_ROUNDS, ROUNDS_STEP, STAND_LEVELS } from './stand/plan.js';
+import { checkPlan, DEFAULT_ROUNDS, STAND_LEVELS } from './stand/plan.js';
 import { calibrationReport, checkReport } from './stand/report.js';
 import { runStand } from './stand/run.js';
 
 const COMMANDS = ['reference', 'calibrate', 'check'] as const;
 type Command = (typeof COMMANDS)[number];
-const FLAGS = ['--profile', '--rounds', '--levels', '--seed', '--log-dir', '--threads'] as const;
+const FLAGS = ['--profile', '--rounds', '--levels', '--seed', '--log-dir', '--threads', '--only'] as const;
 type Flag = (typeof FLAGS)[number];
 const COMMAND_FLAGS: Readonly<Record<Command, readonly Flag[]>> = {
   reference: ['--profile'],
-  calibrate: ['--profile', '--seed', '--threads'],
+  calibrate: ['--profile', '--seed', '--threads', '--only'],
   check: ['--profile', '--rounds', '--levels', '--seed', '--log-dir', '--threads'],
 };
 const EXIT_OK = 0;
@@ -33,19 +33,21 @@ const EXIT_DISHONEST = 1;
 const EXIT_USAGE = 2;
 const DEFAULT_SEED = 1;
 const LEVEL_RANGE_SEPARATOR = '-';
+const GROUP_SEPARATOR = ',';
 const MS_PER_SECOND = 1000;
 const PROFILE_CHOICE = TWIN_PROFILE_NAMES.join('|');
 
 export const USAGE = [
   'Использование:',
   `  twin reference <папка журналов> --profile ${PROFILE_CHOICE}`,
-  `  twin calibrate --profile ${PROFILE_CHOICE} [--seed 1] [--threads N]`,
+  `  twin calibrate --profile ${PROFILE_CHOICE} [--seed 1] [--threads N] [--only <группа,группа>]`,
+  `    группы: ${CALIBRATION_GROUPS.join(', ')}`,
   `  twin check --profile ${PROFILE_CHOICE} [--rounds 1000] [--levels 3-10] [--seed 1] [--log-dir <папка>] [--threads N]`,
 ].join('\n');
 
 export type Invocation =
   | { command: 'reference'; logDir: string; profile: TwinProfileName }
-  | { command: 'calibrate'; profile: TwinProfileName; seed: number; threads: number }
+  | { command: 'calibrate'; profile: TwinProfileName; seed: number; threads: number; groups: string[] | null }
   | {
       command: 'check';
       profile: TwinProfileName;
@@ -161,7 +163,12 @@ export function parseCliArgs(argv: readonly string[], defaultThreads: number): C
     return { error: '--threads: ожидается целое число от 1' };
   }
   if (command === 'calibrate') {
-    return { invocation: { command, profile, seed, threads } };
+    const onlyText = flags.get('--only');
+    const groups = onlyText === undefined ? null : onlyText.split(GROUP_SEPARATOR);
+    if (groups !== null && !groups.every((group) => CALIBRATION_GROUPS.includes(group))) {
+      return { error: `--only: ожидаются группы через запятую из ${CALIBRATION_GROUPS.join(', ')}` };
+    }
+    return { invocation: { command, profile, seed, threads, groups } };
   }
   const rounds = wholeNumber(flags.get('--rounds') ?? String(DEFAULT_ROUNDS), 1);
   const levels = levelRange(flags.get('--levels') ?? `${String(STAND_LEVELS[0])}-${String(STAND_LEVELS.at(-1))}`);
@@ -196,6 +203,25 @@ function runReference(logDir: string, profile: TwinProfileName, context: CliCont
   return EXIT_OK;
 }
 
+// --only: прежняя калибровка с проверенными параметрами вне перекалибруемых групп; строка — ошибка для печати.
+function partialOf(
+  invocation: Extract<Invocation, { command: 'calibrate' }>,
+  context: CliContext,
+): PartialCalibration | null | string {
+  const groups = invocation.groups;
+  if (groups === null) {
+    return null;
+  }
+  const file = loadCalibration(invocation.profile, context.referenceDir, groups);
+  if (file === null) {
+    return `нет калибровки ${invocation.profile}: --only перекалибровывает только поверх прежней`;
+  }
+  if ('error' in file) {
+    return file.error;
+  }
+  return { previous: file.calibration, groups };
+}
+
 async function runCalibrate(
   invocation: Extract<Invocation, { command: 'calibrate' }>,
   context: CliContext,
@@ -205,8 +231,13 @@ async function runCalibrate(
     context.print(`нет справки ${invocation.profile}: сначала twin reference`);
     return EXIT_USAGE;
   }
+  const partial = partialOf(invocation, context);
+  if (typeof partial === 'string') {
+    context.print(partial);
+    return EXIT_USAGE;
+  }
   const started = context.now();
-  const result = await calibrate(reference, invocation.seed, invocation.threads);
+  const result = await calibrate(reference, invocation.seed, invocation.threads, partial);
   calibrationReport(result).forEach(context.print);
   context.print(timeLine(context.now() - started, invocation.threads));
   context.print(writeCalibration(invocation.profile, result.calibration, context.referenceDir));
@@ -221,14 +252,18 @@ function timeLine(elapsedMs: number, threads: number, rounds: number | null = nu
 async function runCheck(invocation: Extract<Invocation, { command: 'check' }>, context: CliContext): Promise<number> {
   const { print, referenceDir } = context;
   const reference = loadReference(invocation.profile, referenceDir);
-  const calibration = loadCalibration(invocation.profile, referenceDir);
-  if (reference === null || calibration === null) {
+  const file = loadCalibration(invocation.profile, referenceDir);
+  if (reference === null || file === null) {
     print(`нет справки или калибровки ${invocation.profile}: сначала twin reference и twin calibrate`);
     return EXIT_USAGE;
   }
+  if ('error' in file) {
+    print(file.error);
+    return EXIT_USAGE;
+  }
+  const calibration = file.calibration;
   const profile = twinProfile(reference, calibration);
-  const rounds = Math.ceil(invocation.rounds / ROUNDS_STEP) * ROUNDS_STEP;
-  const games = checkPlan(reference, invocation.levels, rounds, invocation.seed);
+  const games = checkPlan(reference, invocation.levels, invocation.rounds, invocation.seed);
   const started = context.now();
   const result = await runStand({ profile, games, logDir: invocation.logDir }, invocation.threads);
   const elapsed = context.now() - started;
@@ -236,7 +271,9 @@ async function runCheck(invocation: Extract<Invocation, { command: 'check' }>, c
   const twin: PlayerMetrics = { main: profileMetrics(mix), movement: movementMetrics(mix) };
   const inputs = checkInputs(reference, profile, calibration, (input) => input.measure(twin), inputSpread(mix));
   const honesty = judge(reference, invocation.levels, result.rounds, result, twin, inputs);
-  print(`Профиль ${invocation.profile} · раундов на уровень ${String(rounds)} · сид ${String(invocation.seed)}`);
+  print(
+    `Профиль ${invocation.profile} · раундов на уровень от ${String(invocation.rounds)} · сид ${String(invocation.seed)}`,
+  );
   checkReport(honesty, result.print).forEach(print);
   print(timeLine(elapsed, invocation.threads, result.played));
   return honesty.isHonest ? EXIT_OK : EXIT_DISHONEST;

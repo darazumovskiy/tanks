@@ -6,9 +6,13 @@ import {
   FAR_DISTANCE,
   LEAD_FRACTION_MAX,
   LEAD_FRACTION_MIN,
+  COURSE_BAND_LABELS,
+  courseBandOf,
   MID_DISTANCE_LABEL,
   MOVING_SPEED,
+  type CourseBandLabel,
 } from '../shots.js';
+import { HIDDEN_AIM_TARGETS, type HiddenAimTarget } from './hiddenAim.js';
 import { fitSwitchCoefficients, modeSamples, type Coefficients, type ModeSample } from './modeSwitch.js';
 import { HOLD_STYLE_SHARE, positionMask, positionSegments, STILL_SPEED, type Segment } from './position.js';
 import {
@@ -21,13 +25,16 @@ import {
   type ProfileShot,
   type ProfileThreat,
   type AimSample,
+  type KitSide,
   type MotionKind,
   type RoundDetail,
+  KIT_SIDES,
   MOTION_KINDS,
 } from './rounds.js';
 import { distribution, share, type Distribution, type Share } from './stats.js';
 
 const TICKS_PER_MINUTE = 60 * TICK_RATE;
+const PERCENT = 100;
 // Подгонка ошибки башни по ходу цели — не меньше чем по 3 с тиков.
 const MIN_AIM_FIT_TICKS = 3 * TICK_RATE;
 const BUCKET_LABELS = DISTANCE_BUCKETS.map((bucket) => bucket.label);
@@ -112,6 +119,23 @@ export interface AimMetrics {
   sightErrorUnder5: Share;
   sameSideTicks: Distribution | null;
   shotDistance: Distribution | null;
+  hiddenAim: Record<HiddenAimTarget, HiddenAimShare>;
+  preAppear: Share;
+}
+
+// Башня без видимости в окне одной цели: доля тиков, доля случайной башни и превышение над ней в пунктах.
+export interface HiddenAimShare {
+  sole: Share;
+  chancePct: number | null;
+  excessPct: number | null;
+}
+
+// Ход к аптечке по тому, кому она ближе; подобранные из появившихся, мои из подобранных, лечение в минуту боя.
+export interface KitMetrics {
+  toward: Record<KitSide, Share>;
+  picked: Share;
+  mine: Share;
+  healPerMinute: number | null;
 }
 
 export interface PauseBucket {
@@ -131,7 +155,9 @@ export interface FireMetrics {
   intervalExcessTicks: Distribution | null;
   noSightShots: Share;
   noSightHits: Share;
+  noSightDirectHits: Share;
   selfHits: Share;
+  returningShotsGuardOff: Share;
   hits: Share;
   guardHoldsPerMinute: number | null;
   held: Share;
@@ -185,8 +211,9 @@ export interface SightShares {
   hidden: Share;
 }
 
-// Угол хода к линии на противника в тиках движения — на виду и без видимости, по корзинам дистанции.
+// Угол хода к линии на противника в тиках с газом — на виду и без видимости, по корзинам дистанции.
 export type CourseBySight = Record<keyof SightShares, Record<string, Distribution | null>>;
+export type CourseByBand = Record<keyof SightShares, Record<CourseBandLabel, Distribution | null>>;
 
 export interface MovementMetrics {
   ticks: number;
@@ -201,9 +228,12 @@ export interface MovementMetrics {
   circle: Share;
   motionBySight: Record<MotionKind, SightShares>;
   courseDeg: CourseBySight;
+  courseByBandDeg: CourseByBand;
   courseAllDeg: Distribution | null;
   radialRunTicks: Distribution | null;
   sideRunTicks: Distribution | null;
+  pathShift: Distribution | null;
+  freeRunAhead: Distribution | null;
   distance: Distribution | null;
   sightDistance: Distribution | null;
   sight: Share;
@@ -277,6 +307,7 @@ export interface OutcomeMetrics extends WinCount {
   byLevel: Record<string, LevelOutcome>;
   holdStyle: WinCount;
   manoeuvreStyle: WinCount;
+  firstHit: Share;
 }
 
 // Условия раунда — билд, скольжение и предохранитель; раунды с билдом, который в условия не входит, учтены
@@ -288,9 +319,11 @@ export interface Condition {
   rounds: number;
 }
 
+// gameRounds — длина каждой игры уровня в раундах журнала, по порядку игр.
 export interface LevelConditions {
   guard: Share;
   conditions: Condition[];
+  gameRounds: number[];
 }
 
 export interface SkippedBuild {
@@ -311,6 +344,7 @@ export interface ProfileMetrics {
   movement: MovementMetrics;
   position: PositionMetrics;
   modeSwitch: { enter: Coefficients | null; leave: Coefficients | null; enterSamples: number; leaveSamples: number };
+  kits: KitMetrics;
   outcomes: OutcomeMetrics;
   conditions: Record<string, LevelConditions>;
   skippedBuilds: SkippedBuild[];
@@ -486,6 +520,53 @@ function aimMetrics(rounds: readonly RoundWithDetail[]): AimMetrics {
     ),
     sameSideTicks: distribution(rounds.flatMap((round) => round.detail.sameSideRuns)),
     shotDistance: distribution(shots.map((shot) => shot.distance)),
+    hiddenAim: hiddenAimShares(rounds),
+    preAppear: share(
+      sumOf(rounds, (round) => round.detail.appear.onPoint),
+      sumOf(rounds, (round) => round.detail.appear.appearances),
+    ),
+  };
+}
+
+function hiddenAimShares(rounds: readonly RoundWithDetail[]): Record<HiddenAimTarget, HiddenAimShare> {
+  const samples = sumOf(rounds, (round) => round.detail.hiddenAims.samples);
+  const result = {} as Record<HiddenAimTarget, HiddenAimShare>;
+  for (const target of HIDDEN_AIM_TARGETS) {
+    const sole = share(
+      sumOf(rounds, (round) => round.detail.hiddenAims.sole[target]),
+      samples,
+    );
+    const chancePct =
+      samples === 0 ? null : (PERCENT * sumOf(rounds, (round) => round.detail.hiddenAims.chance[target])) / samples;
+    result[target] = {
+      sole,
+      chancePct,
+      excessPct: sole.pct === null || chancePct === null ? null : sole.pct - chancePct,
+    };
+  }
+  return result;
+}
+
+function kitMetrics(rounds: readonly RoundWithDetail[], fightTicks: number): KitMetrics {
+  const toward = {} as Record<KitSide, Share>;
+  for (const side of KIT_SIDES) {
+    toward[side] = share(
+      sumOf(rounds, (round) => round.detail.kits.toward[side].toward),
+      sumOf(rounds, (round) => round.detail.kits.toward[side].total),
+    );
+  }
+  const pickups = sumOf(rounds, (round) => round.detail.kits.pickups);
+  return {
+    toward,
+    picked: share(
+      pickups,
+      sumOf(rounds, (round) => round.detail.kits.spawns),
+    ),
+    mine: share(pickups, pickups + sumOf(rounds, (round) => round.detail.kits.botPickups)),
+    healPerMinute: perMinute(
+      sumOf(rounds, (round) => round.detail.kits.healed),
+      fightTicks,
+    ),
   };
 }
 
@@ -567,6 +648,7 @@ function fireMetrics(rounds: readonly RoundWithDetail[], fightTicks: number): Fi
   const noSight = shots.filter((shot) => !shot.hasSight);
   const guardOn = rounds.filter((round) => round.hasRicochetGuard);
   const guardOff = rounds.filter((round) => !round.hasRicochetGuard);
+  const guardOffShots = guardOff.flatMap((round) => round.detail.shots);
   const all = contextShares(rounds);
   const pauses = rounds.flatMap((round) => round.detail.pauses);
   const start = pauses.filter((pause) => pause.startIndex === 0);
@@ -594,9 +676,17 @@ function fireMetrics(rounds: readonly RoundWithDetail[], fightTicks: number): Fi
       countOf(noSight, (shot) => isHit(shot.outcome)),
       noSight.length,
     ),
+    noSightDirectHits: share(
+      countOf(noSight, (shot) => shot.isDirectHit),
+      noSight.length,
+    ),
     selfHits: share(
       sumOf(rounds, (round) => round.detail.selfHits),
       shotEvents,
+    ),
+    returningShotsGuardOff: share(
+      countOf(guardOffShots, (shot) => shot.isReturning),
+      guardOffShots.length,
     ),
     hits: share(
       countOf(shots, (shot) => isHit(shot.outcome)),
@@ -734,19 +824,23 @@ export function movementMetrics(rounds: readonly ProfileRound[]): MovementMetric
   }
   const samples = detailed.flatMap((round) => round.detail.samples);
   const sightSamples = samples.filter((sample) => sample.hasSight);
+  const courses = (hasSight: boolean, isInBand: (distance: number) => boolean): Distribution | null =>
+    distribution(
+      samples
+        .filter((sample) => sample.hasSight === hasSight && isInBand(sample.distance))
+        .flatMap((sample) => (sample.courseDeg === null ? [] : [sample.courseDeg])),
+    );
   const courseOf = (hasSight: boolean): Record<string, Distribution | null> =>
     Object.fromEntries(
       BUCKET_LABELS.map((label) => [
         label,
-        distribution(
-          samples
-            .filter(
-              (sample) => sample.hasSight === hasSight && bucketLabel(sample.distance, DISTANCE_BUCKETS) === label,
-            )
-            .flatMap((sample) => (sample.courseDeg === null ? [] : [sample.courseDeg])),
-        ),
+        courses(hasSight, (distance) => bucketLabel(distance, DISTANCE_BUCKETS) === label),
       ]),
     );
+  const courseByBandOf = (hasSight: boolean): Record<CourseBandLabel, Distribution | null> =>
+    Object.fromEntries(
+      COURSE_BAND_LABELS.map((label) => [label, courses(hasSight, (distance) => courseBandOf(distance) === label)]),
+    ) as Record<CourseBandLabel, Distribution | null>;
   return {
     ticks,
     throttle: axisShares(throttle, ticks),
@@ -760,9 +854,12 @@ export function movementMetrics(rounds: readonly ProfileRound[]): MovementMetric
     circle: share(total('circle'), ticks),
     motionBySight,
     courseDeg: { sight: courseOf(true), hidden: courseOf(false) },
+    courseByBandDeg: { sight: courseByBandOf(true), hidden: courseByBandOf(false) },
     courseAllDeg: distribution(samples.flatMap((sample) => (sample.courseDeg === null ? [] : [sample.courseDeg]))),
     radialRunTicks: distribution(detailed.flatMap((round) => round.detail.radialRuns)),
     sideRunTicks: distribution(detailed.flatMap((round) => round.detail.sideRuns)),
+    pathShift: distribution(detailed.flatMap((round) => round.detail.pathShifts)),
+    freeRunAhead: distribution(detailed.flatMap((round) => round.detail.freeRuns)),
     distance: distribution(samples.map((sample) => sample.distance)),
     sightDistance: distribution(sightSamples.map((sample) => sample.distance)),
     sight: share(sightSamples.length, samples.length),
@@ -1040,6 +1137,10 @@ function outcomeMetrics(rounds: readonly RoundWithDetail[], holdStyleIds: Readon
     byLevel,
     holdStyle: winsOf(rounds.filter((round) => holdStyleIds.has(round.id))),
     manoeuvreStyle: winsOf(rounds.filter((round) => !holdStyleIds.has(round.id))),
+    firstHit: share(
+      countOf(rounds, (round) => round.detail.firstHit === 'mine'),
+      countOf(rounds, (round) => round.detail.firstHit !== null),
+    ),
   };
 }
 
@@ -1070,12 +1171,17 @@ function conditionsOf(rounds: readonly ProfileRound[]): Record<string, LevelCond
         rounds: 1,
       });
     }
+    const gameRounds = new Map<string, number>();
+    for (const round of group) {
+      gameRounds.set(round.game, round.gameRounds);
+    }
     result[String(level)] = {
       guard: share(
         countOf(group, (round) => round.hasRicochetGuard),
         group.length,
       ),
       conditions,
+      gameRounds: [...gameRounds.values()],
     };
   }
   return result;
@@ -1135,6 +1241,7 @@ export function profileMetrics(rounds: readonly ProfileRound[]): ProfileMetrics 
       enterSamples: enter.length,
       leaveSamples: leave.length,
     },
+    kits: kitMetrics(detailed, fightTicks),
     outcomes: outcomeMetrics(detailed, new Set(position.holdStyleRounds)),
     conditions: conditionsOf(detailed),
     skippedBuilds: skippedBuildsOf(detailed),

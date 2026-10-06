@@ -23,6 +23,7 @@ export const EVENT_KIND = {
   hit: 'hit',
   death: 'death',
   pickup: 'pickup',
+  kitSpawn: 'kitSpawn',
   bump: 'bump',
   roundOver: 'roundOver',
 } as const;
