@@ -1,9 +1,6 @@
-import type { PathAllowance } from './brain.js';
+import { PathQuota } from './brain.js';
 import type { ServerBot } from './serverBot.js';
 
-// Поиск пути — самая дорогая разовая работа мозга: на весь процесс не больше стольких за проход, сверх первого —
-// пока бюджет не вышел. Первый разрешён всегда: иначе на медленной машине пути не обновлялись бы вовсе.
-const PATH_SEARCHES_PER_TURN = 2;
 // Первый в очереди решает всегда, даже если разбор ящиков съел бюджет: иначе боты стояли бы вечно.
 const MIN_DECISIONS_PER_TURN = 1;
 
@@ -13,23 +10,9 @@ export interface BotTurnReport {
   waits: number[];
 }
 
-class PathQuota implements PathAllowance {
-  used = 0;
-
-  constructor(private readonly isOverBudget: () => boolean) {}
-
-  take(): boolean {
-    const isSpent = this.used >= PATH_SEARCHES_PER_TURN || (this.used > 0 && this.isOverBudget());
-    if (isSpent) {
-      return false;
-    }
-    this.used++;
-    return true;
-  }
-}
-
-// Очередь хода серверных ботов процесса. Решают боты с новым снимком: дольше ждущий — первым, среди равных — по
-// кругу; бот, получивший поиск пути, уходит в конец круга. Не успевший в бюджет повторяет прошлую команду.
+// Очередь хода серверных ботов процесса. Решают боты с новым снимком, на котором их танк в бою: дольше ждущий —
+// первым, среди равных — по кругу; бот, получивший поиск пути, уходит в конец круга. Не успевший в бюджет
+// повторяет прошлую команду.
 export class BotTurns {
   private circle: ServerBot[] = [];
 

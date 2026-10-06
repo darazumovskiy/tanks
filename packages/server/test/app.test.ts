@@ -267,8 +267,10 @@ describe('процесс', () => {
 describe('переключатели общей игры из окружения', () => {
   const WAIT_MS = 10_000;
   const BOT_PASS_WINDOW_MS = 500;
-  // Шесть ботов без замедления проходят за доли миллисекунды, со стократным — за несколько миллисекунд.
+  // Шесть ботов без замедления проходят за доли миллисекунды, с замедлением 30 — за несколько миллисекунд.
   const SLOW_BOT_PASS_MS = 2;
+  // С бюджетом 1 мс за проход решает один бот из шести, остальные пропускают; с бюджетом 33 мс — почти никто.
+  const TIGHT_SKIP_LEAD = 2;
 
   async function restart(ffaEnv: Record<string, string>): Promise<void> {
     await app.close();
@@ -332,26 +334,37 @@ describe('переключатели общей игры из окружения
     expect(await stateOf(client, FfaPhase.Lobby)).toMatchObject({ minimum: 7, players: 1, ticksLeft: null });
   });
 
-  // Медиана прохода хода ботов за полсекунды боя ffa10 с шестью ботами.
-  async function botPassMs(ffaEnv: Record<string, string>): Promise<number> {
+  function metricOf(text: string, pattern: RegExp): number {
+    return Number(pattern.exec(text)?.[1] ?? NaN);
+  }
+
+  // Медиана прохода хода ботов и пропуски решений на тик за полсекунды боя ffa10 с шестью ботами. Проход меряется
+  // процессорным временем потока, пропуски — от бюджета, поэтому посторонняя нагрузка машины на них не влияет.
+  async function botPass(ffaEnv: Record<string, string>): Promise<{ medianMs: number; skipsPerTick: number }> {
     await restart({ FFA_LOBBY_QUIET_SECONDS: '1', ...ffaEnv });
     const client = await connect();
     client.join('ffa10');
     await stateOf(client, FfaPhase.Fight);
     const metricsUrl = `http://127.0.0.1:${String(port)}/metrics`;
-    await fetch(metricsUrl);
+    const before = await (await fetch(metricsUrl)).text();
     await sleep(BOT_PASS_WINDOW_MS);
-    const text = await (await fetch(metricsUrl)).text();
-    return Number(/^tanks_bot_think_ms\{quantile="0\.5"\} (\S+)$/m.exec(text)?.[1] ?? NaN);
+    const after = await (await fetch(metricsUrl)).text();
+    const skipped = /^tanks_bot_skipped_total (\S+)$/m;
+    const ticks = /^tanks_ticks_total (\S+)$/m;
+    return {
+      medianMs: metricOf(after, /^tanks_bot_think_ms\{quantile="0\.5"\} (\S+)$/m),
+      skipsPerTick:
+        (metricOf(after, skipped) - metricOf(before, skipped)) / (metricOf(after, ticks) - metricOf(before, ticks)),
+    };
   }
 
   it(
-    'FFA_BOT_SLOWDOWN и FFA_BOT_BUDGET_MS — замедление удлиняет проход ботов, бюджет его обрезает',
+    'FFA_BOT_SLOWDOWN и FFA_BOT_BUDGET_MS — замедление удлиняет проход ботов, узкий бюджет обрезает его пропусками',
     async () => {
-      const roomy = await botPassMs({ FFA_BOT_BUDGET_MS: '33', FFA_BOT_SLOWDOWN: '100' });
-      const tight = await botPassMs({ FFA_BOT_BUDGET_MS: '1', FFA_BOT_SLOWDOWN: '100' });
-      expect(roomy).toBeGreaterThan(SLOW_BOT_PASS_MS);
-      expect(tight).toBeLessThan(roomy / 2);
+      const roomy = await botPass({ FFA_BOT_BUDGET_MS: '33', FFA_BOT_SLOWDOWN: '30' });
+      const tight = await botPass({ FFA_BOT_BUDGET_MS: '1', FFA_BOT_SLOWDOWN: '30' });
+      expect(roomy.medianMs).toBeGreaterThan(SLOW_BOT_PASS_MS);
+      expect(tight.skipsPerTick).toBeGreaterThan(roomy.skipsPerTick + TIGHT_SKIP_LEAD);
     },
     4 * WAIT_MS,
   );

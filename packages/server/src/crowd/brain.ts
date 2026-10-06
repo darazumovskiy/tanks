@@ -113,6 +113,26 @@ export const UNLIMITED_PATHS: PathAllowance = {
   take: () => true,
 };
 
+// Поиск пути — самая дорогая разовая работа мозга: на весь процесс не больше стольких за проход, сверх первого —
+// пока бюджет не вышел. Первый разрешён всегда: иначе на медленной машине пути не обновлялись бы вовсе.
+const PATH_SEARCHES_PER_TURN = 2;
+
+// Разрешение одного прохода хода серверных ботов, общее для всех.
+export class PathQuota implements PathAllowance {
+  used = 0;
+
+  constructor(private readonly isOverBudget: () => boolean) {}
+
+  take(): boolean {
+    const isSpent = this.used >= PATH_SEARCHES_PER_TURN || (this.used > 0 && this.isOverBudget());
+    if (isSpent) {
+      return false;
+    }
+    this.used++;
+    return true;
+  }
+}
+
 type Drive = Pick<Action, 'throttle' | 'turn'>;
 type Aim = Pick<Action, 'turretTurn' | 'isFiring'>;
 
@@ -394,6 +414,8 @@ export class CrowdBrain {
   private isPathPending = false;
   // Тик прошлого хода в этой жизни: тик расписания между ходами засчитывается.
   private thoughtTick: number | null = null;
+  // Тиков с прошлого хода в этой жизни: таймеры мозга считают тики, а не ходы.
+  private elapsedTicks = 1;
   private aimNoise = 0;
   private aimNoiseTicksLeft = 0;
   private isLeadingShot = false;
@@ -449,6 +471,7 @@ export class CrowdBrain {
   }
 
   tick(view: CrowdView, target: CrowdTank | null, paths: PathAllowance = UNLIMITED_PATHS): Action {
+    this.elapsedTicks = this.thoughtTick === null ? 1 : Math.max(1, view.tick - this.thoughtTick);
     const grid = gridFor(view.map);
     const aim = target === null ? this.lookAhead(view.me) : this.aim(view, target);
     const drive = this.drive(view, grid, target, paths);
@@ -469,7 +492,7 @@ export class CrowdBrain {
       this.aimNoise = (this.random() * 2 - 1) * this.profile.aimNoiseRad;
       this.aimNoiseTicksLeft = AIM_NOISE_PERIOD_TICKS;
     }
-    this.aimNoiseTicksLeft--;
+    this.aimNoiseTicksLeft -= this.elapsedTicks;
     // Монетки упреждения и беспечности бросаются на каждый новый выстрел — в момент, когда перезарядка закончилась.
     const isReady = me.reloadLeft <= 0;
     if (isReady && this.hasBeenReloading) {
@@ -491,7 +514,7 @@ export class CrowdBrain {
       return { turretTurn, isFiring: false };
     }
     if (this.fireRetryTicksLeft > 0) {
-      this.fireRetryTicksLeft--;
+      this.fireRetryTicksLeft -= this.elapsedTicks;
       return { turretTurn, isFiring: false };
     }
     if (this.random() < this.profile.fireChance) {
@@ -537,10 +560,10 @@ export class CrowdBrain {
       return false;
     }
     if (this.pauseTicksLeft > 0) {
-      this.pauseTicksLeft--;
+      this.pauseTicksLeft -= this.elapsedTicks;
       return true;
     }
-    this.sincePauseTicks++;
+    this.sincePauseTicks += this.elapsedTicks;
     if (this.sincePauseTicks >= period * TICK_RATE) {
       this.sincePauseTicks = 0;
       this.pauseTicksLeft = PAUSE_TICKS;
@@ -552,7 +575,7 @@ export class CrowdBrain {
   // полсекунды задним ходом с поворотом, стороны поворота чередуются, путь — заново.
   private unstick(me: CrowdTank): Drive | null {
     if (this.unstickTicksLeft > 0) {
-      this.unstickTicksLeft--;
+      this.unstickTicksLeft -= this.elapsedTicks;
       return this.unstickDrive;
     }
     const anchor = this.anchor ?? me;
@@ -562,7 +585,7 @@ export class CrowdBrain {
       this.pushTicks = 0;
       return null;
     }
-    this.pushTicks++;
+    this.pushTicks += this.elapsedTicks;
     if (this.pushTicks < STUCK_TICKS) {
       return null;
     }
@@ -606,7 +629,7 @@ export class CrowdBrain {
       return null;
     }
     if (this.dodgeTicksLeft > 0 && this.dodgeMove !== null) {
-      this.dodgeTicksLeft--;
+      this.dodgeTicksLeft -= this.elapsedTicks;
       return driveAlong(me, this.dodgeMove);
     }
     let best: Move | null = null;

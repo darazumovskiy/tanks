@@ -63,11 +63,9 @@ function emptyCounters(): CrowdBotCounters {
   };
 }
 
-// phase — фаза на момент снимка: сообщение о смене фазы может прийти раньше решения по нему.
 interface Absorbed {
   message: FfaSnapshotMessage;
   frame: Frame;
-  phase: FfaPhase | null;
 }
 
 // Бот общей игры без транспорта: получает сообщения сервера, восстанавливает из них поле и отвечает командой.
@@ -91,7 +89,8 @@ export class CrowdBot {
   private lastGameTick: number | null = null;
   private isOnField = false;
   private counters = emptyCounters();
-  // Последний принятый снимок, по которому бот ещё не решал, и обидчики со всех принятых с прошлого решения.
+  // Последний принятый снимок с танком бота в бою, по которому бот ещё не решал, и обидчики со всех принятых с
+  // прошлого решения.
   private latest: Absorbed | null = null;
   private attackers: number[] = [];
   private lastAction: Action | null = null;
@@ -124,6 +123,7 @@ export class CrowdBot {
     this.history = [];
     this.unconfirmed = [];
     this.isOnField = false;
+    this.lastAction = null;
     return {
       type: MessageType.Join,
       protocolVersion: PROTOCOL_VERSION,
@@ -239,7 +239,8 @@ export class CrowdBot {
     return { ...tank, heading, turret, vx: Math.cos(heading) * tank.speed, vy: Math.sin(heading) * tank.speed };
   }
 
-  // Снимок в историю, без решения: обидчики копятся до следующего decide.
+  // Снимок в историю, без решения: обидчики копятся до следующего decide. Подбит или бой не идёт — бот сразу уходит
+  // с поля: решать нечего, а пропущенный ход после возрождения не повторяет команду прошлой жизни.
   absorb(message: FfaSnapshotMessage, frame: Frame): void {
     this.counters.snapshots++;
     this.unconfirmed = this.unconfirmed.filter((entry) => entry.seq > message.ackSeq);
@@ -252,12 +253,19 @@ export class CrowdBot {
     if (this.history.length > this.profile.reactionTicks + 1) {
       this.history.shift();
     }
-    this.latest = { message, frame, phase: this.phase };
     const myId = this.playerId;
-    if (myId === null || this.zonePlan === null) {
+    let attackers: number[] = [];
+    if (myId !== null && this.zonePlan !== null) {
+      attackers = this.attackersOf(message, this.withPredictedSelf(frame, myId), myId);
+    }
+    if (this.phase !== FfaPhase.Fight || message.self.state !== 'alive') {
+      this.latest = null;
+      this.attackers = [];
+      this.leaveField();
       return;
     }
-    this.attackers.push(...this.attackersOf(message, this.withPredictedSelf(frame, myId), myId));
+    this.latest = { message, frame };
+    this.attackers.push(...attackers);
   }
 
   // Решение по последнему принятому снимку; paths — разрешение на поиск пути на этом ходу.
@@ -271,8 +279,7 @@ export class CrowdBot {
     if (latest === null || myId === null || plan === null) {
       return null;
     }
-    const { message, frame, phase } = latest;
-    const isFighting = phase === FfaPhase.Fight && message.self.state === 'alive';
+    const { message, frame } = latest;
     // Пока истории меньше задержки реакции — самый старый из имеющихся снимков.
     let delayed = frame;
     for (const oldest of this.history.slice(0, 1)) {
@@ -287,7 +294,7 @@ export class CrowdBot {
       zone: { x: this.map.width / 2, y: this.map.height / 2, radius: zoneRadiusAt(plan, message.tick * DT) },
       attackers,
     });
-    if (!isFighting || view === null) {
+    if (view === null) {
       this.leaveField();
       return null;
     }
@@ -306,7 +313,7 @@ export class CrowdBot {
 
   // Ход пропущен: прошлая команда ещё раз, но без выстрела — бот не видел, куда смотрит башня.
   repeat(): InputMessage | null {
-    if (!this.isOnField || this.lastAction === null) {
+    if (this.lastAction === null) {
       return null;
     }
     return this.send({ ...this.lastAction, isFiring: false });
