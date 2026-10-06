@@ -251,6 +251,68 @@ describe('NetClient', () => {
       expect(onDisconnect).toHaveBeenCalledWith(RECONNECT_BASE_MS, 'silent');
     });
 
+    it('обрыв в скрытой вкладке — не входит, сколько бы ни ждал; вернулась на экран — вход сразу', () => {
+      latest().open();
+      setVisibility('hidden');
+      latest().drop();
+      expect(onDisconnect).toHaveBeenLastCalledWith(RECONNECT_BASE_MS, 'closed');
+      vi.advanceTimersByTime(RECONNECT_MAX_MS * 20);
+      expect(sockets).toHaveLength(1);
+      setVisibility('visible');
+      expect(sockets).toHaveLength(2);
+      latest().open();
+      expect(latest().sent[0]).toMatchObject({ type: MessageType.Join, roomCode: 'abc' });
+    });
+
+    it('вкладку скрыли, пока ждала паузу переподключения, — вход только после возврата на экран', () => {
+      latest().open();
+      latest().drop();
+      setVisibility('hidden');
+      vi.advanceTimersByTime(RECONNECT_BASE_MS * 10);
+      expect(sockets).toHaveLength(1);
+      setVisibility('visible');
+      expect(sockets).toHaveLength(2);
+      vi.advanceTimersByTime(RECONNECT_MAX_MS * 2);
+      expect(sockets).toHaveLength(2);
+    });
+
+    it('браузер не сообщил о возврате на экран — отложенный вход не позже чем через 5 с', () => {
+      latest().open();
+      setVisibility('hidden');
+      latest().drop();
+      vi.advanceTimersByTime(RECONNECT_BASE_MS);
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      vi.advanceTimersByTime(RECONNECT_MAX_MS - 1);
+      expect(sockets).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(sockets).toHaveLength(2);
+    });
+
+    it('после отложенного входа новый сокет оборвался до открытия — следующая пауза вдвое длиннее', () => {
+      latest().open();
+      setVisibility('hidden');
+      latest().drop();
+      vi.advanceTimersByTime(RECONNECT_MAX_MS * 3);
+      setVisibility('visible');
+      expect(sockets).toHaveLength(2);
+      latest().drop();
+      expect(onDisconnect).toHaveBeenLastCalledWith(RECONNECT_BASE_MS * 2, 'closed');
+      vi.advanceTimersByTime(RECONNECT_BASE_MS * 2);
+      expect(sockets).toHaveLength(3);
+    });
+
+    it('закрыт нами, пока вход отложен, — не входит ни по возврату на экран, ни по таймеру', () => {
+      latest().open();
+      setVisibility('hidden');
+      latest().drop();
+      vi.advanceTimersByTime(RECONNECT_BASE_MS);
+      client.close();
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      vi.advanceTimersByTime(RECONNECT_MAX_MS * 3);
+      setVisibility('visible');
+      expect(sockets).toHaveLength(1);
+    });
+
     it('закрытие снимает свой обработчик смены видимости', () => {
       const added = vi.spyOn(document, 'addEventListener');
       const removed = vi.spyOn(document, 'removeEventListener');

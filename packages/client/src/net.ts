@@ -76,6 +76,9 @@ const SOCKET_OPEN = 1;
 // Соединение с сервером: кодирует и декодирует сообщения, меряет задержку туда-обратно.
 // Разрыв не по нашей воле — переподключение с удвоением паузы (до 5 с: выкладка сервера длится ~2 с) и повторный вход в ту же комнату;
 // возврат вкладки или приложения на экран — попытка сразу. Ошибка от сервера — окончательна, без повторов.
+// Пока вкладка скрыта, вход откладывается до возврата на экран: телефон изредка будит свёрнутую страницу, сервер рвёт
+// молчащее соединение, и каждый такой вход начинал бы бой с отсутствующим игроком. Отложенный вход перепроверяет
+// видимость раз в 5 с — на случай, если браузер не сообщил о возврате на экран.
 // Тихий обрыв — сокет открыт, а от сервера ничего — закрываем сами и переподключаемся, не дожидаясь закрытия сокета.
 // Пока вкладка скрыта, молчание обрывом не считается: браузер может будить таймеры фоновой вкладки раз в минуту.
 // Вкладка вернулась — отсчёт молчания заново.
@@ -113,8 +116,7 @@ export class NetClient {
       return;
     }
     if (this.reconnectTimer !== null) {
-      window.clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
+      this.cancelReconnect();
       this.connect();
       return;
     }
@@ -140,10 +142,7 @@ export class NetClient {
   close(): void {
     this.isClosedByUs = true;
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
-    if (this.reconnectTimer !== null) {
-      window.clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.cancelReconnect();
     this.stopPing();
     this.stopSilenceWatch();
     this.socket?.close();
@@ -232,10 +231,25 @@ export class NetClient {
     this.attempt++;
     const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** (this.attempt - 1));
     this.handlers.onDisconnect(delay, reason);
+    this.armReconnect(delay);
+  }
+
+  private armReconnect(delayMs: number): void {
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
+      if (document.visibilityState === 'hidden') {
+        this.armReconnect(RECONNECT_MAX_MS);
+        return;
+      }
       this.connect();
-    }, delay);
+    }, delayMs);
+  }
+
+  private cancelReconnect(): void {
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 
   private stopPing(): void {

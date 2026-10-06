@@ -1,4 +1,4 @@
-import { expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test';
+import { expect, type Browser, type BrowserContext, type CDPSession, type Locator, type Page } from '@playwright/test';
 
 export interface Point {
   x: number;
@@ -137,6 +137,7 @@ export async function until<T>(read: () => Promise<T | null | undefined>, timeou
 // `query` — строка запроса ссылки на дуэль (например, `?admin=1`).
 export class Player {
   private readonly held = new Set<string>();
+  private debugger: CDPSession | null = null;
 
   private constructor(
     private readonly context: BrowserContext,
@@ -227,8 +228,60 @@ export class Player {
     return new Player(context, page, name);
   }
 
+  // Страница на паузе отладчика не даёт закрыть контекст: пауза снимается первой.
   async close(): Promise<void> {
+    await this.releaseDebugger();
     await this.context.close();
+  }
+
+  // Свёрнутая страница телефона: скрыта, код стоит — ни таймеров, ни кадров, ни обработки сообщений. Браузер без окна
+  // фоновую вкладку не останавливает и не замораживает видимую, поэтому код ставится на паузу отладчиком. Пока
+  // страница свёрнута, читать её состояние нельзя: вызов кода страницы ждёт снятия паузы. Отключение отладчика снимает
+  // паузу, а `Debugger.resume` на идущей странице — ошибка.
+  async minimize(): Promise<void> {
+    await this.setVisibility('hidden');
+    const session = await this.context.newCDPSession(this.page);
+    await session.send('Debugger.enable');
+    await session.send('Debugger.pause');
+    this.debugger = session;
+  }
+
+  // Телефон ненадолго будит свёрнутую страницу: код идёт, страница остаётся скрытой.
+  async wakeMinimized(ms: number): Promise<void> {
+    const session = this.requireDebugger();
+    await session.send('Debugger.resume');
+    await sleep(ms);
+    await session.send('Debugger.pause');
+  }
+
+  async restore(): Promise<void> {
+    this.requireDebugger();
+    await this.releaseDebugger();
+    await this.setVisibility('visible');
+  }
+
+  private async releaseDebugger(): Promise<void> {
+    const session = this.debugger;
+    if (session === null) {
+      return;
+    }
+    this.debugger = null;
+    await session.detach();
+  }
+
+  private requireDebugger(): CDPSession {
+    if (this.debugger === null) {
+      throw new Error(`${this.name}: страница не свёрнута`);
+    }
+    return this.debugger;
+  }
+
+  private async setVisibility(state: DocumentVisibilityState): Promise<void> {
+    await this.page.evaluate((visibility) => {
+      Object.defineProperty(document, 'visibilityState', { value: visibility, configurable: true });
+      Object.defineProperty(document, 'hidden', { value: visibility === 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, state);
   }
 
   state(): Promise<DebugState | null> {
@@ -361,6 +414,10 @@ export class Player {
 
   async expectNoBattle(): Promise<void> {
     expect(await this.state()).toBeNull();
+  }
+
+  async waitForNoBattle(timeoutMs: number): Promise<void> {
+    await until(async () => ((await this.state()) === null ? true : null), timeoutMs, `${this.name}: бой не кончился`);
   }
 
   copyButton(): Locator {

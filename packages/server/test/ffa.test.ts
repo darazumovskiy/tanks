@@ -856,7 +856,7 @@ describe('обрыв и возврат', () => {
   });
 
   it('Leave до входа и повторный Leave — без последствий', async () => {
-    await startApp();
+    await startApp({ quitTicks: 1_000_000 });
     const stranger = await TestClient.connect(port);
     clients.push(stranger);
     stranger.send({ type: MessageType.Leave });

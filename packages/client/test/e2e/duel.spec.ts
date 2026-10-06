@@ -63,6 +63,12 @@ const ZONE_HIDDEN_WAYPOINTS = [
 ];
 const ZONE_OPEN_POST = { x: 480, y: 450 };
 const ZONE_FIRE_TIMEOUT_MS = 10_000;
+// Сервер рвёт соединение после 10 с молчания и проверяет молчание раз в 2,5 с; остальное — запас на нагрузку.
+const SILENT_DROP_TIMEOUT_MS = 20_000;
+// Пробуждение свёрнутой страницы дольше первой паузы переподключения (1 с) с запасом на вход в комнату.
+const MINIMIZED_WAKE_MS = 2_000;
+const MINIMIZED_SLEEP_MS = 3_000;
+const MINIMIZED_WAKES = 3;
 const ANDROID_PACKAGE = 'io.github.darazumovskiy.tanks';
 const ANDROID_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 15; 24129PN74G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
@@ -184,6 +190,32 @@ test('соперник ушёл — ожидание; вернулся — но�
 
   await a.close();
   await returned.close();
+});
+
+test('свёрнутый телефон: соперник ждёт, пробуждения в фоне бой не начинают; вернулся — бой, оба едут', async ({
+  browser,
+}) => {
+  const [a, phone] = await openPair(browser, roomCode());
+  try {
+    await a.waitForFight();
+    await phone.minimize();
+    await a.waitForNoBattle(SILENT_DROP_TIMEOUT_MS);
+    await a.expectOverlay('Ждём соперника');
+
+    for (let wake = 0; wake < MINIMIZED_WAKES; wake++) {
+      await phone.wakeMinimized(MINIMIZED_WAKE_MS);
+      await a.expectNoBattle();
+      await sleep(MINIMIZED_SLEEP_MS);
+      await a.expectNoBattle();
+    }
+
+    await phone.restore();
+    await phone.waitForBattle();
+    expect(await a.driveForward(DRIVE_MS)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
+    expect(await phone.driveForward(DRIVE_MS)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
+  } finally {
+    await Promise.all([a.close(), phone.close()]);
+  }
 });
 
 test('сервер перезапущен под открытыми страницами — клиенты возвращаются сами', async ({ browser }) => {
