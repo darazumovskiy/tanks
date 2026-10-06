@@ -1,0 +1,14 @@
+{
+ "correlationTicks": 24.3288,
+ "lagTicks": -13.3333,
+ "holdShare": {
+  "visible|<300": 0.9167,
+  "visible|300–600": 1,
+  "visible|>600": 1,
+  "hidden|<300": 0.875,
+  "hidden|300–600": 1,
+  "hidden|>600": 0.9583
+ },
+ "reverseChance": 0,
+ "coverHoldShare": 0
+}

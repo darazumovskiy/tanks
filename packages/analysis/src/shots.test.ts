@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { leadPoint } from './geometry.js';
-import { analyzeLogs, type GameSummary } from './index.js';
+import { analyzeLogs, distanceBucketOf, type GameSummary } from './index.js';
 import {
   countdownFrames,
   DEFAULT_BULLET_SPEED,
@@ -67,6 +67,15 @@ function botAtShot(): Pose {
 
 afterEach(() => {
   removeLogDirs();
+});
+
+describe('корзины дистанции', () => {
+  it('границы 300 и 600 относятся к следующей корзине', () => {
+    expect(distanceBucketOf(299.9)).toBe('<300');
+    expect(distanceBucketOf(300)).toBe('300–600');
+    expect(distanceBucketOf(599.9)).toBe('300–600');
+    expect(distanceBucketOf(600)).toBe('>600');
+  });
 });
 
 describe('выстрелы человека', () => {

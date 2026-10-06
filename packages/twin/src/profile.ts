@@ -1,18 +1,21 @@
-import type {
-  Coefficients,
-  Distribution,
-  FireContext,
-  MovementMetrics,
-  ProfileMetrics,
-  ProfilePeriod,
-  ProfileSelection,
-  SelectedRounds,
+import {
+  DISTANCE_BUCKET_LABELS,
+  type Coefficients,
+  type DistanceBucketLabel,
+  type Distribution,
+  type FireContext,
+  type MovementMetrics,
+  type ProfileMetrics,
+  type ProfilePeriod,
+  type ProfileSelection,
+  type SelectedRounds,
 } from '@tanks/analysis';
 import { deriveStats, TICK_RATE } from '@tanks/shared/engine';
 import { BOT_LEVELS, type BotLevel } from '@tanks/shared/protocol';
 import { createBrain } from '@tanks/server/bots/ladder';
 
 export const TWIN_PROFILE_NAMES = ['phone', 'pc'] as const;
+export const TWIN_NICK = 'Двойник';
 export type TwinProfileName = (typeof TWIN_PROFILE_NAMES)[number];
 
 // Справка по журналам человека: числа раундов по правилам выборки, метрики главного окна профиля
@@ -31,15 +34,16 @@ export interface TwinReference {
   movement: MovementMetrics;
 }
 
+// Противник на виду или не виден: у решений манёвра свои распределения для каждого случая.
+export const SIGHT_KEYS = ['sight', 'hidden'] as const;
+export type SightKey = (typeof SIGHT_KEYS)[number];
+export const SIGHT_NAMES: Readonly<Record<SightKey, string>> = { sight: 'на виду', hidden: 'без видимости' };
+
 // Параметры, которые подбираются калибровкой по своим метрикам-входам.
 export interface TwinCalibration {
   correlationTicks: number;
   lagTicks: number;
-  leadShare: number;
   holdShare: Record<FireContext, number>;
-  decisionScale: number;
-  kiteChance: number;
-  circleChance: number;
   reverseChance: number;
   coverHoldShare: number;
 }
@@ -54,7 +58,7 @@ export interface TwinProfile {
   control: 'sticks' | 'mouseKeys';
   channel: { uplinkTicks: number; downlinkTicks: number; interpolationTicks: number };
   settings: { pivotThrottle: number };
-  hand: { errorDecilesDeg: number[] };
+  hand: { errorDecilesDeg: Record<DistanceBucketLabel, number[]>; leadShare: number };
   fire: {
     noStartPauseShare: number;
     startPauseDecilesS: number[];
@@ -62,7 +66,11 @@ export interface TwinProfile {
     longPausePerMinute: number;
     longPauseDecilesS: number[];
   };
-  manoeuvre: { decisionDecilesS: number[]; stickDeciles: number[]; distanceBand: Band };
+  manoeuvre: {
+    decisionDecilesS: number[];
+    stickDeciles: number[];
+    courseDecilesDeg: Record<SightKey, Record<DistanceBucketLabel, number[]>>;
+  };
   cover: { distanceBand: Band; wallDistanceBand: Band } | null;
   modeSwitch: { enter: Coefficients | null; leave: Coefficients | null };
   calibration: TwinCalibration | null;
@@ -85,6 +93,13 @@ const TICK_MS = MS_PER_SECOND / TICK_RATE;
 const PERCENT = 100;
 
 const GAME_ID_SEPARATOR = ' ';
+// Упреждения как приёма у Димы нет на обоих устройствах: выстрелы по движущемуся ложатся на корпус не реже, чем
+// на точку упреждения. Подгонкой по журналам доля не отделяется от отставания башни — значение из данных.
+const LEAD_SHARE = 0;
+// Меньше 25 выстрелов по стоящему в корзине дистанции — распределение корзины ненадёжно.
+const MIN_BAND_SHOTS = 25;
+// Угол хода в корзине — не меньше чем по 10 с движения.
+const MIN_BAND_COURSE_TICKS = 10 * TICK_RATE;
 
 function gameIds(ids: string): string[] {
   return ids.split(GAME_ID_SEPARATOR);
@@ -159,6 +174,11 @@ export function profileSelection(name: TwinProfileName): ProfileSelection {
   };
 }
 
+// Выборка журналов двойника: его ник и все его игры, без периодов и старой лестницы.
+export function twinSelection(): ProfileSelection {
+  return { nick: TWIN_NICK, periods: null, oldLadderGames: [], botBulletSpeeds: ladderBulletSpeeds() };
+}
+
 function required<T>(value: T | null, what: string): T {
   if (value === null) {
     throw new Error(`в справке нет данных: ${what}`);
@@ -173,6 +193,33 @@ function band(value: Distribution | null, what: string): Band {
 
 function deciles(value: Distribution | null, what: string, scale = 1): number[] {
   return required(value, what).deciles.map((decile) => decile * scale);
+}
+
+// Ошибка руки — по корзинам дистанции, где у человека не меньше MIN_BAND_SHOTS выстрелов по стоящему; в
+// остальных корзинах — общее распределение.
+function handErrorDeciles(aim: ProfileMetrics['aim']): Record<DistanceBucketLabel, number[]> {
+  const overall = deciles(aim.standingErrDeg, 'ошибка по стоящему');
+  const result = {} as Record<DistanceBucketLabel, number[]>;
+  for (const band of DISTANCE_BUCKET_LABELS) {
+    const inBand = aim.byBucket[band]?.standingErrDeg ?? null;
+    result[band] = inBand !== null && inBand.n >= MIN_BAND_SHOTS ? inBand.deciles.slice() : overall;
+  }
+  return result;
+}
+
+// Угол хода к линии — по видимости и корзине дистанции, где у человека не меньше MIN_BAND_COURSE_TICKS тиков
+// движения; в остальных — по всем тикам движения.
+function courseDeciles(movement: MovementMetrics): Record<SightKey, Record<DistanceBucketLabel, number[]>> {
+  const overall = deciles(movement.courseAllDeg, 'угол хода к линии на противника');
+  const result = {} as Record<SightKey, Record<DistanceBucketLabel, number[]>>;
+  for (const key of SIGHT_KEYS) {
+    result[key] = {} as Record<DistanceBucketLabel, number[]>;
+    for (const band of DISTANCE_BUCKET_LABELS) {
+      const inBand = movement.courseDeg[key][band] ?? null;
+      result[key][band] = inBand !== null && inBand.n >= MIN_BAND_COURSE_TICKS ? inBand.deciles.slice() : overall;
+    }
+  }
+  return result;
 }
 
 // Задержка сети туда и обратно делится поровну, с округлением до тика.
@@ -205,7 +252,7 @@ export function twinProfile(reference: TwinReference, calibration: TwinCalibrati
       interpolationTicks: INTERPOLATION_TICKS,
     },
     settings: { pivotThrottle: required(settings.pivotThrottle, 'газ разворота') },
-    hand: { errorDecilesDeg: deciles(main.aim.standingErrDeg, 'ошибка по стоящему') },
+    hand: { errorDecilesDeg: handErrorDeciles(main.aim), leadShare: LEAD_SHARE },
     fire: {
       noStartPauseShare: required(main.fire.noStartPause.pct, 'раунды без стартовой паузы') / PERCENT,
       startPauseDecilesS: deciles(main.fire.startPauseS, 'стартовая пауза'),
@@ -214,9 +261,9 @@ export function twinProfile(reference: TwinReference, calibration: TwinCalibrati
       longPauseDecilesS: deciles(main.fire.longPauseS, 'длинные паузы огня'),
     },
     manoeuvre: {
-      decisionDecilesS: deciles(main.dodge.baselineTicks, 'фоновая смена команды', 1 / TICK_RATE),
+      decisionDecilesS: deciles(reference.movement.radialRunTicks, 'отрезки сближения и отдаления', 1 / TICK_RATE),
       stickDeciles: deciles(reference.movement.straightThrottle, 'газ на прямой'),
-      distanceBand: band(reference.movement.sightDistance, 'дистанция при видимости'),
+      courseDecilesDeg: courseDeciles(reference.movement),
     },
     cover: coverOf(main),
     modeSwitch: { enter: main.modeSwitch.enter, leave: main.modeSwitch.leave },

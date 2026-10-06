@@ -163,3 +163,39 @@ describe('ошибка башни по тикам', () => {
     expect(aim.aim.sightErrorUnder5).toMatchObject({ part: FIGHT_TICKS - 45, total: FIGHT_TICKS });
   });
 });
+
+describe('подгонка ошибки по ходу цели', () => {
+  it('башня отстаёт на 3 тика хода цели и держит сдвиг ±0,2 по 12 тиков — отставание 3, остаток по одну сторону 12', () => {
+    const lag = 3;
+    const turnPerTick = 0.05;
+    const radius = 60;
+    const offset = 0.2;
+    const block = 12;
+    const samples = 20 * block;
+    const human = pose(1000, OPEN_Y);
+    const botAt = (tick: number): Pose => {
+      const angle = turnPerTick * tick;
+      return pose(human.x + radius * Math.cos(angle), human.y + radius * Math.sin(angle));
+    };
+    const builder = startDuel()
+      .roundStart(0, 0)
+      .frames(countdownFrames([botAt(0), human]));
+    // Тик 0 — цель ещё стоит, в подгонку не идёт; дальше ровно 20 блоков сдвига.
+    for (let tick = 0; tick <= samples; tick++) {
+      const side = Math.floor((tick - 1) / block) % 2 === 0 ? 1 : -1;
+      const turret = turnPerTick * tick - lag * turnPerTick + side * offset;
+      const me = pose(human.x, human.y, 0, Math.round(turret * 100) / 100);
+      builder.frame(
+        fightFrame([botAt(tick), me], {
+          actions: [IDLE, action(0, 0, 0, true)],
+          events: [...(tick === 1 ? [shotEvent(HUMAN, me)] : []), ...(tick === samples ? [roundOver(BOT)] : [])],
+        }),
+      );
+    }
+    const fit = profileMetrics(profileRoundsOf({ 'AFIT.log': builder.text() })).aim.aimFit;
+
+    expect(fit.n).toBe(samples);
+    expect(fit.lagTicks).toBeCloseTo(lag, 0);
+    expect(fit.residualSameSideTicks).toMatchObject({ n: 18, median: block });
+  });
+});

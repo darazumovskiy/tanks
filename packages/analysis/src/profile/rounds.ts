@@ -18,7 +18,14 @@ import { EVENT_KIND } from '../bullets.js';
 import type { GameSummary, RoundSummary } from '../game.js';
 import { isClear, leadPoint, wallClearance } from '../geometry.js';
 import type { LoggedGame } from '../index.js';
-import { FIGHT_PHASE, parseKeyValues, type ClientLine, type LogAction, type ParsedRound } from '../logParser.js';
+import {
+  FIGHT_PHASE,
+  parseKeyValues,
+  type ClientLine,
+  type LogAction,
+  type ParsedRound,
+  type Tick,
+} from '../logParser.js';
 import {
   AXIS_BUCKETS,
   AXIS_TOUCH,
@@ -33,7 +40,7 @@ import { toDegrees } from '../numbers.js';
 import {
   AIM_DONE_RAD,
   AIM_LOST_RAD,
-  DISTANCE_BUCKETS,
+  distanceBucketOf,
   LEAD_SPAN_MIN_RAD,
   MIN_DISTANCE,
   MOVING_SPEED,
@@ -84,6 +91,16 @@ const BASELINE_STRIDE = 3;
 // не раньше чем за 3 тика до её начала.
 const EARLY_FIGHT_TICKS = 1.5 * TICK_RATE;
 const GUARD_PAUSE_LEAD_TICKS = 3;
+// Ход «к противнику» — угол между скоростью и направлением на него меньше 45°, «от него» — больше 135°.
+const TOWARD_MAX_RAD = Math.PI / 4;
+const AWAY_MIN_RAD = (3 * Math.PI) / 4;
+// Сближение сменилось отдалением и наоборот — дистанция за тик пошла в другую сторону больше чем на 2.
+const RADIAL_SWITCH_PER_TICK = 2;
+// Отрезок хода поперёк линии в одну сторону переживает перерывы в ходе поперёк до 0,5 с; смена стороны
+// закрывает его сразу.
+const SIDE_RUN_GAP_TICKS = TICK_RATE / 2;
+// В подгонку ошибки башни идут тики, где башня смотрит на цель хотя бы с точностью 30°.
+const AIM_FIT_MAX_ERR_RAD = Math.PI / 6;
 const HIT_MATCH_TICKS = 1;
 // Строки клиента о настройках раунда приходят в первые 3 с после старта раунда.
 const ROUND_CLIENT_WINDOW_TICKS = 3 * TICK_RATE;
@@ -161,9 +178,11 @@ export interface FirePause {
 }
 
 // Тик боя для движения, огня и позиции; первый тик раунда в счёт не идёт — у него нет предыдущей позы.
+// courseDeg — угол между скоростью и направлением на противника от 0 до 180°; null — танк стоит.
 export interface FightSample {
   gt: number;
   speed: number;
+  courseDeg: number | null;
   distance: number;
   hasSight: boolean;
   isFiring: boolean;
@@ -176,12 +195,23 @@ export interface FireCell {
   isReady: boolean;
   bucket: string;
   isEarly: boolean;
+  isAfterStart: boolean;
   ticks: number;
   firing: number;
 }
 
+// Ход относительно противника: стоит, к нему, поперёк линии на него, от него.
+export const MOTION_KINDS = ['still', 'toward', 'side', 'away'] as const;
+export type MotionKind = (typeof MOTION_KINDS)[number];
+
+export interface SightSplit {
+  sight: number;
+  hidden: number;
+}
+
 export interface MovementCounts {
   ticks: number;
+  sightTicks: number;
   reverse: number;
   idle: number;
   full: number;
@@ -190,6 +220,14 @@ export interface MovementCounts {
   flips: number;
   throttle: Record<AxisBucket, number>;
   turn: Record<AxisBucket, number>;
+  motion: Record<MotionKind, SightSplit>;
+}
+
+// Тик подгонки ошибки башни по ходу цели e ≈ −lag·ω — огонь на виду по движущейся цели: error — ошибка башни
+// со знаком, turn — поворот пеленга за тик ω от хода самой цели.
+export interface AimSample {
+  error: number;
+  turn: number;
 }
 
 // Признаки выбора режима в начале секунды боя.
@@ -218,10 +256,14 @@ export interface RoundDetail {
   aims: AimRun[];
   sightErrorsDeg: number[];
   sameSideRuns: number[];
+  aimSegments: AimSample[][];
   baselineTicks: (number | null)[];
   samples: FightSample[];
   straightThrottle: number[];
   movement: MovementCounts;
+  radialRuns: number[];
+  sideRuns: number[];
+  startPauseTicks: number;
   fireCells: FireCell[];
   pauses: FirePause[];
   intervals: number[];
@@ -290,15 +332,45 @@ const SPEED_FIT_MIN_MATCHES = 10;
 const DEFAULT_RELOAD_TICKS = Math.ceil(deriveStats(DEFAULT_STATS).reloadTime * TICK_RATE);
 const DEFAULT_MAX_HP = deriveStats(DEFAULT_STATS).maxHp;
 
-function bucketOf(distance: number): string {
-  return DISTANCE_BUCKETS.find((bucket) => bucket.low <= distance && distance < bucket.high)?.label ?? '';
-}
-
 function emptyAxisCounts(): Record<AxisBucket, number> {
   return Object.fromEntries(AXIS_BUCKETS.map((bucket) => [bucket, 0])) as Record<AxisBucket, number>;
 }
 
-function botClassOf(level: BotLevel): BotClass {
+function emptyMotionCounts(): Record<MotionKind, SightSplit> {
+  return Object.fromEntries(MOTION_KINDS.map((kind) => [kind, { sight: 0, hidden: 0 }])) as Record<
+    MotionKind,
+    SightSplit
+  >;
+}
+
+// courseToEnemy — модуль угла между скоростью и направлением на противника.
+function motionOf(speed: number, courseToEnemy: number): MotionKind {
+  if (speed <= KITE_SPEED) {
+    return 'still';
+  }
+  if (courseToEnemy < TOWARD_MAX_RAD) {
+    return 'toward';
+  }
+  return courseToEnemy > AWAY_MIN_RAD ? 'away' : 'side';
+}
+
+// Номер тика боя с первым намерением стрелять: огонь или удержание предохранителем; нет — длина боя.
+function firstIntentIndex(
+  ticks: readonly Tick[],
+  fight: readonly number[],
+  human: Side,
+  guardGts: readonly number[],
+): number {
+  const fightStartGt = ticks[fight[0] ?? 0]?.gt ?? 0;
+  const firstGuardGt = Math.min(...guardGts.filter((gt) => gt >= fightStartGt), Infinity);
+  const found = fight.findIndex((index) => {
+    const tick = ticks[index];
+    return tick !== undefined && (tick.actions[human].isFiring || tick.gt >= firstGuardGt);
+  });
+  return found === -1 ? fight.length : found;
+}
+
+export function botClassOf(level: BotLevel): BotClass {
   const index = BOT_CLASS_EDGES.findIndex((edge) => level === edge);
   return BOT_CLASSES[index + 1] ?? '3–7';
 }
@@ -562,7 +634,7 @@ function roundDetail(
     shots.push({
       gt: event.gt,
       distance,
-      bucket: bucketOf(distance),
+      bucket: distanceBucketOf(distance),
       isMoving: enemySpeed > MOVING_SPEED,
       errCurDeg: toDegrees(Math.abs(normalizeAngle(turret - toHull))),
       errLeadDeg: toDegrees(Math.abs(normalizeAngle(turret - toLead))),
@@ -579,6 +651,8 @@ function roundDetail(
   const aims: AimRun[] = [];
   const sightErrorsDeg: number[] = [];
   const sameSideRuns: number[] = [];
+  const aimSegments: AimSample[][] = [];
+  let aimSegment: AimSample[] = [];
   let seekingGt: number | null = null;
   let isSeekingWithSight = false;
   let sideRun = 0;
@@ -586,13 +660,27 @@ function roundDetail(
   let isSideRunOpen = false;
   for (const index of fight) {
     const tick = ticks[index];
-    if (tick === undefined) {
+    const previous = ticks[index - 1];
+    if (tick === undefined || previous === undefined) {
       continue;
     }
     const me = tick.poses[human];
-    const signed = normalizeAngle(me.turret - bearing(me, tick.poses[bot]));
+    const enemy = tick.poses[bot];
+    const toHull = bearing(me, enemy);
+    const signed = normalizeAngle(me.turret - toHull);
     const error = Math.abs(signed);
     const hasSight = sight.get(index) === true;
+    const velocity = {
+      x: (enemy.x - previous.poses[bot].x) * TICK_RATE,
+      y: (enemy.y - previous.poses[bot].y) * TICK_RATE,
+    };
+    const isEnemyMoving = Math.hypot(velocity.x, velocity.y) > MOVING_SPEED;
+    if (hasSight && isEnemyMoving && tick.actions[human].isFiring && error < AIM_FIT_MAX_ERR_RAD) {
+      aimSegment.push({ error: signed, turn: normalizeAngle(toHull - bearing(me, previous.poses[bot])) });
+    } else if (aimSegment.length > 0) {
+      aimSegments.push(aimSegment);
+      aimSegment = [];
+    }
     if (hasSight) {
       sightErrorsDeg.push(toDegrees(error));
       const sign = signed >= 0 ? 1 : -1;
@@ -617,6 +705,10 @@ function roundDetail(
       aims.push({ ticks: tick.gt - seekingGt, isWithSight: isSeekingWithSight && hasSight });
       seekingGt = null;
     }
+  }
+
+  if (aimSegment.length > 0) {
+    aimSegments.push(aimSegment);
   }
 
   const episodes: SightEpisode[] = [];
@@ -728,6 +820,7 @@ function roundDetail(
 
   const movement: MovementCounts = {
     ticks: 0,
+    sightTicks: 0,
     reverse: 0,
     idle: 0,
     full: 0,
@@ -736,9 +829,16 @@ function roundDetail(
     flips: 0,
     throttle: emptyAxisCounts(),
     turn: emptyAxisCounts(),
+    motion: emptyMotionCounts(),
   };
   const samples: FightSample[] = [];
   const straightThrottle: number[] = [];
+  const radialRuns: number[] = [];
+  const sideRuns: number[] = [];
+  let lateral: { sign: number; ticks: number; gap: number } | null = null;
+  let radialSign = 0;
+  let radialRun = 0;
+  let isRadialRunOpen = false;
   let lastSign = 0;
   let previousDistance: number | null = null;
   let previousBearing = 0;
@@ -777,8 +877,10 @@ function roundDetail(
     }
     const distance = Math.hypot(enemy.x - me.x, enemy.y - me.y);
     const toEnemy = bearing(me, enemy);
+    const hasSight = sight.get(index) === true;
+    movement.sightTicks += hasSight ? 1 : 0;
+    const course = Math.atan2(vy, vx);
     if (speed > KITE_SPEED) {
-      const course = Math.atan2(vy, vx);
       const isTurretBack = Math.abs(normalizeAngle(me.turret - course)) > Math.PI / 2;
       const isEnemyBack = Math.abs(normalizeAngle(toEnemy - course)) > Math.PI / 2;
       movement.kite += isTurretBack && isEnemyBack ? 1 : 0;
@@ -788,25 +890,62 @@ function roundDetail(
         Math.abs(normalizeAngle(toEnemy - previousBearing)) > CIRCLE_BEARING_PER_TICK;
       movement.circle += isCircling ? 1 : 0;
     }
+    const courseToEnemy = normalizeAngle(course - toEnemy);
+    const kind = motionOf(speed, Math.abs(courseToEnemy));
+    movement.motion[kind][hasSight ? 'sight' : 'hidden']++;
+    const sideSign = kind === 'side' ? Math.sign(courseToEnemy) : 0;
+    if (lateral !== null && (lateral.gap > SIDE_RUN_GAP_TICKS || (sideSign !== 0 && sideSign !== lateral.sign))) {
+      sideRuns.push(lateral.ticks);
+      lateral = null;
+    }
+    if (sideSign !== 0) {
+      lateral ??= { sign: sideSign, ticks: 0, gap: 0 };
+      lateral.ticks++;
+      lateral.gap = 0;
+    } else if (lateral !== null) {
+      lateral.gap++;
+    }
+    // Отрезок сближения или отдаления: знак меняется, только когда дистанция пошла в другую сторону быстрее
+    // порога. Первый отрезок раунда начат до счёта, последний оборван концом — оба не в счёт.
+    const radial = previousDistance === null ? 0 : distance - previousDistance;
+    const nextRadialSign = Math.abs(radial) > RADIAL_SWITCH_PER_TICK ? Math.sign(radial) : radialSign;
+    if (nextRadialSign !== radialSign) {
+      if (isRadialRunOpen) {
+        radialRuns.push(radialRun);
+      }
+      isRadialRunOpen = radialSign !== 0;
+      radialSign = nextRadialSign;
+      radialRun = 0;
+    }
+    radialRun++;
     previousDistance = distance;
     previousBearing = toEnemy;
     samples.push({
       gt: tick.gt,
       speed,
+      courseDeg: speed > KITE_SPEED ? toDegrees(Math.abs(courseToEnemy)) : null,
       distance,
-      hasSight: sight.get(index) === true,
+      hasSight,
       isFiring: action.isFiring,
       isTurretTurning: Math.abs(action.turretTurn) > AXIS_TOUCH,
       wallDistance: wallClearance(walls, me.x, me.y),
     });
   }
+  if (lateral !== null) {
+    sideRuns.push(lateral.ticks);
+  }
 
+  const intentIndex = firstIntentIndex(ticks, fight, human, guardGts);
   const cells = new Map<string, FireCell>();
   const pauses: FirePause[] = [];
   let lastShot: number | null = null;
   let pause: (FirePause & { startGt: number; distances: number[]; errors: number[] }) | null = null;
   const closePause = (): void => {
     if (pause === null) {
+      return;
+    }
+    if (pause.ticks === 0) {
+      pause = null;
       return;
     }
     const startGt = pause.startGt;
@@ -836,8 +975,10 @@ function roundDetail(
     const distance = Math.hypot(enemy.x - me.x, enemy.y - me.y);
     const hasSight = sight.get(index) === true;
     const isEarly = n < EARLY_FIGHT_TICKS;
-    const key = `${String(hasSight)}|${String(isReady)}|${bucketOf(distance)}|${String(isEarly)}`;
-    const cell = cells.get(key) ?? { hasSight, isReady, bucket: bucketOf(distance), isEarly, ticks: 0, firing: 0 };
+    const isAfterStart = n >= intentIndex;
+    const bucket = distanceBucketOf(distance);
+    const key = `${String(hasSight)}|${String(isReady)}|${bucket}|${String(isEarly)}|${String(isAfterStart)}`;
+    const cell = cells.get(key) ?? { hasSight, isReady, bucket, isEarly, isAfterStart, ticks: 0, firing: 0 };
     cell.ticks++;
     cell.firing += isFiring ? 1 : 0;
     cells.set(key, cell);
@@ -856,11 +997,15 @@ function roundDetail(
         distances: [],
         errors: [],
       };
-      pause.ticks++;
-      pause.sightTicks += hasSight ? 1 : 0;
-      pause.readyTicks += isReady ? 1 : 0;
-      pause.distances.push(distance);
-      pause.errors.push(toDegrees(Math.abs(normalizeAngle(me.turret - bearing(me, enemy)))));
+      // Стартовая пауза кончается на первом намерении стрелять; отрезок от него до огня — не пауза.
+      const isStartPauseOver = pause.startIndex === 0 && isAfterStart;
+      if (!isStartPauseOver) {
+        pause.ticks++;
+        pause.sightTicks += hasSight ? 1 : 0;
+        pause.readyTicks += isReady ? 1 : 0;
+        pause.distances.push(distance);
+        pause.errors.push(toDegrees(Math.abs(normalizeAngle(me.turret - bearing(me, enemy)))));
+      }
     }
     if (shotGtSet.has(tick.gt)) {
       lastShot = tick.gt;
@@ -876,10 +1021,14 @@ function roundDetail(
     aims,
     sightErrorsDeg,
     sameSideRuns,
+    aimSegments,
     baselineTicks,
     samples,
     straightThrottle,
     movement,
+    radialRuns,
+    sideRuns,
+    startPauseTicks: Math.min(intentIndex, fight.length),
     fireCells: [...cells.values()],
     pauses,
     intervals,

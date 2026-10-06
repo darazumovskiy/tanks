@@ -13,6 +13,7 @@ import {
   shotEvent,
   type Pose,
 } from '@tanks/analysis/logFixture';
+import { DISTANCE_BUCKET_LABELS, type Distribution } from '@tanks/analysis';
 import { TICK_RATE } from '@tanks/shared/engine';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,14 +69,24 @@ function phoneGameLog(nick: string, room: string): string {
   return builder.text();
 }
 
-function runReference(
+async function cli(argv: readonly string[], referenceDir: string): Promise<{ code: number; lines: string[] }> {
+  const lines: string[] = [];
+  const code = await runCli(argv, {
+    print: (line) => lines.push(line),
+    referenceDir,
+    threads: 1,
+    now: () => 0,
+  });
+  return { code, lines };
+}
+
+async function runReference(
   files: Record<string, string>,
   profile = 'phone',
-): { code: number; lines: string[]; dir: string } {
+): Promise<{ code: number; lines: string[]; dir: string }> {
   const logDir = makeLogDir(files);
   const dir = makeLogDir({});
-  const lines: string[] = [];
-  const code = runCli(['reference', logDir, '--profile', profile], (line) => lines.push(line), dir);
+  const { code, lines } = await cli(['reference', logDir, '--profile', profile], dir);
   return { code, lines, dir };
 }
 
@@ -84,8 +95,8 @@ afterEach(() => {
 });
 
 describe('команда reference', () => {
-  it('справка по журналам телефона: игры из списков выборки, числа раундов по правилам, победы и файл phone.json', () => {
-    const { code, lines, dir } = runReference({
+  it('справка по журналам телефона: игры из списков выборки, числа раундов по правилам, победы и файл phone.json', async () => {
+    const { code, lines, dir } = await runReference({
       [`${C2_GAME}.log`]: phoneGameLog('Mob', 'bot08twin'),
       [`${C2_WEAK_GAME}.log`]: phoneGameLog('Mob', 'bot01weak'),
       [`${OLD_LADDER_GAME}.log`]: phoneGameLog('Mob', 'bot03hunter'),
@@ -97,8 +108,9 @@ describe('команда reference', () => {
     const warnings = lines.filter((line) => line.startsWith('Предупреждение'));
 
     expect(code).toBe(0);
-    expect(warnings).toHaveLength(PHONE_GAMES.length - 3);
+    expect(warnings).toHaveLength(PHONE_GAMES.length - 3 + 1);
     expect(warnings).toContain('Предупреждение: игры 8A29 из выборки нет в папке журналов');
+    expect(warnings[0]).toBe('Предупреждение: игры Mob вне периодов выборки, в справку не вошли: TWN4');
     expect(lines).toContain('Раундов Mob: 3, по правилам выборки — 1');
     expect(lines).toContain('  исключено (weakBot): 1');
     expect(lines).toContain('  исключено (oldLadder): 1');
@@ -114,8 +126,8 @@ describe('команда reference', () => {
     expect(reference.main.fire.startPauseS?.median).toBeCloseTo(1, 4);
   });
 
-  it('без раундов после выборки — ошибка с кодом 2 и числами по правилам; файл не пишется', () => {
-    const { code, lines, dir } = runReference({ [`${C2_WEAK_GAME}.log`]: phoneGameLog('Mob', 'bot01weak') });
+  it('без раундов после выборки — ошибка с кодом 2 и числами по правилам; файл не пишется', async () => {
+    const { code, lines, dir } = await runReference({ [`${C2_WEAK_GAME}.log`]: phoneGameLog('Mob', 'bot01weak') });
 
     expect(code).toBe(2);
     expect(lines).toContain('Раундов Mob: 1, по правилам выборки — 0');
@@ -123,40 +135,65 @@ describe('команда reference', () => {
     expect(existsSync(join(dir, 'phone.json'))).toBe(false);
   });
 
-  it('ошибки аргументов — код 2 и подсказка', () => {
+  it('ошибки аргументов — код 2 и подсказка', async () => {
     const cases: string[][] = [
       [],
-      ['check'],
+      ['compare', '--profile', 'phone'],
       ['reference'],
       ['reference', 'logs'],
+      ['reference', '--profile', 'phone'],
       ['reference', 'logs', '--profile', 'tablet'],
       ['reference', 'logs', 'more', '--profile', 'phone'],
       ['reference', '--verbose', '--profile', 'phone'],
+      ['reference', 'logs', '--profile', 'phone', '--rounds', '10'],
+      ['check', 'extra', '--profile', 'phone'],
+      ['check', '--profile', 'phone', '--rounds', '0'],
+      ['check', '--profile', 'phone', '--rounds', '1.5'],
+      ['check', '--profile', 'phone', '--levels', '2-5'],
+      ['check', '--profile', 'phone', '--levels', '9-3'],
+      ['check', '--profile', 'phone', '--levels', '3-5-7'],
+      ['check', '--profile', 'phone', '--seed', '-1'],
+      ['check', '--profile', 'phone', '--threads', '0'],
+      ['calibrate', '--profile', 'pc', '--log-dir', 'x'],
     ];
     for (const argv of cases) {
-      const lines: string[] = [];
-      expect(runCli(argv, (line) => lines.push(line), makeLogDir({}))).toBe(2);
+      const { code, lines } = await cli(argv, makeLogDir({}));
+      expect(code, argv.join(' ')).toBe(2);
       expect(lines.at(-1)).toBe(USAGE);
     }
   });
 
-  it('нет папки журналов — код 2, сообщение и подсказка', () => {
+  it('нет папки журналов — код 2, сообщение и подсказка', async () => {
     const missing = join(makeLogDir({}), 'нет');
-    const lines: string[] = [];
 
-    expect(runCli(['reference', missing, '--profile', 'pc'], (line) => lines.push(line), makeLogDir({}))).toBe(2);
+    const { code, lines } = await cli(['reference', missing, '--profile', 'pc'], makeLogDir({}));
+
+    expect(code).toBe(2);
     expect(lines).toEqual([`нет папки журналов: ${missing}`, USAGE]);
+  });
+
+  it('check и calibrate без справки или калибровки — код 2 и подсказка, что запустить', async () => {
+    const empty = makeLogDir({});
+
+    expect(await cli(['check', '--profile', 'phone'], empty)).toEqual({
+      code: 2,
+      lines: ['нет справки или калибровки phone: сначала twin reference и twin calibrate'],
+    });
+    expect(await cli(['calibrate', '--profile', 'pc'], empty)).toEqual({
+      code: 2,
+      lines: ['нет справки pc: сначала twin reference'],
+    });
   });
 });
 
 describe('профиль двойника', () => {
-  const reference = (): TwinReference => {
-    const { dir } = runReference({ [`${C2_GAME}.log`]: phoneGameLog('Mob', 'bot08twin') });
+  const reference = async (): Promise<TwinReference> => {
+    const { dir } = await runReference({ [`${C2_GAME}.log`]: phoneGameLog('Mob', 'bot08twin') });
     return JSON.parse(readFileSync(join(dir, 'phone.json'), 'utf8')) as TwinReference;
   };
 
-  it('из справки без калибровки: канал по задержке сети, настройки, рука, огонь, манёвр, позиция', () => {
-    const profile = twinProfile(reference(), null);
+  it('из справки без калибровки: канал по задержке сети, настройки, рука, огонь, манёвр, позиция', async () => {
+    const profile = twinProfile(await reference(), null);
 
     expect(profile).toMatchObject({
       name: 'phone',
@@ -166,7 +203,10 @@ describe('профиль двойника', () => {
       calibration: null,
     });
     expect(profile.fire.noStartPauseShare).toBe(0);
-    expect(profile.hand.errorDecilesDeg).toHaveLength(11);
+    for (const band of DISTANCE_BUCKET_LABELS) {
+      expect(profile.hand.errorDecilesDeg[band]).toHaveLength(11);
+      expect(profile.manoeuvre.courseDecilesDeg.sight[band]).toHaveLength(11);
+    }
     expect(profile.fire.longPausePerMinute).toBeGreaterThan(0);
     expect(profile.fire.releaseMeanS).toBeCloseTo(10 / TICK_RATE, 4);
     expect(profile.manoeuvre.stickDeciles.every((value) => value === 0.8)).toBe(true);
@@ -174,11 +214,10 @@ describe('профиль двойника', () => {
     expect(profile.cover?.distanceBand.near).toBeGreaterThan(0);
   });
 
-  it('калибровка переходит в профиль как есть; без позиции и настроек в справке', () => {
+  it('калибровка переходит в профиль как есть; без позиции и настроек в справке', async () => {
     const calibration: TwinCalibration = {
       correlationTicks: 9,
       lagTicks: 3,
-      leadShare: 0.1,
       holdShare: {
         'visible|<300': 0.8,
         'visible|300–600': 0.9,
@@ -187,13 +226,10 @@ describe('профиль двойника', () => {
         'hidden|300–600': 0.8,
         'hidden|>600': 0.3,
       },
-      decisionScale: 1.2,
-      kiteChance: 0.5,
-      circleChance: 0.2,
       reverseChance: 0,
       coverHoldShare: 0.9,
     };
-    const source = reference();
+    const source = await reference();
     expect(twinProfile(source, calibration).calibration).toEqual(calibration);
 
     const noPosition = structuredClone(source);
@@ -203,5 +239,48 @@ describe('профиль двойника', () => {
     const noSettings = structuredClone(source);
     noSettings.main.settings = null;
     expect(() => twinProfile(noSettings, null)).toThrow('настройки клиента');
+  });
+
+  it('ошибка руки и угол хода по корзине — от 25 выстрелов и 10 с движения в корзине, иначе по всем', async () => {
+    const source = await reference();
+    const summary = (n: number, value: number): Distribution => ({
+      n,
+      q1: value,
+      median: value,
+      q3: value,
+      deciles: new Array<number>(11).fill(value),
+    });
+    const noShare = { part: 0, total: 0, pct: null };
+    const valueOf = (base: number, index: number): number => base + index;
+    const withBands = (shots: number, courseTicks: number): TwinReference => {
+      const copy = structuredClone(source);
+      copy.main.aim.standingErrDeg = summary(100, 20);
+      copy.movement.courseAllDeg = summary(1000, 90);
+      DISTANCE_BUCKET_LABELS.forEach((band, index) => {
+        copy.main.aim.byBucket[band] = {
+          standingErrDeg: summary(shots, valueOf(7, index)),
+          movingErrCurDeg: null,
+          movingErrLeadDeg: null,
+          tankSizeDeg: null,
+          hitAll: noShare,
+          hitStanding: noShare,
+          hitMoving: noShare,
+        };
+        copy.movement.courseDeg.sight[band] = summary(courseTicks, valueOf(40, index));
+        copy.movement.courseDeg.hidden[band] = summary(courseTicks, valueOf(50, index));
+      });
+      return copy;
+    };
+
+    const enough = twinProfile(withBands(25, 10 * TICK_RATE), null);
+    const scarce = twinProfile(withBands(24, 10 * TICK_RATE - 1), null);
+    DISTANCE_BUCKET_LABELS.forEach((band, index) => {
+      expect(enough.hand.errorDecilesDeg[band][5]).toBe(valueOf(7, index));
+      expect(enough.manoeuvre.courseDecilesDeg.sight[band][5]).toBe(valueOf(40, index));
+      expect(enough.manoeuvre.courseDecilesDeg.hidden[band][5]).toBe(valueOf(50, index));
+      expect(scarce.hand.errorDecilesDeg[band][5]).toBe(20);
+      expect(scarce.manoeuvre.courseDecilesDeg.sight[band][5]).toBe(90);
+      expect(scarce.manoeuvre.courseDecilesDeg.hidden[band][5]).toBe(90);
+    });
   });
 });

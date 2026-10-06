@@ -7,6 +7,14 @@
     "./bots/ladder": {
       "types": "./dist/bots/ladder.d.ts",
       "default": "./dist/bots/ladder.js"
+    },
+    "./room": {
+      "types": "./dist/room.d.ts",
+      "default": "./dist/room.js"
+    },
+    "./gameLog": {
+      "types": "./dist/gameLog.d.ts",
+      "default": "./dist/gameLog.js"
     }
   },
   "scripts": {

@@ -27,20 +27,30 @@ export const SHOT_KIND = {
 } as const;
 export type ShotKind = (typeof SHOT_KIND)[keyof typeof SHOT_KIND];
 
-export interface DistanceBucket {
-  low: number;
-  high: number;
-  label: string;
-}
-
 const NEAR_DISTANCE = 300;
 export const FAR_DISTANCE = 600;
 export const MID_DISTANCE_LABEL = '300–600';
+export const DISTANCE_BUCKET_LABELS = ['<300', MID_DISTANCE_LABEL, '>600'] as const;
+export type DistanceBucketLabel = (typeof DISTANCE_BUCKET_LABELS)[number];
+
+export interface DistanceBucket {
+  low: number;
+  high: number;
+  label: DistanceBucketLabel;
+}
+
 export const DISTANCE_BUCKETS: readonly DistanceBucket[] = [
   { low: 0, high: NEAR_DISTANCE, label: '<300' },
   { low: NEAR_DISTANCE, high: FAR_DISTANCE, label: MID_DISTANCE_LABEL },
   { low: FAR_DISTANCE, high: Infinity, label: '>600' },
 ];
+
+export function distanceBucketOf(distance: number): DistanceBucketLabel {
+  if (distance < NEAR_DISTANCE) {
+    return '<300';
+  }
+  return distance < FAR_DISTANCE ? MID_DISTANCE_LABEL : '>600';
+}
 
 export interface ShotRow {
   gt: number;
@@ -57,11 +67,6 @@ export interface ShotRow {
   bucket: string;
   isHit: boolean;
   isRicochetHit: boolean;
-}
-
-function bucketOf(distance: number): string {
-  const bucket = DISTANCE_BUCKETS.find((candidate) => candidate.low <= distance && distance < candidate.high);
-  return bucket?.label ?? DISTANCE_BUCKETS[DISTANCE_BUCKETS.length - 1]?.label ?? '';
 }
 
 function ticksByGt(round: ParsedRound): Map<number, Tick> {
@@ -133,7 +138,7 @@ export function analyzeShots(
       kind: shotKind(isMoving, errCur, errLead, size),
       leadFraction: leadFraction === null ? null : roundTo(leadFraction, 2),
       hasLineOfSight: isClear(walls, me.x, me.y, target.x, target.y),
-      bucket: bucketOf(distance),
+      bucket: distanceBucketOf(distance),
       isHit,
       isRicochetHit: isHit && bullet.hasBounced,
     });

@@ -184,6 +184,7 @@ describe('паузы огня', () => {
     }
     const fire = profileMetrics(profileRoundsOf({ 'PAUS.log': builder.text() })).fire;
     const minutes = fightTicks / TICK_RATE / 60;
+    const afterStartMinutes = (fightTicks - 60) / TICK_RATE / 60;
 
     expect(fire.startPauseS).toMatchObject({ n: 1, median: 2 });
     expect(fire.startPauseSight).toMatchObject({ part: 60, total: 60 });
@@ -202,11 +203,46 @@ describe('паузы огня', () => {
     });
     expect(fire.pausesByLength['2–5 с']?.time).toMatchObject({ part: 70, total: 100 });
     expect(fire.releaseMeanS).toBeCloseTo(20 / TICK_RATE, 6);
-    expect(fire.longPausesPerMinute).toBeCloseTo(1 / minutes, 6);
+    expect(fire.longPausesPerMinute).toBeCloseTo(1 / afterStartMinutes, 6);
     expect(fire.longPauseS?.median).toBeCloseTo(70 / TICK_RATE, 6);
     expect(fire.guardHoldsPerMinute).toBeCloseTo(2 / minutes, 6);
     expect(fire.readyShots).toMatchObject({ part: 2, total: 2 });
     expect(fire.intervalExcessTicks).toMatchObject({ n: 2, median: 0 });
     expect(fire.shotsPerMinute).toBeCloseTo(3 / minutes, 6);
+  });
+
+  it('стартовая пауза кончается на первом удержании предохранителем; огонь по контекстам — после неё', () => {
+    const human = pose(200, OPEN_Y);
+    const bot = pose(650, OPEN_Y, Math.PI, Math.PI);
+    const guardTick = 20;
+    const fireFrom = 60;
+    const fightTicks = 300;
+    const builder = startDuel();
+    builder.client(HUMAN, 'flags autoaim=0 guard=1');
+    builder.roundStart(0, 0).frames(countdownFrames([bot, human]));
+    for (let tick = 0; tick < fightTicks; tick++) {
+      builder.frame(
+        fightFrame([bot, human], {
+          actions: [IDLE, action(0, 0, 1, tick >= fireFrom)],
+          events: [
+            ...(tick === fireFrom ? [shotEvent(HUMAN, human)] : []),
+            ...(tick === fightTicks - 1 ? [roundOver(BOT)] : []),
+          ],
+        }),
+      );
+      if (tick === guardTick) {
+        builder.client(HUMAN, 'guard hold');
+      }
+    }
+    const fire = profileMetrics(profileRoundsOf({ 'GSTA.log': builder.text() })).fire;
+    const afterStart = fightTicks - guardTick;
+
+    expect(fire.startPauseS).toMatchObject({ n: 1, median: guardTick / TICK_RATE });
+    expect(fire.midPauses).toBe(0);
+    expect(fire.heldAfterStartByContext['visible|300–600']).toMatchObject({
+      part: fightTicks - fireFrom,
+      total: afterStart,
+    });
+    expect(fire.longPausesPerMinute).toBe(0);
   });
 });

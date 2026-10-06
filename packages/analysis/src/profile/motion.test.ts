@@ -78,6 +78,18 @@ describe('движение', () => {
     expect(movement.flipsPerMinute).toBeCloseTo(1 / (ticks / TICK_RATE / 60), 6);
     expect(movement.speed?.median).toBeCloseTo(step * TICK_RATE, 6);
     expect(movement.kite).toMatchObject({ part: half, total: ticks });
+    // Тик 0 — с места; поворот назад виден по позам на тик позже смены газа.
+    expect(movement.motionBySight.still.sight).toMatchObject({ part: 1, total: ticks });
+    expect(movement.motionBySight.away.sight).toMatchObject({ part: half, total: ticks });
+    expect(movement.motionBySight.toward.sight).toMatchObject({ part: half - 1, total: ticks });
+    // Весь ход дальше 600: угол 180° от противника и 0° к нему, стоящий тик в угол не идёт.
+    const far = movement.courseDeg.sight['>600'];
+    expect(far?.n).toBe(ticks - 1);
+    expect(far?.deciles[0]).toBeCloseTo(0, 6);
+    expect(far?.deciles[10]).toBeCloseTo(180, 6);
+    expect(movement.courseAllDeg).toEqual(far);
+    expect(movement.courseDeg.sight['<300']).toBeNull();
+    expect(Object.values(movement.courseDeg.hidden).every((value) => value === null)).toBe(true);
     expect(movement.sight).toMatchObject({ part: ticks, total: ticks });
     expect(movement.wallDistance?.median).toBeCloseTo(OPEN_Y, 6);
     expect(movement.nearWall.part).toBe(0);
@@ -98,7 +110,84 @@ describe('кружение', () => {
     const movement = profileMetrics(profileRoundsOf({ 'CIRC.log': log })).movement;
 
     expect(movement.circle).toMatchObject({ part: ticks - 1, total: ticks });
+    // Часть дуги за стеной: тики делятся между «на виду» и «не виден» по той же видимости, что movement.sight.
+    const { sight, hidden } = movement.motionBySight.side;
+    expect(sight.total).toBe(movement.sight.part);
+    expect(hidden.total).toBe(ticks - movement.sight.part);
+    expect(hidden.total).toBeGreaterThan(0);
+    expect(sight.part + hidden.part).toBe(ticks - 1);
+    const courses = [...Object.values(movement.courseDeg.sight), ...Object.values(movement.courseDeg.hidden)];
+    expect(courses.reduce((total, course) => total + (course?.n ?? 0), 0)).toBe(ticks - 1);
+    for (const course of courses) {
+      expect(course === null || Math.abs(course.median - 90) < 1).toBe(true);
+    }
+    expect(movement.sideRunTicks).toMatchObject({ n: 1, median: ticks - 1 });
     expect(movement.distance?.median).toBeCloseTo(radius, 0);
+  });
+});
+
+describe('отрезки сближения и отдаления', () => {
+  const run = 40;
+  const lane = (x: number): TickSpec => ({ human: pose(x, OPEN_Y), humanAction: action(1) });
+
+  it('от противника, к нему и снова от него — в счёт только средний отрезок', () => {
+    const log = roundLog(3 * run, (tick) => {
+      if (tick < run) {
+        return lane(800 - 4 * tick);
+      }
+      return tick < 2 * run ? lane(640 + 4 * (tick - run)) : lane(800 - 4 * (tick - 2 * run));
+    });
+    const movement = profileMetrics(profileRoundsOf({ 'RADL.log': log })).movement;
+
+    expect(movement.radialRunTicks).toMatchObject({ n: 1, median: run });
+  });
+
+  it('дистанция меняется на 2 за тик и медленнее — направление не переключается', () => {
+    const log = roundLog(3 * run, (tick) => {
+      if (tick < run) {
+        return lane(800 - 4 * tick);
+      }
+      return tick < 2 * run ? lane(640 + 2 * (tick - run)) : lane(720 - 4 * (tick - 2 * run));
+    });
+    const movement = profileMetrics(profileRoundsOf({ 'SLOW.log': log })).movement;
+
+    expect(movement.radialRunTicks).toBeNull();
+  });
+});
+
+describe('отрезки хода поперёк линии', () => {
+  const leg = 30;
+  const step = 4;
+  // Поперёк линии на противника — по вертикали; вставка — ход к противнику по горизонтали.
+  function sideLog(gap: number, secondSign: number): string {
+    return roundLog(2 * leg + gap, (tick) => {
+      if (tick < leg) {
+        return { human: pose(800, OPEN_Y + step * tick), humanAction: action(1) };
+      }
+      const turnY = OPEN_Y + step * (leg - 1);
+      if (tick < leg + gap) {
+        return { human: pose(800 + step * (tick - leg + 1), turnY), humanAction: action(1) };
+      }
+      const x = 800 + step * gap;
+      return { human: pose(x, turnY + secondSign * step * (tick - leg - gap + 1)), humanAction: action(1) };
+    });
+  }
+  it('перерыв в ходе поперёк до 0,5 с не рвёт отрезок, длиннее — рвёт', () => {
+    const gap = TICK_RATE / 2;
+    const merged = profileMetrics(profileRoundsOf({ 'SIDE.log': sideLog(gap, 1) })).movement.sideRunTicks;
+    const split = profileMetrics(profileRoundsOf({ 'SIDE.log': sideLog(gap + 1, 1) })).movement.sideRunTicks;
+
+    expect(merged).toMatchObject({ n: 1, median: 2 * leg - 1 });
+    expect(split?.n).toBe(2);
+    expect(split?.deciles[0]).toBe(leg - 1);
+  });
+
+  it('смена стороны закрывает отрезок сразу', () => {
+    const flipped = profileMetrics(profileRoundsOf({ 'SIDE.log': sideLog(0, -1) })).movement.sideRunTicks;
+
+    expect(flipped?.n).toBe(2);
+    expect(flipped?.deciles[0]).toBe(leg - 1);
+    expect(flipped?.deciles[10]).toBe(leg);
   });
 });
 

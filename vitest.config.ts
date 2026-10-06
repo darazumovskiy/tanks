@@ -10,6 +10,7 @@ export default defineConfig({
             'packages/{shared,server,analysis,twin}/src/**/*.test.ts',
             'packages/{shared,server}/test/**/*.test.ts',
           ],
+          globalSetup: ['packages/twin/test/buildDist.ts'],
         },
       },
       {
@@ -61,6 +62,8 @@ export default defineConfig({
         'packages/analysis/src/main.ts',
         'packages/analysis/src/logFixture.ts',
         'packages/twin/src/main.ts',
+        'packages/twin/src/stand/worker.ts',
+        'packages/twin/src/fixture.ts',
       ],
       thresholds: {
         'packages/server/src/**': { statements: 100, branches: 100, functions: 100, lines: 100 },

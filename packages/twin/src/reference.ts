@@ -9,24 +9,44 @@ import {
   type ProfileRound,
   type WinCount,
 } from '@tanks/analysis';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PROFILE_WINDOWS, profileSelection, type TwinProfileName, type TwinReference } from './profile.js';
+import {
+  PROFILE_WINDOWS,
+  profileSelection,
+  type TwinCalibration,
+  type TwinProfileName,
+  type TwinReference,
+} from './profile.js';
 
 const JSON_INDENT = 1;
+const REFERENCE_SUFFIX = '.json';
+const CALIBRATION_SUFFIX = '.calibration.json';
 // Числа справки — с четырьмя знаками после запятой: точнее журнал не меряет.
 const JSON_DIGITS = 4;
 const ROUNDING = 10 ** JSON_DIGITS;
 
-export type ReferenceResult = { reference: TwinReference } | { rounds: TwinReference['rounds'] };
+// outsideGames — игры ника, которых нет ни в одном периоде: списки периодов закрыты, в справку такие игры не идут.
+export type ReferenceResult = ({ reference: TwinReference } | { rounds: TwinReference['rounds'] }) & {
+  outsideGames: string[];
+};
 
 function isInPeriods(round: ProfileRound, periods: readonly string[]): boolean {
   return round.period !== null && periods.includes(round.period);
 }
 
+function outsideGamesOf(games: readonly LoggedGame[], name: TwinProfileName): string[] {
+  const windows = PROFILE_WINDOWS[name];
+  const listed = new Set(windows.periods.flatMap((period) => period.games));
+  return games
+    .filter((game) => game.analysis.summary.human_name === windows.nick && !listed.has(game.parsed.id))
+    .map((game) => game.parsed.id);
+}
+
 export function buildReference(games: readonly LoggedGame[], name: TwinProfileName): ReferenceResult {
   const windows = PROFILE_WINDOWS[name];
   const selected = selectProfileRounds(games, profileSelection(name));
+  const outsideGames = outsideGamesOf(games, name);
   const main = selected.kept.filter((round) => isInPeriods(round, windows.mainPeriods));
   const rounds = {
     total: selected.total,
@@ -36,9 +56,10 @@ export function buildReference(games: readonly LoggedGame[], name: TwinProfileNa
     missingGames: selected.missingGames,
   };
   if (main.length === 0) {
-    return { rounds };
+    return { rounds, outsideGames };
   }
   return {
+    outsideGames,
     reference: {
       profile: name,
       nick: windows.nick,
@@ -61,6 +82,13 @@ export function roundLines(nick: string, rounds: TwinReference['rounds']): strin
   return lines;
 }
 
+export function outsideLines(nick: string, outsideGames: readonly string[]): string[] {
+  if (outsideGames.length === 0) {
+    return [];
+  }
+  return [`Предупреждение: игры ${nick} вне периодов выборки, в справку не вошли: ${outsideGames.join(' ')}`];
+}
+
 // Победы главного окна с интервалом Уилсона 95 %, округлённым для печати.
 export function outcomeLine(outcome: WinCount): string {
   const interval = wilson(outcome.wins, outcome.rounds);
@@ -73,11 +101,33 @@ function roundNumbers(_key: string, value: unknown): unknown {
   return typeof value === 'number' ? Math.round(value * ROUNDING) / ROUNDING : value;
 }
 
-export function writeReference(reference: TwinReference, dir: string): string {
+function writeJson(dir: string, file: string, value: unknown): string {
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, `${reference.profile}.json`);
-  writeFileSync(path, `${JSON.stringify(reference, roundNumbers, JSON_INDENT)}\n`);
+  const path = join(dir, file);
+  writeFileSync(path, `${JSON.stringify(value, roundNumbers, JSON_INDENT)}\n`);
   return path;
+}
+
+function readJson(dir: string, file: string): unknown {
+  const path = join(dir, file);
+  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
+}
+
+export function writeReference(reference: TwinReference, dir: string): string {
+  return writeJson(dir, `${reference.profile}${REFERENCE_SUFFIX}`, reference);
+}
+
+export function writeCalibration(name: TwinProfileName, calibration: TwinCalibration, dir: string): string {
+  return writeJson(dir, `${name}${CALIBRATION_SUFFIX}`, calibration);
+}
+
+// Файлы пакета пишет этот же модуль, поэтому их форма известна; null — файла нет.
+export function loadReference(name: TwinProfileName, dir: string): TwinReference | null {
+  return readJson(dir, `${name}${REFERENCE_SUFFIX}`) as TwinReference | null;
+}
+
+export function loadCalibration(name: TwinProfileName, dir: string): TwinCalibration | null {
+  return readJson(dir, `${name}${CALIBRATION_SUFFIX}`) as TwinCalibration | null;
 }
 
 export function loadPlayerGames(logDir: string, name: TwinProfileName): LoggedGame[] {

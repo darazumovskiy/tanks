@@ -83,6 +83,16 @@ export function modeSamples(rounds: readonly ProfileRound[]): ModeSample[] {
   return result;
 }
 
+// Вероятность перехода за секунду по коэффициентам — та же модель, по которой их подбирает fitSwitchCoefficients.
+export function switchProbability(coefficients: Coefficients, features: ModeFeatures, positionSeconds: number): number {
+  const vector = featureVector(features, positionSeconds);
+  const logit = MODE_FEATURE_NAMES.reduce(
+    (total, name) => total + coefficients.weights[name] * vector[name],
+    coefficients.intercept,
+  );
+  return 1 / (1 + Math.exp(-logit));
+}
+
 // Индексы матриц ниже всегда в пределах размера: значение по умолчанию недостижимо.
 function at(values: readonly number[], index: number): number {
   return values[index] ?? 0;

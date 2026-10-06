@@ -95,6 +95,24 @@ describe('угрозы и уклонение', () => {
     expect(dodge.botHitsNotThreat.total).toBe(0);
   });
 
+  it('выстрелы и попадания бота по корзинам дистанции до танка в тик выстрела', () => {
+    const far = pose(BOT_POSE.x + 700, OPEN_Y, Math.PI, Math.PI);
+    const near = pose(BOT_POSE.x + 200, OPEN_Y, Math.PI, Math.PI);
+    const log = roundLog(200, (tick) => ({
+      human: tick < 60 ? far : near,
+      humanAction: action(0, 0, 1),
+      events:
+        tick === SHOT_TICK || tick === 80 ? [shotEvent(BOT, BOT_POSE), shotEvent(HUMAN, tick < 60 ? far : near)] : [],
+    }));
+    const outcomes = profileMetrics(profileRoundsOf({ 'BUCK.log': log })).outcomes;
+
+    expect(outcomes.botShotsByBucket['<300']).toMatchObject({ part: 1, total: 2 });
+    expect(outcomes.botShotsByBucket['300–600']).toMatchObject({ part: 0, total: 2 });
+    expect(outcomes.botShotsByBucket['>600']).toMatchObject({ part: 1, total: 2 });
+    expect(outcomes.botHitsByBucket['<300']?.total).toBe(1);
+    expect(outcomes.botHitsByBucket['>600']?.total).toBe(1);
+  });
+
   it('скорость танка для прямой езды — по смещению позы за 3 тика до выстрела бота', () => {
     // Танк тронулся за два тика до выстрела: за три тика он сместился на 8, а не на 12.
     const startTick = SHOT_TICK - 1;
