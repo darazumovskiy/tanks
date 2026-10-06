@@ -103,14 +103,14 @@ describe('лобби', () => {
   it('подсказка «i» называет минимум этой игры со склонением', () => {
     const view = mount();
     const hint = (): string => view.element.querySelector('.ffa-hint-text')?.textContent ?? '';
-    view.update(model(3, { minimum: 7, capacity: 10 }), 0);
-    expect(hint()).toBe(
-      'Стартуем, когда наберётся 7 танков и новые перестанут подтягиваться. Набилось до отказа — сразу.',
-    );
+    view.update(model(3, { minimum: 20, capacity: 30 }), 0);
+    expect(hint()).toBe('Набралось 20 танков — через пять секунд в бой. Опоздавшие влетят прямо в драку.');
     view.update(model(1, { minimum: 1, capacity: 10 }), 0);
-    expect(hint()).toContain('наберётся 1 танк и');
+    expect(hint()).toContain('Набрался 1 танк —');
     view.update(model(1, { minimum: 2, capacity: 10 }), 0);
-    expect(hint()).toContain('наберётся 2 танка и');
+    expect(hint()).toContain('Набралось 2 танка —');
+    view.update(model(1, { minimum: 21, capacity: 30 }), 0);
+    expect(hint()).toContain('Набрался 21 танк —');
   });
 
   it('открытая подсказка закрывается со скрытием лобби: при следующем показе она закрыта', () => {

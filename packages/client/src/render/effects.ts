@@ -35,6 +35,7 @@ interface Announcement {
   text: string;
   sub: string;
   color: string;
+  size: number;
   life: number;
   max: number;
 }
@@ -59,7 +60,14 @@ export interface FxEvent {
   flags: number;
 }
 
-type FxAnnouncement = 'zoneStart' | 'selfHit' | 'firstBlood';
+type FxAnnouncementKind = 'zoneStart' | 'selfHit' | 'firstBlood';
+
+// size и duration — доли базового объявления: заголовок 56 точек, 1,8 с.
+export interface FxAnnouncement {
+  kind: FxAnnouncementKind;
+  size: number;
+  duration: number;
+}
 
 // Что событие делает с экраном целиком. Решает вызывающий: дуэль и толпа трясут и объявляют по своим правилам.
 // hasParticles — частицы, следы, цифры и отдача на месте события; без них событие далеко за окном только объявляется.
@@ -97,6 +105,7 @@ const TREAD_EVERY_TICKS = 2;
 const TREAD_MIN_SPEED = 8;
 const DECAL_FADE_EVERY_TICKS = 45;
 const ZONE_ANNOUNCE_COLOR = '#ff4d5e';
+const ANNOUNCE_SECONDS = 1.8;
 
 function particle(partial: Partial<Particle> & Pick<Particle, 'kind' | 'x' | 'y' | 'max'>): Particle {
   return {
@@ -319,18 +328,18 @@ export class Effects {
 
   // «САМ СЕБЯ!» — цветом того, кто попал в себя; «ПЕРВАЯ КРОВЬ» — цветом и именем стрелка.
   private announceFor(announcement: FxAnnouncement, event: FxEvent): void {
-    switch (announcement) {
+    switch (announcement.kind) {
       case 'zoneStart':
-        this.announce('ЗОНА СУЖАЕТСЯ', ZONE_ANNOUNCE_COLOR, 'вне круга — урон');
+        this.announce(announcement, 'ЗОНА СУЖАЕТСЯ', ZONE_ANNOUNCE_COLOR, 'вне круга — урон');
         break;
       case 'selfHit':
         if (event.tank !== null) {
-          this.announce('САМ СЕБЯ!', this.colorOf(event.tank), 'рикошетом');
+          this.announce(announcement, 'САМ СЕБЯ!', this.colorOf(event.tank), 'рикошетом');
         }
         break;
       case 'firstBlood':
         if (event.by !== null) {
-          this.announce('ПЕРВАЯ КРОВЬ', this.colorOf(event.by), this.nameOf(event.by));
+          this.announce(announcement, 'ПЕРВАЯ КРОВЬ', this.colorOf(event.by), this.nameOf(event.by));
         }
         break;
     }
@@ -454,8 +463,15 @@ export class Effects {
     this.popups.push({ text, x, y, color, size, life: 0, max });
   }
 
-  private announce(text: string, color: string, sub: string): void {
-    this.announcements.push({ text, sub, color, life: 0, max: 1.8 });
+  private announce(announcement: FxAnnouncement, text: string, color: string, sub: string): void {
+    this.announcements.push({
+      text,
+      sub,
+      color,
+      size: announcement.size,
+      life: 0,
+      max: ANNOUNCE_SECONDS * announcement.duration,
+    });
   }
 
   drawDecals(ctx: CanvasRenderingContext2D, camera: Camera): void {
@@ -624,22 +640,23 @@ export class Effects {
     const k = announcement.life / announcement.max;
     const enter = easeOut(k / 0.12);
     const alpha = k > 0.75 ? 1 - (k - 0.75) / 0.25 : 1;
+    const s = announcement.size;
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(0, y - 62, viewWidth, announcement.sub !== '' ? 104 : 82);
+    ctx.fillRect(0, y - 62 * s, viewWidth, (announcement.sub !== '' ? 104 : 82) * s);
     ctx.fillStyle = announcement.color;
-    ctx.fillRect(0, y - 62, viewWidth * enter, 4);
-    ctx.font = `${String(Math.round(56 * (0.8 + 0.2 * enter)))}px ${HEAD_FONT}`;
+    ctx.fillRect(0, y - 62 * s, viewWidth * enter, 4 * s);
+    ctx.font = `${String(Math.round(56 * s * (0.8 + 0.2 * enter)))}px ${HEAD_FONT}`;
     ctx.shadowColor = announcement.color;
-    ctx.shadowBlur = 20;
+    ctx.shadowBlur = 20 * s;
     ctx.fillText(announcement.text, viewWidth / 2, y);
     ctx.shadowBlur = 0;
     if (announcement.sub !== '') {
-      ctx.font = `600 20px ${BODY_FONT}`;
+      ctx.font = `600 ${String(Math.round(20 * s))}px ${BODY_FONT}`;
       ctx.fillStyle = 'rgba(255,255,255,0.8)';
-      ctx.fillText(announcement.sub, viewWidth / 2, y + 30);
+      ctx.fillText(announcement.sub, viewWidth / 2, y + 30 * s);
     }
     ctx.restore();
   }

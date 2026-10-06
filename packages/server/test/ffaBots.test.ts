@@ -70,7 +70,7 @@ const FAST: FfaOptions = {
   ...DEFAULT_FFA_OPTIONS,
   countdownTicks: 3,
   resultsTicks: 5,
-  lobbyQuietTicks: 5,
+  lobbyWaitTicks: 5,
   reconnectTicks: 2000,
   idleWarnTicks: 1_000_000,
   idleKickTicks: 2_000_000,
@@ -83,7 +83,7 @@ const TARGET: Stats = { armor: 0, engine: 5, gun: 0, reload: 5 };
 const AIM_TOLERANCE = 0.02;
 const WAIT_MS = 20_000;
 const TEST_TIMEOUT_MS = 60_000;
-const LONG_QUIET_TICKS = 30_000;
+const LONG_WAIT_TICKS = 30_000;
 // Финал наступает, когда зона накрыла половину мест появления: на этой карте — угловые места, через 2,96 с
 // шестисекундного матча, раньше, чем у появившихся с началом боя кончается неуязвимость. Все появляются на тике
 // начала боя в центральных местах, которые зона не накрывает, поэтому к финалу все живы на поле. Медленный тик
@@ -386,7 +386,7 @@ describe('добор серверными ботами', () => {
   it(
     'первый человек в лобби: состав уже добран ботами по пирамиде, ники «Имя [уровень]», 7 из 10, старт назначен',
     async () => {
-      await startApp({ lobbyQuietTicks: LONG_QUIET_TICKS });
+      await startApp({ lobbyWaitTicks: LONG_WAIT_TICKS });
       const { client } = await enter({ nickname: 'Дима' });
       const roster = await client.nextOfType(MessageType.FfaRoster);
       expect(roster.players.map((player) => [player.nickname, player.isBot])).toEqual([
@@ -394,7 +394,7 @@ describe('добор серверными ботами', () => {
         ...PYRAMID_OF_SIX.map((name) => [name, true]),
       ]);
       const state = await client.nextOfType(MessageType.FfaState);
-      expect(state).toMatchObject({ phase: FfaPhase.Lobby, players: 7, minimum: 7, ticksLeft: LONG_QUIET_TICKS });
+      expect(state).toMatchObject({ phase: FfaPhase.Lobby, players: 7, minimum: 7, ticksLeft: LONG_WAIT_TICKS });
     },
     TEST_TIMEOUT_MS,
   );
@@ -402,7 +402,7 @@ describe('добор серверными ботами', () => {
   it(
     'люди приходят и уходят в лобби: оставшиеся боты — пирамида нужного числа, добор — недостающий уровень, бот уровня 7 один',
     async () => {
-      await startApp({ lobbyQuietTicks: LONG_QUIET_TICKS, reconnectTicks: 20 });
+      await startApp({ lobbyWaitTicks: LONG_WAIT_TICKS, reconnectTicks: 20 });
       const first = new View(await enter());
       await first.until((view) => view.roster.length === 7, 'добор');
       const second = await enter();

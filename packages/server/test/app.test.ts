@@ -289,7 +289,7 @@ describe('переключатели общей игры из окружения
   it('минимум 1 — матч стартует с одним игроком; длительности лобби, матча и итогов — из переменных', async () => {
     await restart({
       FFA_MINIMUM: '1',
-      FFA_LOBBY_QUIET_SECONDS: '1',
+      FFA_LOBBY_WAIT_SECONDS: '1',
       FFA_MATCH_SECONDS: '2',
       FFA_RESULTS_SECONDS: '1',
     });
@@ -306,7 +306,7 @@ describe('переключатели общей игры из окружения
   it('бездействие: предупреждение и выкидывание — из переменных', async () => {
     await restart({
       FFA_MINIMUM: '1',
-      FFA_LOBBY_QUIET_SECONDS: '1',
+      FFA_LOBBY_WAIT_SECONDS: '1',
       FFA_IDLE_WARN_SECONDS: '1',
       FFA_IDLE_KICK_SECONDS: '2',
     });
@@ -324,7 +324,7 @@ describe('переключатели общей игры из окружения
     await restart({ FFA_MINIMUM: '', FFA_MATCH_SECONDS: '', FFA_SERVER_BOTS: '' });
     const client = await connect();
     client.join('ffa10');
-    expect(await stateOf(client, FfaPhase.Lobby)).toMatchObject({ minimum: 7, players: 7, ticksLeft: 10 * TICK_RATE });
+    expect(await stateOf(client, FfaPhase.Lobby)).toMatchObject({ minimum: 7, players: 7, ticksLeft: 5 * TICK_RATE });
   });
 
   it('FFA_SERVER_BOTS=0 — игру ботами не добирает', async () => {
@@ -341,7 +341,7 @@ describe('переключатели общей игры из окружения
   // Медиана прохода хода ботов и пропуски решений на тик за полсекунды боя ffa10 с шестью ботами. Проход меряется
   // процессорным временем потока, пропуски — от бюджета, поэтому посторонняя нагрузка машины на них не влияет.
   async function botPass(ffaEnv: Record<string, string>): Promise<{ medianMs: number; skipsPerTick: number }> {
-    await restart({ FFA_LOBBY_QUIET_SECONDS: '1', ...ffaEnv });
+    await restart({ FFA_LOBBY_WAIT_SECONDS: '1', ...ffaEnv });
     const client = await connect();
     client.join('ffa10');
     await stateOf(client, FfaPhase.Fight);
@@ -375,7 +375,7 @@ describe('переключатели общей игры из окружения
     ['FFA_MINIMUM', '2.5'],
     ['FFA_MINIMUM', '11'],
     ['FFA_MATCH_SECONDS', '2185'],
-    ['FFA_LOBBY_QUIET_SECONDS', '-1'],
+    ['FFA_LOBBY_WAIT_SECONDS', '-1'],
     ['FFA_RESULTS_SECONDS', '1e9'],
     ['FFA_IDLE_WARN_SECONDS', 'x'],
     ['FFA_IDLE_KICK_SECONDS', '3000'],
@@ -546,6 +546,19 @@ describe('вход в комнату', () => {
     b.join('room2', 'Боб');
     const start = await b.nextOfType(MessageType.RoundStart);
     expect(start.tanks[0].stats).toEqual({ armor: 3, engine: 3, gun: 2, reload: 2 });
+  });
+
+  it('Leave в дуэли — уход, как закрытие: место соперника свободно, снимки прекращаются', async () => {
+    const [a, b] = await joinedPair('quit');
+    await snapshotAfterCountdown(a);
+    b.send({ type: MessageType.Leave });
+    let state = await a.next();
+    while (state.type !== MessageType.RoomState) {
+      state = await a.next();
+    }
+    expect(state.slots[1].isTaken).toBe(false);
+    await expect(a.nextOfType(MessageType.Snapshot, 300)).rejects.toThrow();
+    b.close();
   });
 
   it('после ухода игрока комната ждёт, снимки прекращаются, пустая комната удаляется', async () => {

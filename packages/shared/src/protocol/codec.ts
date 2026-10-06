@@ -446,6 +446,8 @@ export function encode(message: Message): Uint8Array {
     case MessageType.Ping:
       writer.f64(message.clientTime);
       break;
+    case MessageType.Leave:
+      break;
     case MessageType.Welcome:
       writer.u8(message.side).string(message.roomCode);
       break;
@@ -598,6 +600,8 @@ export function decode(data: Uint8Array): Message {
       return { type, seq: reader.u32(), action: readAction(reader) };
     case MessageType.Ping:
       return { type, clientTime: reader.f64() };
+    case MessageType.Leave:
+      return { type };
     case MessageType.Welcome:
       return { type, side: readSide(reader), roomCode: reader.string() };
     case MessageType.RoomState:
@@ -659,5 +663,10 @@ export function decode(data: Uint8Array): Message {
 }
 
 export function isClientMessage(message: Message): message is ClientMessage {
-  return message.type === MessageType.Join || message.type === MessageType.Input || message.type === MessageType.Ping;
+  return (
+    message.type === MessageType.Join ||
+    message.type === MessageType.Input ||
+    message.type === MessageType.Ping ||
+    message.type === MessageType.Leave
+  );
 }

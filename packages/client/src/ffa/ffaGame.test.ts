@@ -606,10 +606,9 @@ describe('обрыв и возврат', () => {
     expect(harness.tokens.get(SIZE)).toBe('новый');
   });
 
-  it('возврат в тот же матч сохраняет ленту, следы, эффекты и первую кровь', () => {
+  it('возврат в тот же матч сохраняет ленту, следы и эффекты', () => {
     const { harness, world } = fighting();
     const first = harness.socket();
-    const onEvent = vi.spyOn(harness.effects, 'onEvent');
     first.receive(
       score([
         [ME, 0],
@@ -619,7 +618,6 @@ describe('обрыв и возврат', () => {
     step(world);
     first.receive(snapshotOf(world, { events: [event('death', 6, 900, 650, ME)] }));
     harness.frames(PICTURE_FRAMES);
-    expect(onEvent.mock.calls.map(([, options]) => options.announcement)).toContain('firstBlood');
     const reset = vi.spyOn(harness.effects, 'reset');
     first.drop();
     vi.advanceTimersByTime(1000);
@@ -635,10 +633,6 @@ describe('обрыв и возврат', () => {
     harness.frames(2);
     expect(reset).not.toHaveBeenCalled();
     expect(harness.state().feed).toEqual(['Дима ✕ Робот']);
-    onEvent.mockClear();
-    step(world);
-    second.receive(snapshotOf(world, { events: [event('death', ENEMY, 900, 650, ME)] }));
-    expect(onEvent.mock.calls.map(([, options]) => options.announcement)).not.toContain('firstBlood');
   });
 
   it('возврат после начала финала — финал по тику без события; возврат подбитым — «подбит» по убийце', () => {
@@ -912,8 +906,8 @@ function step(world: World): void {
   );
 }
 
-describe('первая кровь', () => {
-  function announcementsAfterOwnKill(rowsAtJoin: readonly (readonly [number, number])[]): unknown[] {
+describe('экран в толпе не трясётся', () => {
+  it('P1 своё первое убийство матча, свой выстрел и своя гибель: ни «ПЕРВАЯ КРОВЬ», ни тряски, ни вспышки', () => {
     const harness = makeGame();
     const onEvent = vi.spyOn(harness.effects, 'onEvent');
     const socket = harness.socket();
@@ -922,35 +916,21 @@ describe('первая кровь', () => {
     socket.receive(roster([ME, ENEMY, 6]));
     socket.receive(state(FfaPhase.Fight, 3000));
     socket.receive(matchStart());
-    socket.receive(score(rowsAtJoin));
     const world = arena([tank(ME, 600, 650), tank(ENEMY, 900, 650), tank(6, 1000, 650)]);
     step(world);
     socket.receive(snapshotOf(world));
     harness.frames(1);
     step(world);
-    socket.receive(snapshotOf(world, { events: [event('death', 6, 1000, 650, ME)] }));
+    socket.receive(
+      snapshotOf(world, {
+        events: [event('shot', ME, 640, 650), event('death', 6, 1000, 650, ME), event('death', ME, 600, 650, ENEMY)],
+      }),
+    );
     harness.frames(PICTURE_FRAMES);
-    return onEvent.mock.calls.map(([, options]) => options.announcement);
-  }
-
-  it('вошедший в идущий матч, где уже убивали, своё первое убийство «ПЕРВОЙ КРОВЬЮ» не объявляет', () => {
-    expect(
-      announcementsAfterOwnKill([
-        [ENEMY, 1],
-        [ME, 0],
-        [6, 0],
-      ]),
-    ).not.toContain('firstBlood');
-  });
-
-  it('в матче без убийств своё первое убийство — «ПЕРВАЯ КРОВЬ»', () => {
-    expect(
-      announcementsAfterOwnKill([
-        [ENEMY, 0],
-        [ME, 0],
-        [6, 0],
-      ]),
-    ).toContain('firstBlood');
+    expect(onEvent.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(onEvent.mock.calls.map(([, options]) => options.announcement)).toEqual(onEvent.mock.calls.map(() => null));
+    expect(harness.effects.shake).toBe(0);
+    expect(harness.effects.flashScreen).toBe(0);
   });
 });
 
@@ -1130,8 +1110,29 @@ describe('интерфейс матча', () => {
     harness.frames(2 * SECOND_FRAMES);
     expect(isShown(harness, '.ffa-lobby-copied')).toBe(false);
     click(harness, '.ffa-lobby', 'Выйти');
+    expect(harness.socket().sent.at(-1)).toEqual({ type: MessageType.Leave });
     expect(harness.socket().isClosedByClient).toBe(true);
     expect(harness.calls).toEqual(['home']);
+    expect(harness.tokens.get(SIZE)).toBe('пропуск');
+  });
+
+  it('P6 «⌂» в бою и «Выйти» на итогах: Leave, затем сокет закрыт и главная; пропуск остаётся', () => {
+    const fight = makeGame();
+    enterFight(fight, arena([tank(ME, 600, 650)]));
+    fight.game.leave();
+    expect(fight.socket().sent.at(-1)).toEqual({ type: MessageType.Leave });
+    expect(fight.socket().isClosedByClient).toBe(true);
+    expect(fight.calls).toEqual(['home']);
+    expect(fight.tokens.get(SIZE)).toBe('пропуск');
+
+    const results = makeGame();
+    enterFight(results, arena([tank(ME, 600, 650)]));
+    results.socket().receive(state(FfaPhase.Results, 150));
+    results.frames(1);
+    click(results, '.ffa-results', 'Выйти');
+    expect(results.socket().sent.filter((message) => message.type === MessageType.Leave)).toHaveLength(1);
+    expect(results.socket().isClosedByClient).toBe(true);
+    expect(results.calls).toEqual(['home']);
   });
 
   it('U1a вход по приглашению: номер игры уходит в каждый вход; попал куда звали — плашки нет', () => {

@@ -224,7 +224,11 @@ describe('старт раунда', () => {
     presenter.applyEvent(duelEvent('hit', 0));
     presenter.startRound();
     presenter.applyEvent(duelEvent('hit', 0));
-    expect(effects.events.map(({ options }) => options.announcement)).toEqual(['firstBlood', null, 'firstBlood']);
+    expect(effects.events.map(({ options }) => options.announcement?.kind ?? null)).toEqual([
+      'firstBlood',
+      null,
+      'firstBlood',
+    ]);
     expect(log).toEqual(['event hit', 'event hit', 'reset', 'resetCamera', 'event hit']);
   });
 });
@@ -250,7 +254,12 @@ describe('снимок сервера', () => {
       },
       {
         event: { kind: 'hit', tank: 1, by: 0, x: 300, y: 200, value: 28, dx: 1, dy: 0, flags: EventFlag.Ricochet },
-        options: { shake: 9, flash: 0, announcement: 'firstBlood', hasParticles: true },
+        options: {
+          shake: 9,
+          flash: 0,
+          announcement: { kind: 'firstBlood', size: 1, duration: 0.5 },
+          hasParticles: true,
+        },
       },
       {
         event: { kind: 'death', tank: 1, by: null, x: 300, y: 200, value: 28, dx: 1, dy: 0, flags: 0 },

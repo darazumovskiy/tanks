@@ -179,7 +179,7 @@ test('игрок нажал «В общий бой», пока главная с
   );
   // Переход в бой придерживается, пока главная не дочитает свежую сборку: иначе новая страница успела бы сменить
   // старую раньше, чем сверка решит перезагружаться.
-  await page.route(`${server.baseUrl}/ffa`, async (route) => {
+  await page.route(`${server.baseUrl}/ffa/30`, async (route) => {
     await fightHeld;
     await route.continue().catch(() => undefined);
   });
@@ -190,7 +190,7 @@ test('игрок нажал «В общий бой», пока главная с
   if (button === null) {
     throw new Error('#ffa-start не виден');
   }
-  const fightAsked = page.waitForRequest(`${server.baseUrl}/ffa`);
+  const fightAsked = page.waitForRequest(`${server.baseUrl}/ffa/30`);
   // Мышью, а не locator.click: тот ждёт конца начатого перехода, а переход здесь придержан.
   await page.mouse.click(button.x + button.width / 2, button.y + button.height / 2);
   await fightAsked;
@@ -198,7 +198,7 @@ test('игрок нажал «В общий бой», пока главная с
   releaseHome();
   await checkRead;
   releaseFight();
-  await expect(page).toHaveURL(`${server.baseUrl}/ffa`);
+  await expect(page).toHaveURL(`${server.baseUrl}/ffa/30`);
   await expect(page.locator('#home')).toBeHidden();
   await page.context().close();
 });

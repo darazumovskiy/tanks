@@ -1,11 +1,12 @@
 import type { Action, EndReason, FfaPlayerState, FfaSize, RoundRules, Side, Stats, ZonePlan } from '../engine/index.js';
 
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 export const MessageType = {
   Join: 1,
   Input: 2,
   Ping: 3,
+  Leave: 4,
   Welcome: 10,
   RoomState: 11,
   RoundStart: 12,
@@ -48,6 +49,11 @@ export interface InputMessage {
 export interface PingMessage {
   type: typeof MessageType.Ping;
   clientTime: number;
+}
+
+// Игрок уходит сам: общая игра держит его место короче, чем после обрыва.
+export interface LeaveMessage {
+  type: typeof MessageType.Leave;
 }
 
 export interface WelcomeMessage {
@@ -344,7 +350,7 @@ export interface FfaBulletsMessage {
   bullets: FfaBulletSnapshot[];
 }
 
-export type ClientMessage = JoinMessage | InputMessage | PingMessage;
+export type ClientMessage = JoinMessage | InputMessage | PingMessage | LeaveMessage;
 export type ServerMessage =
   | WelcomeMessage
   | RoomStateMessage

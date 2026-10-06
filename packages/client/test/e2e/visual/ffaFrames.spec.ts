@@ -55,7 +55,7 @@ const CANVAS_FRAMES: Omit<FfaFrameInfo, 'kind'>[] = [
   { id: 'floor-pending', screens: ['phone'] },
   { id: 'crowd-50', screens: ['phone'] },
   { id: 'zone-50', screens: ['phone'] },
-  { id: 'shield-shake', screens: ['phone'] },
+  { id: 'shield', screens: ['phone'] },
   { id: 'art-color', screens: ['phone'] },
   { id: 'arrows-one', screens: ['phone'] },
   { id: 'arrows-three', screens: ['phone'] },

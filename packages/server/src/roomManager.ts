@@ -2,7 +2,7 @@ import { DEFAULT_RULES, type FfaSize, type RoundRules, type Stats } from '@tanks
 import { botLevelOf, FfaInviteMiss, isBotRoomCode } from '@tanks/shared/protocol';
 import { createBot } from './bots/ladder.js';
 import { BotTurns, type BotTurnReport } from './crowd/botTurns.js';
-import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaConnection, type FfaOptions } from './ffaGame.js';
+import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaConnection, type FfaOptions, type FfaSeat } from './ffaGame.js';
 import { NO_LOG, type GameLog } from './gameLog.js';
 import {
   emptyPlayerCounts,
@@ -33,9 +33,10 @@ export interface FfaJoinRequest {
   gameId: string;
 }
 
-// release — что сделать с местом после ухода соединения.
+// quit — уход по кнопке «Выйти»; release — что сделать с комнатой после ухода соединения.
 interface Membership {
   seat: Seat;
+  quit: () => void;
   release: () => void;
 }
 
@@ -89,9 +90,13 @@ export class RoomManager {
     return this.memberships.get(connection)?.seat;
   }
 
+  // В дуэли выход кнопкой — то же, что закрытие соединения.
   attach(connection: Connection, room: Room, seat: Seat): void {
     this.memberships.set(connection, {
       seat,
+      quit: () => {
+        seat.leave();
+      },
       release: () => {
         this.releaseRoom(room);
       },
@@ -126,13 +131,16 @@ export class RoomManager {
 
   // Ушло соединение: место освобождается; общая игра держит игрока сама и удаляется в тике, когда опустеет.
   detach(connection: Connection): void {
-    const membership = this.memberships.get(connection);
-    if (membership === undefined) {
-      return;
-    }
-    this.memberships.delete(connection);
-    membership.seat.leave();
-    membership.release();
+    this.endMembership(connection, (membership) => {
+      membership.seat.leave();
+    });
+  }
+
+  // Игрок ушёл кнопкой: соединение отвязано от места, его команды и закрытие место больше не трогают.
+  quit(connection: Connection): void {
+    this.endMembership(connection, (membership) => {
+      membership.quit();
+    });
   }
 
   step(lateMs: number): void {
@@ -174,8 +182,24 @@ export class RoomManager {
     return counts;
   }
 
-  private attachFfa(connection: FfaConnection, seat: Seat): void {
-    this.memberships.set(connection, { seat, release: () => undefined });
+  private attachFfa(connection: FfaConnection, seat: FfaSeat): void {
+    this.memberships.set(connection, {
+      seat,
+      quit: () => {
+        seat.quit();
+      },
+      release: () => undefined,
+    });
+  }
+
+  private endMembership(connection: Connection, leave: (membership: Membership) => void): void {
+    const membership = this.memberships.get(connection);
+    if (membership === undefined) {
+      return;
+    }
+    this.memberships.delete(connection);
+    leave(membership);
+    membership.release();
   }
 
   private pickGame(size: FfaSize): FfaGame {

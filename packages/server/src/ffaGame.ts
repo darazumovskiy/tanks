@@ -67,11 +67,18 @@ export interface FfaConnection extends Connection {
   close(): void;
 }
 
+// Место игрока общей игры: кроме общего — выход кнопкой, после которого место держится короче, чем после обрыва.
+export interface FfaSeat extends Seat {
+  quit(): void;
+}
+
 export interface FfaOptions {
   countdownTicks: number;
   resultsTicks: number;
-  lobbyQuietTicks: number;
+  // Сколько лобби ждёт после того, как набран минимум; новые входы старт не отодвигают.
+  lobbyWaitTicks: number;
   reconnectTicks: number;
+  quitTicks: number;
   idleWarnTicks: number;
   idleKickTicks: number;
   matchSeconds: number;
@@ -93,8 +100,9 @@ const SEED_LIMIT = 2 ** 31;
 export const DEFAULT_FFA_OPTIONS: FfaOptions = {
   countdownTicks: 3 * TICK_RATE,
   resultsTicks: 5 * TICK_RATE,
-  lobbyQuietTicks: 10 * TICK_RATE,
+  lobbyWaitTicks: 5 * TICK_RATE,
   reconnectTicks: 15 * TICK_RATE,
+  quitTicks: 10 * TICK_RATE,
   idleWarnTicks: 15 * TICK_RATE,
   idleKickTicks: 25 * TICK_RATE,
   matchSeconds: FFA.matchSeconds,
@@ -109,6 +117,7 @@ export const DEFAULT_FFA_OPTIONS: FfaOptions = {
 };
 
 // isBot — бот роя или серверный бот; serverBot — у серверного бота, его соединение внутри процесса.
+// holdTicks — сколько тиков без соединения держится место: окно обрыва или выхода кнопкой.
 interface GamePlayer {
   id: number;
   token: string;
@@ -121,6 +130,7 @@ interface GamePlayer {
   appliedAction: Action;
   idleTicks: number;
   offlineTicks: number;
+  holdTicks: number;
 }
 
 type ServerBotPlayer = GamePlayer & { serverBot: ServerBot };
@@ -166,7 +176,7 @@ function surplusBots(ordered: readonly ServerBotPlayer[], total: number, count: 
 }
 
 type Stage =
-  | { phase: typeof FfaPhase.Lobby; quietTicks: number }
+  | { phase: typeof FfaPhase.Lobby; waitTicks: number }
   | { phase: typeof FfaPhase.Countdown; match: FfaMatch; ticksLeft: number }
   | { phase: typeof FfaPhase.Fight; match: FfaMatch }
   | { phase: typeof FfaPhase.Results; match: FfaMatch; ticksLeft: number };
@@ -174,6 +184,8 @@ type Stage =
 type LeaveReason = typeof FFA_LEAVE_OFFLINE | typeof FFA_LEAVE_IDLE | typeof FFA_LEAVE_YIELD;
 
 const TOKEN_BYTES = 12;
+const RELEASE_LOG = { offline: 'offline', quit: 'quit' } as const;
+type ReleaseLog = (typeof RELEASE_LOG)[keyof typeof RELEASE_LOG];
 // Вес признаков в порядке ухода серверного бота: живой на поле уходит позже обломков, обломки — позже бота без
 // танка, видимый — позже невидимого.
 const YIELD_RANK_ON_FIELD = 4;
@@ -227,7 +239,7 @@ export class FfaGame {
   readonly id = randomGameId();
   private readonly map: FfaMap;
   private players: GamePlayer[] = [];
-  private stage: Stage = { phase: FfaPhase.Lobby, quietTicks: 0 };
+  private stage: Stage = { phase: FfaPhase.Lobby, waitTicks: 0 };
   private tick = 0;
   private matchIndex = 0;
   private nextPlayerId = 1;
@@ -282,7 +294,7 @@ export class FfaGame {
     stats: Stats,
     isBot: boolean,
     inviteMiss: FfaInviteMiss = FfaInviteMiss.None,
-  ): Seat {
+  ): FfaSeat {
     const player = this.addPlayer(connection, nickname, stats, isBot, null, inviteMiss);
     if (this.stage.phase === FfaPhase.Lobby) {
       this.balanceBots();
@@ -324,11 +336,9 @@ export class FfaGame {
       appliedAction: { ...IDLE_ACTION },
       idleTicks: 0,
       offlineTicks: 0,
+      holdTicks: this.options.reconnectTicks,
     };
     this.players.push(player);
-    if (this.stage.phase === FfaPhase.Lobby) {
-      this.stage.quietTicks = 0;
-    }
     this.writeLog(`join id=${String(player.id)} nick=${player.nickname} bot=${isBot ? '1' : '0'}`);
     this.sendWelcome(player, connection, inviteMiss);
     return player;
@@ -434,7 +444,7 @@ export class FfaGame {
 
   // Возврат по пропуску: тот же игрок, номер и счёт; previous — соединение, которое игрок занимал до этого.
   // null — такого игрока в игре нет.
-  rejoin(token: string, connection: FfaConnection): { seat: Seat; previous: FfaConnection | null } | null {
+  rejoin(token: string, connection: FfaConnection): { seat: FfaSeat; previous: FfaConnection | null } | null {
     const player = this.players.find((candidate) => candidate.token === token);
     if (player === undefined) {
       return null;
@@ -508,7 +518,7 @@ export class FfaGame {
     }
   }
 
-  private seatFor(player: GamePlayer, connection: FfaConnection): Seat {
+  private seatFor(player: GamePlayer, connection: FfaConnection): FfaSeat {
     return {
       input: (seq, action) => {
         this.offer(player, seq, action);
@@ -517,14 +527,25 @@ export class FfaGame {
         connection.send(encode({ type: MessageType.Pong, clientTime, serverTick: this.tick }));
       },
       leave: () => {
-        if (!this.players.includes(player)) {
-          return;
-        }
-        player.connection = null;
-        player.offlineTicks = 0;
-        this.writeLog(`offline id=${String(player.id)}`);
+        this.release(player, this.options.reconnectTicks, RELEASE_LOG.offline);
+      },
+      // Вне боя танка на поле нет: ушедший кнопкой отпускает место на ближайшем тике и не держит минимум старта.
+      quit: () => {
+        const isOffField = this.stage.phase === FfaPhase.Lobby || this.stage.phase === FfaPhase.Results;
+        this.release(player, isOffField ? 0 : this.options.quitTicks, RELEASE_LOG.quit);
       },
     };
+  }
+
+  // Соединение ушло: место держится holdTicks. Игрока, уже убранного из игры (выкинут за бездействие), не трогает.
+  private release(player: GamePlayer, holdTicks: number, logTag: ReleaseLog): void {
+    if (!this.players.includes(player)) {
+      return;
+    }
+    player.connection = null;
+    player.offlineTicks = 0;
+    player.holdTicks = holdTicks;
+    this.writeLog(`${logTag} id=${String(player.id)}`);
   }
 
   private sendWelcome(player: GamePlayer, connection: FfaConnection, inviteMiss: FfaInviteMiss): void {
@@ -557,7 +578,7 @@ export class FfaGame {
         continue;
       }
       player.offlineTicks++;
-      if (player.offlineTicks >= this.options.reconnectTicks) {
+      if (player.offlineTicks >= player.holdTicks) {
         this.removePlayer(player, FFA_LEAVE_OFFLINE);
       }
     }
@@ -586,11 +607,11 @@ export class FfaGame {
       return;
     }
     if (this.players.length < this.minimum) {
-      stage.quietTicks = 0;
+      stage.waitTicks = 0;
       return;
     }
-    stage.quietTicks++;
-    if (stage.quietTicks >= this.options.lobbyQuietTicks) {
+    stage.waitTicks++;
+    if (stage.waitTicks >= this.options.lobbyWaitTicks) {
       this.startCountdown();
     }
   }
@@ -694,7 +715,7 @@ export class FfaGame {
       this.startCountdown();
       return;
     }
-    this.stage = { phase: FfaPhase.Lobby, quietTicks: 0 };
+    this.stage = { phase: FfaPhase.Lobby, waitTicks: 0 };
     this.broadcast(this.stateMessage());
   }
 
@@ -800,7 +821,7 @@ export class FfaGame {
     const stage = this.stage;
     switch (stage.phase) {
       case FfaPhase.Lobby:
-        return this.lobbyTicksLeft(stage.quietTicks);
+        return this.lobbyTicksLeft(stage.waitTicks);
       case FfaPhase.Fight:
         return Math.round(stage.match.durationSeconds * TICK_RATE) - stage.match.world.tick;
       case FfaPhase.Countdown:
@@ -810,14 +831,14 @@ export class FfaGame {
   }
 
   // Полная игра стартует на ближайшем тике; без минимума старт не назначен.
-  private lobbyTicksLeft(quietTicks: number): number | null {
+  private lobbyTicksLeft(waitTicks: number): number | null {
     if (this.players.length >= this.size) {
       return 0;
     }
     if (this.players.length < this.minimum) {
       return null;
     }
-    return this.options.lobbyQuietTicks - quietTicks;
+    return this.options.lobbyWaitTicks - waitTicks;
   }
 
   private rosterMessage(): FfaRosterMessage {

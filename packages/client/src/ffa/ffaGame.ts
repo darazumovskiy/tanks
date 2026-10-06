@@ -270,6 +270,13 @@ export class FfaGame {
     this.net.close();
   }
 
+  // Игрок ушёл сам — «Выйти» или «⌂»: сервер держит место короче, чем после обрыва.
+  leave(): void {
+    this.net.leave();
+    this.close();
+    this.deps.goHome();
+  }
+
   toggleAutoFire(): boolean {
     const isOn = !this.input.isAutoFiring;
     this.setAutoFire(isOn);
@@ -369,7 +376,6 @@ export class FfaGame {
         },
         onFfaScore: (message) => {
           this.session.onScore(message);
-          this.fxPolicy.noteScore(message.rows);
         },
         onFfaBullets: (message) => {
           this.prediction?.resetBullets(message.bullets);
@@ -500,7 +506,6 @@ export class FfaGame {
 
   private resetMatchEffects(): void {
     this.effects.reset();
-    this.fxPolicy.reset();
     this.events.clear();
     this.camera.snap();
   }
@@ -834,10 +839,5 @@ export class FfaGame {
       return `/ffa/${String(this.options.size)}`;
     }
     return ffaInvitePath(this.options.size, gameId);
-  }
-
-  private leave(): void {
-    this.close();
-    this.deps.goHome();
   }
 }

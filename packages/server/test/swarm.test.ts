@@ -27,7 +27,7 @@ const QUICK: FfaOptions = {
   hasServerBots: false,
   countdownTicks: 3,
   resultsTicks: 5,
-  lobbyQuietTicks: 5,
+  lobbyWaitTicks: 5,
   matchSeconds: 20,
 };
 // Запас окна обзора вокруг точки обзора стрелка на задержку реакции: за 12 тиков танк проезжает меньше 80, а

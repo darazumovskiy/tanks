@@ -3,7 +3,7 @@ import type { FfaSnapshotEvent } from '@tanks/shared/protocol';
 import type { FrameScreenId } from './model.js';
 
 // Кадры эталонов толпы на карте 50: пол кусками поверх подложки, толпа из 12 танков, зона в начале сжатия с кромкой,
-// кольцо неуязвимости при тряске, рисунок танка цвета вне палитры, стрелки и линия выстрела. Положения подобраны мимо
+// неуязвимость рядом с гибелью, рисунок танка цвета вне палитры, стрелки и линия выстрела. Положения подобраны мимо
 // стен карты.
 
 export interface StandTank {
@@ -63,8 +63,8 @@ const PHONE: readonly FrameScreenId[] = ['phone'];
 const BOTH: readonly FrameScreenId[] = ['phone', 'desktop'];
 export const STAND_ME = 1;
 const ME = STAND_ME;
-// Тряска от чужой гибели в кадре гаснет за доли секунды: снимок — около её пика.
-const DEATH_SHAKE_AGE_S = 0.04;
+// Чужая гибель в кадре — у пика взрыва: кадр держит, что экран толпы от неё не трясётся.
+const NEARBY_DEATH_AGE_S = 0.04;
 const SHIELD_LEFT_S = 2.2;
 // Зона в начале сжатия: круг уже зашёл на угол поля карты 50.
 const ZONE_EARLY_SHRINK_S = 48.8;
@@ -257,8 +257,8 @@ export const FFA_FRAMES: readonly FfaStandFrame[] = [
   },
   {
     ...BASE,
-    id: 'shield-shake',
-    title: 'кольцо неуязвимости у своего и чужого при тряске от гибели в кадре',
+    id: 'shield',
+    title: 'кольцо-таймер у своего и чужого с разным остатком, полупрозрачные корпуса; гибель рядом экран не трясёт',
     screens: PHONE,
     tanks: [
       SHIELD_OWN,
@@ -267,7 +267,7 @@ export const FFA_FRAMES: readonly FfaStandFrame[] = [
     ],
     events: [
       {
-        ageS: DEATH_SHAKE_AGE_S,
+        ageS: NEARBY_DEATH_AGE_S,
         event: {
           kind: 'death',
           tank: 5,

@@ -1,9 +1,14 @@
 import { EventFlag, type SnapshotEvent } from '@tanks/shared/protocol';
-import type { FxEvent, FxEventOptions } from './effects.js';
+import type { FxAnnouncement, FxEvent, FxEventOptions } from './effects.js';
 
 const DUEL_SHAKE = { shot: 2.5, clash: 6, hit: 9, death: 26 } as const;
 const DEATH_SCREEN_FLASH = 0.55;
 const QUIET: FxEventOptions = { shake: 0, flash: 0, announcement: null, hasParticles: true };
+const DUEL_ANNOUNCEMENT = {
+  zoneStart: { kind: 'zoneStart', size: 1, duration: 1 },
+  selfHit: { kind: 'selfHit', size: 1, duration: 1 },
+  firstBlood: { kind: 'firstBlood', size: 1, duration: 0.5 },
+} as const satisfies Readonly<Record<string, FxAnnouncement>>;
 
 function hasFlag(event: SnapshotEvent, flag: number): boolean {
   return (event.flags & flag) !== 0;
@@ -57,7 +62,7 @@ export class DuelFxPolicy {
       case 'death':
         return { ...QUIET, shake: DUEL_SHAKE.death, flash: DEATH_SCREEN_FLASH };
       case 'zoneStart':
-        return { ...QUIET, announcement: 'zoneStart' };
+        return { ...QUIET, announcement: DUEL_ANNOUNCEMENT.zoneStart };
       default:
         return QUIET;
     }
@@ -68,12 +73,12 @@ export class DuelFxPolicy {
       return QUIET;
     }
     if (hasFlag(event, EventFlag.Self)) {
-      return { ...QUIET, shake: DUEL_SHAKE.hit, announcement: 'selfHit' };
+      return { ...QUIET, shake: DUEL_SHAKE.hit, announcement: DUEL_ANNOUNCEMENT.selfHit };
     }
     if (this.hasFirstBlood) {
       return { ...QUIET, shake: DUEL_SHAKE.hit };
     }
     this.hasFirstBlood = true;
-    return { ...QUIET, shake: DUEL_SHAKE.hit, announcement: 'firstBlood' };
+    return { ...QUIET, shake: DUEL_SHAKE.hit, announcement: DUEL_ANNOUNCEMENT.firstBlood };
   }
 }

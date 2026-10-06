@@ -53,6 +53,9 @@ const TURRET_TOLERANCE = 0.05;
 // Сдвиг камеры по башне вправо — 240 единиц поля; на половине пути он уже больше 150.
 const CAMERA_SHIFT_MIN = 150;
 const AXIS_ANGLES = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+// После выхода кнопкой танк стоит 10 с, после обрыва — 15: пропал раньше 13,5 с — значит, сервер получил Leave.
+const QUIT_SEEN_MS = 2_000;
+const QUIT_GONE_LIMIT_MS = 13_500;
 
 const servers: GameServer[] = [];
 const swarms: SwarmProcess[] = [];
@@ -83,7 +86,7 @@ test.afterEach(async () => {
 
 // Игру заполняют сами браузеры и рой; серверных ботов включают только их сценарии.
 async function startServer(env: Record<string, string> = {}): Promise<GameServer> {
-  const server = new GameServer({ FFA_LOBBY_QUIET_SECONDS: '1', FFA_SERVER_BOTS: '0', ...env });
+  const server = new GameServer({ FFA_LOBBY_WAIT_SECONDS: '1', FFA_SERVER_BOTS: '0', ...env });
   servers.push(server);
   await server.start();
   return server;
@@ -185,18 +188,54 @@ function ricochetAngle(me: Point): number {
   return best.angle;
 }
 
-test('главная → «В общий бой»: адрес /ffa, лобби «1 / 30»; «Выйти» — на главную', async ({ browser }) => {
+test('главная → «В общий бой»: адрес /ffa/30, лобби «1 / 30»; «Выйти» — на главную', async ({ browser }) => {
   const server = await startServer();
   const player = await Player.openHome(browser, server.baseUrl, 'Новичок', DEFAULT_STATS);
   players.push(player);
   await player.page.locator('#ffa-start').click();
-  await expect(player.page).toHaveURL(/\/ffa$/);
+  await expect(player.page).toHaveURL(/\/ffa\/30$/);
   const lobby = await player.waitForScreen('lobby', SCREEN_TIMEOUT_MS);
   expect(lobby).toMatchObject({ players: 1, capacity: 30 });
   await expect(player.ffaLayer('ffa-lobby').locator('.ffa-lobby-count')).toHaveText('1 / 30');
   await player.ffaButton('Выйти').click();
   await expect(player.page).toHaveURL(/\/$/);
   await expect(player.page.locator('#ffa-start')).toBeVisible();
+});
+
+test('главная → выбор «10 танков» → «В общий бой»: адрес /ffa/10, лобби «1 / 10»', async ({ browser }) => {
+  const server = await startServer();
+  const player = await Player.openHome(browser, server.baseUrl, 'Малыш', DEFAULT_STATS);
+  players.push(player);
+  await player.page.locator('#ffa-size-toggle').click();
+  await player.page.locator('#ffa-sizes [data-size="10"]').click();
+  await expect(player.page.locator('#ffa-size-toggle')).toContainText('10');
+  await player.page.locator('#ffa-start').click();
+  await expect(player.page).toHaveURL(/\/ffa\/10$/);
+  const lobby = await player.waitForScreen('lobby', SCREEN_TIMEOUT_MS);
+  expect(lobby).toMatchObject({ players: 1, capacity: 10 });
+});
+
+test('«⌂» в бою: на главную; второй видит стоящий танк ушедшего, через окно выхода он пропал — раньше окна обрыва', async ({
+  browser,
+}) => {
+  const server = await startServer({ FFA_MINIMUM: '2' });
+  const leaver = await openFfa(browser, server.baseUrl, 'Ушёл');
+  const witness = await openFfa(browser, server.baseUrl, 'Видел');
+  const leaverId = (await leaver.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой ушедшего')).playerId;
+  await witness.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой второго');
+  await leaver.page.locator('#menu').click();
+  const leftAt = Date.now();
+  await expect(leaver.page).toHaveURL(/\/$/);
+  await expect(leaver.page.locator('#ffa-start')).toBeVisible();
+  await sleep(QUIT_SEEN_MS);
+  const standing = await witness.waitForFfa(() => true, SCREEN_TIMEOUT_MS, 'состояние второго');
+  expect(standing.others.some((tank) => tank.id === leaverId)).toBe(true);
+  await witness.waitForFfa(
+    (state) => state.others.every((tank) => tank.id !== leaverId),
+    QUIT_GONE_LIMIT_MS,
+    'танк ушедшего не пропал',
+  );
+  expect(Date.now() - leftAt).toBeLessThan(QUIT_GONE_LIMIT_MS);
 });
 
 test('компьютер и телефон в лобби, затем рой из 8 ботов: отсчёт, бой на 10 танков, движение видно второму', async ({
@@ -513,7 +552,7 @@ async function ffa10Players(server: GameServer): Promise<{ humans: number; bots:
 test('серверные боты: человек в лобби — боты с никами «Сержант [4]», «7 / 10», бой без роя, рядом танки ботов', async ({
   browser,
 }) => {
-  const server = await startServer({ FFA_SERVER_BOTS: '1', FFA_LOBBY_QUIET_SECONDS: '5' });
+  const server = await startServer({ FFA_SERVER_BOTS: '1', FFA_LOBBY_WAIT_SECONDS: '5' });
   const player = await openFfa(browser, server.baseUrl, 'Одиночка');
   await player.waitForScreen('lobby', SCREEN_TIMEOUT_MS);
   const lobby = player.ffaLayer('ffa-lobby');

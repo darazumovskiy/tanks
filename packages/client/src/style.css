@@ -1150,6 +1150,11 @@ input {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
 }
 
+.dropdown-list.is-up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
 .level {
   padding: 8px 10px;
   background: transparent;
@@ -1297,6 +1302,82 @@ input {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* Размер игры — компактная кнопка в строке заголовка карточки: высоты карточке не добавляет, «В общий бой» остаётся
+   на первом экране. Список раскрывается под ней поверх формы, по правому краю. */
+.ffa-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 26px;
+}
+
+.ffa-size {
+  position: relative;
+}
+
+.ffa-size-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px 0 3px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f4f1e8;
+  background: rgba(232, 130, 90, 0.08);
+  border: 1px solid rgba(232, 130, 90, 0.45);
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.ffa-size-toggle:hover,
+.ffa-size-toggle.is-open {
+  background: rgba(232, 130, 90, 0.16);
+  border-color: rgba(232, 130, 90, 0.9);
+}
+
+.ffa-size-toggle:focus-visible {
+  outline: 2px solid #e8825a;
+  outline-offset: 2px;
+}
+
+.ffa-size-count {
+  min-width: 26px;
+  padding: 1px 6px;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  text-align: center;
+  color: #0b0f0d;
+  background: #e8825a;
+  border-radius: 999px;
+}
+
+.ffa-size-toggle .dropdown-chevron {
+  font-size: 12px;
+}
+
+/* Три строки в одну линию описания — список целиком помещается под кнопкой даже на телефоне 640 × 360. */
+.ffa-size-list {
+  left: auto;
+  width: min(340px, calc(100vw - 40px));
+}
+
+.ffa-size-list .level {
+  padding: 6px 10px;
+}
+
+.ffa-size-list .level-badge {
+  height: 30px;
 }
 
 .ffa-entry-row .action {

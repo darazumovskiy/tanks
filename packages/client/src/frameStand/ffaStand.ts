@@ -246,7 +246,6 @@ function playFrame(target: StandTarget, frame: FfaStandFrame, zone: ZonePlan): v
   const steps = Math.max(DRAWN_FRAMES, Math.ceil(oldest / FRAME_S) + 1);
   effects.update(FLUSH_S, []);
   effects.reset();
-  fxPolicy.reset();
   camera.snap();
   effects.time = EFFECTS_TIME_S - (steps + 1) * FRAME_S;
   const pending = [...frame.events].sort((a, b) => b.ageS - a.ageS);

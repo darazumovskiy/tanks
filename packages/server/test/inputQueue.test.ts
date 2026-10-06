@@ -37,7 +37,7 @@ const OPEN_MAP: FfaMap = {
 const FAST_FFA: FfaOptions = {
   ...DEFAULT_FFA_OPTIONS,
   countdownTicks: 3,
-  lobbyQuietTicks: 3,
+  lobbyWaitTicks: 3,
   minimum: { 10: 2, 30: 2, 50: 2 },
   mapFor: () => OPEN_MAP,
 };
@@ -294,7 +294,7 @@ describe('очередь команд: слив на ручном тике', () 
 
   it('общий бой: начало матча очищает очередь и отметку слива, пачка отсчёта применяется целиком', () => {
     const drops: DropReason[] = [];
-    const options: FfaOptions = { ...FAST_FFA, lobbyQuietTicks: 2 * INPUT_BACKLOG_TICKS };
+    const options: FfaOptions = { ...FAST_FFA, lobbyWaitTicks: 2 * INPUT_BACKLOG_TICKS };
     const dropCounter = {
       countDroppedInput: (reason: DropReason): void => {
         drops.push(reason);

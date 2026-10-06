@@ -36,7 +36,26 @@
           <input id="nickname" maxlength="16" placeholder="как тебя звать" autocomplete="off" />
         </label>
         <section id="ffa-entry" class="ffa-entry">
-          <h2 class="levels-title">Общий бой</h2>
+          <div class="ffa-entry-head">
+            <h2 class="levels-title">Общий бой</h2>
+            <div class="ffa-size">
+              <button
+                id="ffa-size-toggle"
+                class="ffa-size-toggle"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-label="Сколько танков на карте"
+              ></button>
+              <div
+                id="ffa-sizes"
+                class="dropdown-list ffa-size-list"
+                role="listbox"
+                aria-label="Размер игры"
+                hidden
+              ></div>
+            </div>
+          </div>
           <div class="ffa-entry-row">
             <button id="ffa-start" class="action" type="button">В общий бой</button>
             <button id="ffa-info" class="level-info" type="button" aria-label="Подробнее" aria-expanded="false">
@@ -45,7 +64,7 @@
           </div>
           <p id="ffa-locked" class="ffa-locked" hidden>Раздай танку все очки — и в бой</p>
           <p id="ffa-hint" class="level-hint" hidden>
-            До 30 танков на одной карте. Подбили — через пару секунд снова в деле.
+            Выбери, сколько танков на карте. Подбили — через пару секунд снова в деле.
           </p>
         </section>
       </div>

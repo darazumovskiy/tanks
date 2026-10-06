@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_STATS } from '../engine/index.js';
-import { decode, encode, NO_ID, quantizeAction, rulesFromByte, rulesToByte } from './codec.js';
+import { decode, encode, isClientMessage, NO_ID, quantizeAction, rulesFromByte, rulesToByte } from './codec.js';
 import { ffaRoomCode, ffaSizeOf, isFfaRoomCode } from './ffaRoom.js';
 import {
   ErrorCode,
@@ -171,6 +171,7 @@ const samples: Message[] = [
   { type: MessageType.Error, code: ErrorCode.Replaced, text: 'место занято с другого устройства' },
   { type: MessageType.Input, seq: 4294967295, action: { throttle: 1, turn: -1, turretTurn: 0, isFiring: true } },
   { type: MessageType.Ping, clientTime: 1790899403123.456 },
+  { type: MessageType.Leave },
   { type: MessageType.Welcome, side: 1, roomCode: 'xyz' },
   {
     type: MessageType.RoomState,
@@ -214,6 +215,13 @@ describe('кодек протокола', () => {
       expect(decoded).toEqual(message);
     },
   );
+
+  it('сообщения клиента — вход, команда, пинг, выход; ответы сервера — нет', () => {
+    const fromClient = samples.filter(isClientMessage).map((message) => message.type);
+    expect(new Set(fromClient)).toEqual(
+      new Set([MessageType.Join, MessageType.Input, MessageType.Ping, MessageType.Leave]),
+    );
+  });
 
   it('правила раунда — байт процента скольжения, лишнее срезается до 100', () => {
     expect(rulesToByte({ wallSlidePercent: 0 })).toBe(0);

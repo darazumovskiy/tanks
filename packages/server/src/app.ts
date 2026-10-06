@@ -65,7 +65,7 @@ const SILENCE_CHECKS_PER_TIMEOUT = 4;
 const FFA_ENV = {
   minimum: 'FFA_MINIMUM',
   matchSeconds: 'FFA_MATCH_SECONDS',
-  lobbyQuietSeconds: 'FFA_LOBBY_QUIET_SECONDS',
+  lobbyWaitSeconds: 'FFA_LOBBY_WAIT_SECONDS',
   resultsSeconds: 'FFA_RESULTS_SECONDS',
   idleWarnSeconds: 'FFA_IDLE_WARN_SECONDS',
   idleKickSeconds: 'FFA_IDLE_KICK_SECONDS',
@@ -115,7 +115,7 @@ function ticksOr(seconds: number | null, fallback: number): number {
 function ffaOptionsFromEnv(base: FfaOptions, env: FfaEnv): FfaOptions {
   const minimum = envInteger(env, FFA_ENV.minimum, FFA_MINIMUM_LIMIT);
   const matchSeconds = envInteger(env, FFA_ENV.matchSeconds, FFA_SECONDS_LIMIT);
-  const lobbyQuietSeconds = envInteger(env, FFA_ENV.lobbyQuietSeconds, FFA_SECONDS_LIMIT);
+  const lobbyWaitSeconds = envInteger(env, FFA_ENV.lobbyWaitSeconds, FFA_SECONDS_LIMIT);
   const resultsSeconds = envInteger(env, FFA_ENV.resultsSeconds, FFA_SECONDS_LIMIT);
   const idleWarnSeconds = envInteger(env, FFA_ENV.idleWarnSeconds, FFA_SECONDS_LIMIT);
   const idleKickSeconds = envInteger(env, FFA_ENV.idleKickSeconds, FFA_SECONDS_LIMIT);
@@ -134,7 +134,7 @@ function ffaOptionsFromEnv(base: FfaOptions, env: FfaEnv): FfaOptions {
     hasServerBots: envSwitch(env, FFA_ENV.serverBots) ?? base.hasServerBots,
     minimum: minimums,
     matchSeconds: matchSeconds ?? base.matchSeconds,
-    lobbyQuietTicks: ticksOr(lobbyQuietSeconds, base.lobbyQuietTicks),
+    lobbyWaitTicks: ticksOr(lobbyWaitSeconds, base.lobbyWaitTicks),
     resultsTicks: ticksOr(resultsSeconds, base.resultsTicks),
     idleWarnTicks,
     idleKickTicks,
@@ -266,6 +266,10 @@ export function createApp(options: AppOptions = {}): App {
     }
     if (message.type === MessageType.Input) {
       seat.input(message.seq, message.action);
+      return;
+    }
+    if (message.type === MessageType.Leave) {
+      rooms.quit(connection);
       return;
     }
     seat.ping(message.clientTime);

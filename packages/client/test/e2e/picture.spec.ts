@@ -603,7 +603,7 @@ test.describe('картинка совпадает с сервером', () => {
   for (const delayMs of [30, 75]) {
     test(`общий бой через посредника ${String(delayMs)} мс в каждую сторону`, async ({ browser }) => {
       test.setTimeout(180_000);
-      const server = new GameServer({ FFA_LOBBY_QUIET_SECONDS: '1', FFA_MINIMUM: '2' });
+      const server = new GameServer({ FFA_LOBBY_WAIT_SECONDS: '1', FFA_MINIMUM: '2' });
       servers.push(server);
       await server.start();
       const proxy = await NetProxy.start(server.listenPort, { delayMs });

@@ -131,6 +131,12 @@ export class NetClient {
     this.send(encode({ type: MessageType.Input, seq, action }));
   }
 
+  // Ушёл сам: сервер держит место короче, чем после обрыва. Байты, отправленные до закрытия, сокет дошлёт.
+  leave(): void {
+    this.send(encode({ type: MessageType.Leave }));
+    this.close();
+  }
+
   close(): void {
     this.isClosedByUs = true;
     document.removeEventListener('visibilitychange', this.onVisibilityChange);

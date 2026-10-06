@@ -1,11 +1,14 @@
 import { EventFlag, type TankSnapshot } from '@tanks/shared/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DecalLayer } from './decals.js';
-import { Effects, type FxEvent, type FxEventOptions } from './effects.js';
+import { Effects, type FxAnnouncement, type FxEvent, type FxEventOptions } from './effects.js';
 
 const COLORS: Readonly<Record<number, string>> = { 3: '#4fc3c9', 7: '#e8825a' };
 const NAMES: Readonly<Record<number, string>> = { 3: 'Вася', 7: 'Петя' };
 const QUIET: FxEventOptions = { shake: 0, flash: 0, announcement: null, hasParticles: true };
+const FIRST_BLOOD: FxAnnouncement = { kind: 'firstBlood', size: 1, duration: 1 };
+const SELF_HIT: FxAnnouncement = { kind: 'selfHit', size: 1, duration: 1 };
+const ZONE_START: FxAnnouncement = { kind: 'zoneStart', size: 1, duration: 1 };
 const ANNOUNCE_WIDTH = 1000;
 const ANNOUNCE_Y = 200;
 
@@ -38,16 +41,18 @@ interface DrawnText {
   fillStyle: string;
 }
 
-// Холст, который запоминает только надписи и их цвет; остальные вызовы рисования ничего не делают.
-function recordingContext(): { ctx: CanvasRenderingContext2D; texts: DrawnText[] } {
+// Холст, который запоминает только надписи, их цвет и шрифт; остальные вызовы рисования ничего не делают.
+function recordingContext(): { ctx: CanvasRenderingContext2D; texts: DrawnText[]; fonts: string[] } {
   const texts: DrawnText[] = [];
+  const fonts: string[] = [];
   const state: Record<string | symbol, unknown> = {};
   const handler: ProxyHandler<Record<string | symbol, unknown>> = {
     get: (target, key) => {
       if (key === 'fillText') {
         return (text: string): void => {
-          const { fillStyle } = target;
+          const { fillStyle, font } = target;
           texts.push({ text, fillStyle: typeof fillStyle === 'string' ? fillStyle : '' });
+          fonts.push(typeof font === 'string' ? font : '');
         };
       }
       if (key in target) {
@@ -60,7 +65,7 @@ function recordingContext(): { ctx: CanvasRenderingContext2D; texts: DrawnText[]
       return true;
     },
   };
-  return { ctx: new Proxy(state, handler) as unknown as CanvasRenderingContext2D, texts };
+  return { ctx: new Proxy(state, handler) as unknown as CanvasRenderingContext2D, texts, fonts };
 }
 
 function makeEffects(decals: DecalLayer = new FakeDecals()): Effects {
@@ -132,7 +137,7 @@ describe('тряска, вспышка и объявление — ровно и
 
   it('«ПЕРВАЯ КРОВЬ» — цветом и именем стрелка, кем бы ни был событийный танк', () => {
     const effects = makeEffects();
-    effects.onEvent(fxEvent('death', { tank: 3, by: 7 }), { ...QUIET, announcement: 'firstBlood' });
+    effects.onEvent(fxEvent('death', { tank: 3, by: 7 }), { ...QUIET, announcement: FIRST_BLOOD });
     expect(announcementTexts(effects)).toEqual([
       { text: 'ПЕРВАЯ КРОВЬ', fillStyle: COLORS[7] },
       { text: 'Петя', fillStyle: 'rgba(255,255,255,0.8)' },
@@ -141,10 +146,40 @@ describe('тряска, вспышка и объявление — ровно и
 
   it('«САМ СЕБЯ!» — цветом того, кто попал в себя; «ЗОНА СУЖАЕТСЯ» — своим цветом', () => {
     const effects = makeEffects();
-    effects.onEvent(fxEvent('hit', { tank: 3, by: 3 }), { ...QUIET, announcement: 'selfHit' });
+    effects.onEvent(fxEvent('hit', { tank: 3, by: 3 }), { ...QUIET, announcement: SELF_HIT });
     expect(announcementTexts(effects)[0]).toEqual({ text: 'САМ СЕБЯ!', fillStyle: COLORS[3] });
-    effects.onEvent(fxEvent('zoneStart', { tank: null }), { ...QUIET, announcement: 'zoneStart' });
+    effects.onEvent(fxEvent('zoneStart', { tank: null }), { ...QUIET, announcement: ZONE_START });
     expect(announcementTexts(effects).map((drawn) => drawn.text)).toEqual(['ЗОНА СУЖАЕТСЯ', 'вне круга — урон']);
+  });
+
+  it('P3 длительность и размер объявления — доли базового: 0,5 гаснет за 0,9 с, 1 живёт 1,8 с; размер 1/1,5 — шрифт меньше', () => {
+    const short = makeEffects();
+    short.onEvent(fxEvent('death', { tank: 3, by: 7 }), { ...QUIET, announcement: { ...FIRST_BLOOD, duration: 0.5 } });
+    short.update(0.85, []);
+    expect(announcementTexts(short)).not.toEqual([]);
+    short.update(0.1, []);
+    expect(announcementTexts(short)).toEqual([]);
+
+    const base = makeEffects();
+    base.onEvent(fxEvent('death', { tank: 3, by: 7 }), { ...QUIET, announcement: FIRST_BLOOD });
+    base.update(1.75, []);
+    expect(announcementTexts(base)).not.toEqual([]);
+    base.update(0.1, []);
+    expect(announcementTexts(base)).toEqual([]);
+
+    const fontsOf = (announcement: FxAnnouncement): string[] => {
+      const effects = makeEffects();
+      effects.onEvent(fxEvent('hit', { tank: 3, by: 3 }), { ...QUIET, announcement });
+      effects.update(0.5, []);
+      const { ctx, fonts } = recordingContext();
+      effects.drawAnnouncements(ctx, ANNOUNCE_WIDTH, ANNOUNCE_Y);
+      return fonts;
+    };
+    expect(fontsOf(SELF_HIT)).toEqual([expect.stringMatching(/^56px /), expect.stringMatching(/^600 20px /)]);
+    expect(fontsOf({ ...SELF_HIT, size: 1 / 1.5 })).toEqual([
+      expect.stringMatching(/^37px /),
+      expect.stringMatching(/^600 13px /),
+    ]);
   });
 
   it('без частиц: объявление, тряска и вспышка есть, а на месте события — ни подпалины, ни цифры, ни отдачи', () => {
@@ -153,7 +188,7 @@ describe('тряска, вспышка и объявление — ровно и
     effects.onEvent(fxEvent('death', { tank: 3, by: 7 }), {
       shake: 5,
       flash: 0.2,
-      announcement: 'firstBlood',
+      announcement: FIRST_BLOOD,
       hasParticles: false,
     });
     effects.onEvent(fxEvent('shot', { tank: 7 }), { ...QUIET, hasParticles: false });
@@ -169,8 +204,8 @@ describe('тряска, вспышка и объявление — ровно и
 
   it('объявление без нужного танка не показывается', () => {
     const effects = makeEffects();
-    effects.onEvent(fxEvent('hit', { tank: null }), { ...QUIET, announcement: 'selfHit' });
-    effects.onEvent(fxEvent('hit', { by: null }), { ...QUIET, announcement: 'firstBlood' });
+    effects.onEvent(fxEvent('hit', { tank: null }), { ...QUIET, announcement: SELF_HIT });
+    effects.onEvent(fxEvent('hit', { by: null }), { ...QUIET, announcement: FIRST_BLOOD });
     expect(announcementTexts(effects)).toEqual([]);
   });
 });

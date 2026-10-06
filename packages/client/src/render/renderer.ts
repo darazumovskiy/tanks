@@ -60,6 +60,7 @@ function sceneTank(view: WorldView, hud: HudInfo, side: Side): SceneTank {
     isAlive: tank.isAlive,
     color: sideColor(side),
     alpha: OPAQUE,
+    bodyAlpha: OPAQUE,
     label: hud.names[side],
     isBot: false,
   };

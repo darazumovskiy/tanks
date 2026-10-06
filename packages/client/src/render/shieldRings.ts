@@ -6,33 +6,43 @@ export interface ShieldTank {
   shieldLeft: number;
 }
 
-// share — доля остатка у своего танка (дуга), null — полное кольцо чужого.
+// share — доля остатка неуязвимости: дуга кольца-таймера; alpha — проявление кольца и прозрачности корпуса.
 export interface ShieldRing {
   id: number;
   alpha: number;
-  share: number | null;
+  share: number;
 }
 
 const FADE_MS = 150;
+const SHIELDED_BODY_ALPHA = 0.55;
 
 function smoothstep(value: number): number {
   return value * value * (3 - 2 * value);
 }
 
-// Кольца неуязвимости кадра: у своего — дуга остатка, у чужих — полное кольцо; снятая неуязвимость (выстрел,
-// истекла) гаснет за 150 мс по сглаженной кривой.
-export class ShieldRings {
-  private readonly lit = new Map<number, number | null>();
-  private readonly fading = new Map<number, { share: number | null; ageMs: number }>();
+// Прозрачность корпуса танка: неуязвимый полупрозрачный, проявляется и гаснет вместе с кольцом.
+export function shieldedBodyAlpha(rings: readonly ShieldRing[], id: number): number {
+  const ring = rings.find((candidate) => candidate.id === id);
+  if (ring === undefined) {
+    return 1;
+  }
+  return 1 - (1 - SHIELDED_BODY_ALPHA) * ring.alpha;
+}
 
-  update(tanks: readonly ShieldTank[], myId: number | null, frameMs: number): ShieldRing[] {
+// Кольца неуязвимости кадра: у каждого танка — дуга остатка; снятая неуязвимость (выстрел, истекла) гаснет за
+// 150 мс по сглаженной кривой с той долей, на которой её сняли.
+export class ShieldRings {
+  private readonly lit = new Map<number, number>();
+  private readonly fading = new Map<number, { share: number; ageMs: number }>();
+
+  update(tanks: readonly ShieldTank[], frameMs: number): ShieldRing[] {
     const rings: ShieldRing[] = [];
     const litNow = new Set<number>();
     for (const tank of tanks) {
       if (!tank.isAlive || tank.shieldLeft <= 0) {
         continue;
       }
-      const share = tank.id === myId ? Math.min(1, tank.shieldLeft / FFA.shieldSeconds) : null;
+      const share = Math.min(1, tank.shieldLeft / FFA.shieldSeconds);
       rings.push({ id: tank.id, alpha: 1, share });
       this.lit.set(tank.id, share);
       this.fading.delete(tank.id);
