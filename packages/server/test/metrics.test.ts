@@ -19,6 +19,10 @@ const EXPECTED_SERIES = [
   'tanks_bot_think_ms{quantile="0.5"}',
   'tanks_bot_think_ms{quantile="0.99"}',
   'tanks_bot_think_ms{quantile="max"}',
+  'tanks_bot_wait_ticks{quantile="0.5"}',
+  'tanks_bot_wait_ticks{quantile="0.99"}',
+  'tanks_bot_wait_ticks{quantile="max"}',
+  'tanks_bot_skipped_total',
   'tanks_ticks_total',
   'tanks_ticks_late_total',
   'tanks_rooms',
@@ -94,6 +98,7 @@ describe('GET /metrics', () => {
     expect([...series.keys()]).toEqual(EXPECTED_SERIES);
     expect(valueOf(series, 'tanks_rooms')).toBe(0);
     expect(valueOf(series, 'tanks_connections')).toBe(0);
+    expect(valueOf(series, 'tanks_bot_skipped_total')).toBe(0);
     expect([...series].filter(([key, value]) => key.startsWith('tanks_players') && value !== 0)).toEqual([]);
     expect(valueOf(series, 'tanks_inputs_dropped_total{reason="stale"}')).toBe(0);
     expect(valueOf(series, 'process_resident_memory_bytes')).toBeGreaterThan(0);

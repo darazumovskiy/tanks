@@ -136,15 +136,6 @@
           "expr": "tanks_tick_duration_ms{quantile=\"max\"}",
           "legendFormat": "максимум",
           "refId": "максимум"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "grafanacloud-prom"
-          },
-          "expr": "tanks_bot_think_ms{quantile=\"max\"}",
-          "legendFormat": "мозг ботов после тика, максимум",
-          "refId": "мозг ботов после тика, максимум"
         }
       ],
       "id": 2
@@ -252,7 +243,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Комнаты и сокеты",
+      "title": "Ход серверных ботов после тика, мс",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -261,6 +252,138 @@
         "w": 8,
         "h": 8,
         "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "tanks_bot_think_ms{quantile=\"0.5\"}",
+          "legendFormat": "медиана",
+          "refId": "медиана"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "tanks_bot_think_ms{quantile=\"0.99\"}",
+          "legendFormat": "p99",
+          "refId": "p99"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "tanks_bot_think_ms{quantile=\"max\"}",
+          "legendFormat": "максимум",
+          "refId": "максимум"
+        }
+      ],
+      "id": 5
+    },
+    {
+      "type": "timeseries",
+      "title": "Боты: пропуски из-за бюджета и ожидание решения",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 8,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "дольше всех ждал, тиков"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(tanks_bot_skipped_total[1m])",
+          "legendFormat": "пропусков за минуту",
+          "refId": "пропусков за минуту"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "tanks_bot_wait_ticks{quantile=\"max\"}",
+          "legendFormat": "дольше всех ждал, тиков",
+          "refId": "дольше всех ждал, тиков"
+        }
+      ],
+      "id": 6
+    },
+    {
+      "type": "timeseries",
+      "title": "Комнаты и сокеты",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 16,
         "y": 9
       },
       "fieldConfig": {
@@ -303,7 +426,7 @@
           "refId": "сокетов"
         }
       ],
-      "id": 5
+      "id": 7
     },
     {
       "type": "timeseries",
@@ -315,8 +438,8 @@
       "gridPos": {
         "w": 8,
         "h": 8,
-        "x": 8,
-        "y": 9
+        "x": 0,
+        "y": 17
       },
       "fieldConfig": {
         "defaults": {
@@ -349,7 +472,7 @@
           "refId": "{{direction}}"
         }
       ],
-      "id": 6
+      "id": 8
     },
     {
       "type": "timeseries",
@@ -361,8 +484,8 @@
       "gridPos": {
         "w": 8,
         "h": 8,
-        "x": 16,
-        "y": 9
+        "x": 8,
+        "y": 17
       },
       "fieldConfig": {
         "defaults": {
@@ -395,7 +518,7 @@
           "refId": "{{direction}}"
         }
       ],
-      "id": 7
+      "id": 9
     },
     {
       "type": "timeseries",
@@ -408,7 +531,7 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 17
+        "y": 25
       },
       "fieldConfig": {
         "defaults": {
@@ -441,7 +564,7 @@
           "refId": "{{reason}}"
         }
       ],
-      "id": 8
+      "id": 10
     },
     {
       "type": "timeseries",
@@ -454,7 +577,7 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 17
+        "y": 25
       },
       "fieldConfig": {
         "defaults": {
@@ -525,7 +648,7 @@
           "refId": "процессор, %"
         }
       ],
-      "id": 9
+      "id": 11
     },
     {
       "type": "row",
@@ -535,9 +658,9 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 25
+        "y": 33
       },
-      "id": 10
+      "id": 12
     },
     {
       "type": "timeseries",
@@ -550,7 +673,7 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 26
+        "y": 34
       },
       "fieldConfig": {
         "defaults": {
@@ -601,7 +724,7 @@
           "refId": "рой"
         }
       ],
-      "id": 11
+      "id": 13
     },
     {
       "type": "timeseries",
@@ -614,7 +737,7 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 26
+        "y": 34
       },
       "fieldConfig": {
         "defaults": {
@@ -647,7 +770,7 @@
           "refId": "{{mode}}"
         }
       ],
-      "id": 12
+      "id": 14
     },
     {
       "type": "timeseries",
@@ -660,7 +783,7 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 34
+        "y": 42
       },
       "fieldConfig": {
         "defaults": {
@@ -694,7 +817,7 @@
           "queryType": "range"
         }
       ],
-      "id": 13
+      "id": 15
     },
     {
       "type": "timeseries",
@@ -707,7 +830,7 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 34
+        "y": 42
       },
       "fieldConfig": {
         "defaults": {
@@ -741,7 +864,7 @@
           "queryType": "range"
         }
       ],
-      "id": 14
+      "id": 16
     },
     {
       "type": "timeseries",
@@ -754,7 +877,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 42
+        "y": 50
       },
       "fieldConfig": {
         "defaults": {
@@ -788,7 +911,7 @@
           "queryType": "range"
         }
       ],
-      "id": 15
+      "id": 17
     },
     {
       "type": "timeseries",
@@ -801,7 +924,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 42
+        "y": 50
       },
       "fieldConfig": {
         "defaults": {
@@ -835,7 +958,7 @@
           "queryType": "range"
         }
       ],
-      "id": 16
+      "id": 18
     },
     {
       "type": "timeseries",
@@ -848,7 +971,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 42
+        "y": 50
       },
       "fieldConfig": {
         "defaults": {
@@ -882,7 +1005,7 @@
           "queryType": "range"
         }
       ],
-      "id": 17
+      "id": 19
     },
     {
       "type": "logs",
@@ -895,7 +1018,7 @@
         "w": 12,
         "h": 10,
         "x": 0,
-        "y": 50
+        "y": 58
       },
       "options": {
         "showTime": true,
@@ -913,7 +1036,7 @@
           "refId": "A"
         }
       ],
-      "id": 18
+      "id": 20
     },
     {
       "type": "logs",
@@ -926,7 +1049,7 @@
         "w": 12,
         "h": 10,
         "x": 12,
-        "y": 50
+        "y": 58
       },
       "options": {
         "showTime": true,
@@ -944,7 +1067,7 @@
           "refId": "A"
         }
       ],
-      "id": 19
+      "id": 21
     },
     {
       "type": "row",
@@ -954,9 +1077,9 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 60
+        "y": 68
       },
-      "id": 20
+      "id": 22
     },
     {
       "type": "timeseries",
@@ -969,7 +1092,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 61
+        "y": 69
       },
       "fieldConfig": {
         "defaults": {
@@ -1011,7 +1134,7 @@
           "refId": "ожидание диска"
         }
       ],
-      "id": 21
+      "id": 23
     },
     {
       "type": "timeseries",
@@ -1024,7 +1147,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 61
+        "y": 69
       },
       "fieldConfig": {
         "defaults": {
@@ -1075,7 +1198,7 @@
           "refId": "своп"
         }
       ],
-      "id": 22
+      "id": 24
     },
     {
       "type": "timeseries",
@@ -1088,7 +1211,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 61
+        "y": 69
       },
       "fieldConfig": {
         "defaults": {
@@ -1130,7 +1253,7 @@
           "refId": "5 мин"
         }
       ],
-      "id": 23
+      "id": 25
     },
     {
       "type": "timeseries",
@@ -1143,7 +1266,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 69
+        "y": 77
       },
       "fieldConfig": {
         "defaults": {
@@ -1185,7 +1308,7 @@
           "refId": "отдача"
         }
       ],
-      "id": 24
+      "id": 26
     },
     {
       "type": "timeseries",
@@ -1198,7 +1321,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 69
+        "y": 77
       },
       "fieldConfig": {
         "defaults": {
@@ -1231,7 +1354,7 @@
           "refId": "/"
         }
       ],
-      "id": 25
+      "id": 27
     },
     {
       "type": "logs",
@@ -1244,7 +1367,7 @@
         "w": 8,
         "h": 10,
         "x": 16,
-        "y": 69
+        "y": 77
       },
       "options": {
         "showTime": true,
@@ -1262,7 +1385,7 @@
           "refId": "A"
         }
       ],
-      "id": 26
+      "id": 28
     }
   ]
 }

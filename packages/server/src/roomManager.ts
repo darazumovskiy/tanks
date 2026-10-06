@@ -1,6 +1,7 @@
 import { DEFAULT_RULES, type FfaSize, type RoundRules, type Stats } from '@tanks/shared/engine';
 import { botLevelOf, FfaInviteMiss, isBotRoomCode } from '@tanks/shared/protocol';
 import { createBot } from './bots/ladder.js';
+import { BotTurns, type BotTurnReport } from './crowd/botTurns.js';
 import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaConnection, type FfaOptions } from './ffaGame.js';
 import { NO_LOG, type GameLog } from './gameLog.js';
 import {
@@ -51,6 +52,7 @@ export class RoomManager {
   private games: FfaGame[] = [];
   private readonly memberships = new Map<Connection, Membership>();
   private readonly botSeats = new Map<Room, Seat>();
+  private readonly botTurns = new BotTurns();
 
   constructor(
     private readonly options: RoomOptions = DEFAULT_ROOM_OPTIONS,
@@ -143,10 +145,15 @@ export class RoomManager {
     this.games = this.games.filter((game) => !game.isEmpty);
   }
 
-  thinkBots(): void {
+  // Проход хода серверных ботов всех игр: все разбирают ящики, решают по очереди в бюджете.
+  thinkBots(isOverBudget: () => boolean): BotTurnReport {
     for (const game of this.games) {
-      game.thinkBots();
+      game.absorbBots();
     }
+    return this.botTurns.take(
+      this.games.flatMap((game) => game.serverBots),
+      isOverBudget,
+    );
   }
 
   // Бот лестницы в дуэли — серверный бот, как в общей игре.

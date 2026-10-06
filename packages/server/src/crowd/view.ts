@@ -1,11 +1,14 @@
 import {
+  deriveStats,
   ffaViewCenter,
   isInFfaView,
   type BattleMap,
+  type Bullet,
   type DerivedStats,
   type Kit,
   type Point,
 } from '@tanks/shared/engine';
+import type { FfaTankSnapshot } from '@tanks/shared/protocol';
 
 export interface CrowdTank {
   id: number;
@@ -39,6 +42,41 @@ export interface Frame {
   tick: number;
   tanks: readonly CrowdTank[];
   bullets: readonly CrowdBullet[];
+}
+
+// Характеристики танка игрока, которого нет в составе (ушёл, а его обломки ещё на поле).
+export const UNKNOWN_STATS = deriveStats(undefined);
+
+// Снаряды копируются: поле живёт в истории бота, а снаряды движка меняются на месте следующим тиком.
+export function crowdBullets(bullets: readonly Bullet[]): CrowdBullet[] {
+  return bullets.map((bullet) => ({
+    id: bullet.id,
+    owner: bullet.owner,
+    x: bullet.x,
+    y: bullet.y,
+    vx: bullet.vx,
+    vy: bullet.vy,
+    hasBounced: bullet.hasBounced,
+  }));
+}
+
+export function crowdTank(tank: FfaTankSnapshot, stats: DerivedStats): CrowdTank {
+  return {
+    id: tank.id,
+    x: tank.x,
+    y: tank.y,
+    heading: tank.heading,
+    turret: tank.turret,
+    speed: tank.speed,
+    vx: Math.cos(tank.heading) * tank.speed,
+    vy: Math.sin(tank.heading) * tank.speed,
+    hp: tank.hp,
+    maxHp: stats.maxHp,
+    reloadLeft: tank.reloadLeft,
+    shieldLeft: tank.shieldLeft,
+    isAlive: tank.isAlive,
+    stats,
+  };
 }
 
 export interface CrowdZone extends Point {

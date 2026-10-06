@@ -25,6 +25,7 @@ import { APK_ROUTE, requestPath, serveApk, serveStatic } from './static.js';
 // logDir — папка журналов игр; без неё журнал не ведётся и приёмщик строк клиента отключён.
 // rules — правила движка для всех комнат процесса.
 // ffaEnv — переключатели общей игры строками окружения (ключ — имя переменной) поверх `ffa`; пусто — умолчание.
+// botClock — часы бюджета хода ботов в мс; умолчание — время процесса.
 export interface AppOptions {
   staticRoot?: string;
   apkPath?: string;
@@ -36,6 +37,7 @@ export interface AppOptions {
   tickMs?: number;
   random?: () => number;
   silenceTimeoutMs?: number;
+  botClock?: () => number;
 }
 
 export interface App {
@@ -68,6 +70,8 @@ const FFA_ENV = {
   idleWarnSeconds: 'FFA_IDLE_WARN_SECONDS',
   idleKickSeconds: 'FFA_IDLE_KICK_SECONDS',
   serverBots: 'FFA_SERVER_BOTS',
+  botBudgetMs: 'FFA_BOT_BUDGET_MS',
+  botSlowdown: 'FFA_BOT_SLOWDOWN',
 } as const;
 const SWITCH_ON = '1';
 const SWITCH_OFF = '0';
@@ -75,6 +79,9 @@ const SWITCH_OFF = '0';
 const FFA_MINIMUM_LIMIT = Math.min(...FFA_SIZES);
 // ticksLeft и idleTicksLeft уходят двумя байтами, а 0xFFFF там значит «нет»: длительность в тиках меньше него.
 const FFA_SECONDS_LIMIT = Math.floor((NO_ID - 1) / TICK_RATE);
+// Бюджет хода ботов — не больше тика; замедление для замера — с запасом на машину в разы медленнее боевой.
+const BOT_BUDGET_LIMIT_MS = Math.floor(1000 / TICK_RATE);
+const BOT_SLOWDOWN_LIMIT = 100;
 
 type FfaEnv = Readonly<Record<string, string | undefined>>;
 
@@ -118,6 +125,8 @@ function ffaOptionsFromEnv(base: FfaOptions, env: FfaEnv): FfaOptions {
   if (isIdleSet && idleWarnTicks >= idleKickTicks) {
     throw new Error(`${FFA_ENV.idleWarnSeconds} должен быть меньше ${FFA_ENV.idleKickSeconds}`);
   }
+  const botBudgetMs = envInteger(env, FFA_ENV.botBudgetMs, BOT_BUDGET_LIMIT_MS);
+  const botSlowdown = envInteger(env, FFA_ENV.botSlowdown, BOT_SLOWDOWN_LIMIT);
   const minimums: Readonly<Record<FfaSize, number>> =
     minimum === null ? base.minimum : { 10: minimum, 30: minimum, 50: minimum };
   return {
@@ -129,6 +138,8 @@ function ffaOptionsFromEnv(base: FfaOptions, env: FfaEnv): FfaOptions {
     resultsTicks: ticksOr(resultsSeconds, base.resultsTicks),
     idleWarnTicks,
     idleKickTicks,
+    botBudgetMs: botBudgetMs ?? base.botBudgetMs,
+    botSlowdown: botSlowdown ?? base.botSlowdown,
   };
 }
 
@@ -171,6 +182,7 @@ export function createApp(options: AppOptions = {}): App {
     ffaOptions,
   );
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
+  const botClock = options.botClock ?? ((): number => performance.now());
   const server = createServer((request, response) => {
     const path = requestPath(request);
     if (path === HEALTH_PATH) {
@@ -308,9 +320,10 @@ export function createApp(options: AppOptions = {}): App {
   }
 
   function thinkBots(): void {
-    const started = performance.now();
-    rooms.thinkBots();
-    metrics.recordBotThink(performance.now() - started);
+    const started = botClock();
+    const deadline = started + ffaOptions.botBudgetMs;
+    const report = rooms.thinkBots(() => botClock() >= deadline);
+    metrics.recordBotThink(botClock() - started, report);
   }
 
   // Тик с компенсацией дрейфа таймера: следующий срок считается от расписания, а не от фактического времени.

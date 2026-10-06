@@ -76,7 +76,6 @@ PANELS = [
             prom('tanks_tick_duration_ms{quantile="0.5"}', "медиана"),
             prom('tanks_tick_duration_ms{quantile="0.99"}', "p99"),
             prom('tanks_tick_duration_ms{quantile="max"}', "максимум"),
-            prom('tanks_bot_think_ms{quantile="max"}', "мозг ботов после тика, максимум"),
         ],
         unit="ms",
         width=THIRD,
@@ -96,6 +95,32 @@ PANELS = [
         PROM,
         [prom("increase(tanks_ticks_late_total[1m])", "опоздавших")],
         width=THIRD,
+    ),
+    timeseries(
+        "Ход серверных ботов после тика, мс",
+        PROM,
+        [
+            prom('tanks_bot_think_ms{quantile="0.5"}', "медиана"),
+            prom('tanks_bot_think_ms{quantile="0.99"}', "p99"),
+            prom('tanks_bot_think_ms{quantile="max"}', "максимум"),
+        ],
+        unit="ms",
+        width=THIRD,
+    ),
+    timeseries(
+        "Боты: пропуски из-за бюджета и ожидание решения",
+        PROM,
+        [
+            prom("increase(tanks_bot_skipped_total[1m])", "пропусков за минуту"),
+            prom('tanks_bot_wait_ticks{quantile="max"}', "дольше всех ждал, тиков"),
+        ],
+        width=THIRD,
+        overrides=[
+            {
+                "matcher": {"id": "byName", "options": "дольше всех ждал, тиков"},
+                "properties": [{"id": "custom.axisPlacement", "value": "right"}],
+            },
+        ],
     ),
     timeseries(
         "Комнаты и сокеты",

@@ -24,7 +24,7 @@ import {
   type ServerMessage,
 } from '@tanks/shared/protocol';
 import { CrowdBot } from '../src/crowd/bot.js';
-import { CrowdBrain } from '../src/crowd/brain.js';
+import { CrowdBrain, type PathAllowance } from '../src/crowd/brain.js';
 import {
   CROWD_PROFILES,
   crowdNickname,
@@ -313,6 +313,45 @@ describe('мозг толпы на крафтовых видах', () => {
     const phases = Array.from({ length: 10 }, (_, phase) => phase);
     expect(phases.filter((phase) => isDetouring(phase, 1))).toEqual([9]);
     expect(phases.filter((phase) => isDetouring(phase, 4))).toEqual([6]);
+  });
+
+  describe('поиск пути при ходе не на каждом тике', () => {
+    const walled: BattleMap = { ...OPEN, walls: [{ x: 900, y: 250, w: 40, h: 400 }] };
+    const me = crowdTank(ME, 700, 450, { heading: 0 });
+    const target = crowdTank(2, 1100, 450);
+    const isDetour = (action: Action): boolean => Math.abs(action.turn) > 0.3;
+    const quota = (limit: number): PathAllowance => {
+      let left = limit;
+      return {
+        take: () => {
+          left--;
+          return left >= 0;
+        },
+      };
+    };
+
+    it('тик расписания между ходами засчитывается: ходил на 5 и 12 — ищет путь на 12; на 11 и 12 — нет', () => {
+      const skipped = brainOf(profileOf(5));
+      skipped.tick(viewOf(me, { map: walled, tick: 5 }), target);
+      const steady = brainOf(profileOf(5));
+      steady.tick(viewOf(me, { map: walled, tick: 11 }), target);
+      expect(isDetour(skipped.tick(viewOf(me, { map: walled, tick: 12 }), target))).toBe(true);
+      expect(isDetour(steady.tick(viewOf(me, { map: walled, tick: 12 }), target))).toBe(false);
+    });
+
+    it('без разрешения едет прямо к цели пути; на следующем ходу с разрешением — в обход, хотя тик не расписания', () => {
+      const brain = brainOf(profileOf(5));
+      expect(isDetour(brain.tick(viewOf(me, { map: walled, tick: 10 }), target, quota(0)))).toBe(false);
+      expect(isDetour(brain.tick(viewOf(me, { map: walled, tick: 11 }), target))).toBe(true);
+    });
+
+    it('общее разрешение на два поиска: из десяти ботов, которым пора, путь ищут двое', () => {
+      const shared = quota(2);
+      const actions = Array.from({ length: 10 }, () =>
+        brainOf(profileOf(5)).tick(viewOf(me, { map: walled, tick: 10 }), target, shared),
+      );
+      expect(actions.filter(isDetour)).toHaveLength(2);
+    });
   });
 
   it('цель внутри сплошной стены недостижима: пути нет, едет прямо на цель', () => {

@@ -45,6 +45,7 @@ import {
   type FfaScoreMessage,
   type FfaSelf,
   type FfaSnapshotEvent,
+  type FfaSnapshotMessage,
   type FfaStateMessage,
   type FfaTankSnapshot,
   type ServerMessage,
@@ -55,6 +56,7 @@ import { prepareCrowdMap } from './crowd/brain.js';
 import { crowdNickname, crowdPyramid, type CrowdLevel } from './crowd/profile.js';
 import { ServerBot } from './crowd/serverBot.js';
 import { TargetBook } from './crowd/targets.js';
+import { crowdBullets, crowdTank, type Frame } from './crowd/view.js';
 import { LOG_SOURCE_SERVER, type GameLog } from './gameLog.js';
 import { clearInput, createInputChannel, hasSpareInput, offerInput, takeAction, type InputChannel } from './inputs.js';
 import type { InputDropCounter } from './metrics.js';
@@ -80,6 +82,10 @@ export interface FfaOptions {
   // Добирать игру с людьми серверными ботами до минимума.
   hasServerBots: boolean;
   botRandom: () => number;
+  // Бюджет прохода хода серверных ботов всех игр процесса после тика, мс по часам процесса.
+  botBudgetMs: number;
+  // Во сколько раз растянуть ход каждого серверного бота — для замера на быстрой машине; 1 — без замедления.
+  botSlowdown: number;
 }
 
 const SEED_LIMIT = 2 ** 31;
@@ -98,6 +104,8 @@ export const DEFAULT_FFA_OPTIONS: FfaOptions = {
   matchSeed: () => randomInt(SEED_LIMIT),
   hasServerBots: true,
   botRandom: Math.random,
+  botBudgetMs: 6,
+  botSlowdown: 1,
 };
 
 // isBot — бот роя или серверный бот; serverBot — у серверного бота, его соединение внутри процесса.
@@ -175,6 +183,14 @@ const SCORE_INTERVAL_TICKS = TICK_RATE;
 
 function isSameAction(a: Action, b: Action): boolean {
   return a.throttle === b.throttle && a.turn === b.turn && a.turretTurn === b.turretTurn && a.isFiring === b.isFiring;
+}
+
+function botFrameOf(match: FfaMatch): Frame {
+  return {
+    tick: match.world.tick,
+    tanks: match.world.tanks.map((tank) => crowdTank(tankSnapshot(tank), tank.stats)),
+    bullets: crowdBullets(match.world.bullets),
+  };
 }
 
 function tankSnapshot(tank: FfaMatch['world']['tanks'][number]): FfaTankSnapshot {
@@ -277,10 +293,14 @@ export class FfaGame {
     return this.seatFor(player, connection);
   }
 
-  // Ход мозга серверных ботов — вне тика: по снимкам, которые тик им разослал.
-  thinkBots(): void {
-    for (const bot of this.players.filter(isServerBot)) {
-      bot.serverBot.think(this.tick);
+  get serverBots(): ServerBot[] {
+    return this.players.filter(isServerBot).map((player) => player.serverBot);
+  }
+
+  // Вне тика: серверные боты разбирают то, что тик им разослал; решают — по очереди процесса.
+  absorbBots(): void {
+    for (const bot of this.serverBots) {
+      bot.absorb(this.tick);
     }
   }
 
@@ -324,7 +344,7 @@ export class FfaGame {
       phase: this.nextPlayerId,
       mapFor: () => this.map,
     });
-    const serverBot = new ServerBot(bot, level);
+    const serverBot = new ServerBot(bot, level, this.options.botSlowdown);
     const join = bot.joinMessage();
     this.addPlayer(serverBot, join.nickname, join.stats, true, serverBot, FfaInviteMiss.None);
     this.sendMatchInfo(serverBot);
@@ -734,27 +754,33 @@ export class FfaGame {
     };
   }
 
+  // Серверным ботам — объектом без кодека и с полем, собранным один раз на всех.
   private sendSnapshots(match: FfaMatch, events: FfaSnapshotEvent[], changes: BulletChanges): void {
     const tanks = match.world.tanks.map(tankSnapshot);
     const kits = match.world.kits.map((kit) => ({ isActive: kit.isActive, respawnIn: kit.respawnIn }));
+    let botFrame: Frame | null = null;
     for (const player of this.players) {
       if (player.connection === null) {
         continue;
       }
-      player.connection.send(
-        encode({
-          type: MessageType.FfaSnapshot,
-          tick: match.world.tick,
-          gameTick: this.tick,
-          ackSeq: player.input.ackSeq,
-          hasSpareInput: hasSpareInput(player.input, this.tick),
-          self: this.selfOf(player, match),
-          tanks,
-          kits,
-          events,
-          ...changes,
-        }),
-      );
+      const message: FfaSnapshotMessage = {
+        type: MessageType.FfaSnapshot,
+        tick: match.world.tick,
+        gameTick: this.tick,
+        ackSeq: player.input.ackSeq,
+        hasSpareInput: hasSpareInput(player.input, this.tick),
+        self: this.selfOf(player, match),
+        tanks,
+        kits,
+        events,
+        ...changes,
+      };
+      if (isServerBot(player)) {
+        botFrame ??= botFrameOf(match);
+        player.serverBot.deliver(message, botFrame);
+        continue;
+      }
+      player.connection.send(encode(message));
     }
   }
 

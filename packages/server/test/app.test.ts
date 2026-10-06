@@ -19,7 +19,7 @@ import {
 } from '@tanks/shared/protocol';
 import { createApp, type App } from '../src/app.js';
 import { TestClient } from './client.js';
-import { seededRandom, sleep } from './support.js';
+import { seededRandom, sleep, threadCpuMs } from './support.js';
 
 const FAST_ROOM = { countdownTicks: 3, roundEndTicks: 3, maxInputsPerSecond: 90 };
 const TICK_MS = 4;
@@ -266,10 +266,13 @@ describe('процесс', () => {
 
 describe('переключатели общей игры из окружения', () => {
   const WAIT_MS = 10_000;
+  const BOT_PASS_WINDOW_MS = 500;
+  // Шесть ботов без замедления проходят за доли миллисекунды, со стократным — за несколько миллисекунд.
+  const SLOW_BOT_PASS_MS = 2;
 
   async function restart(ffaEnv: Record<string, string>): Promise<void> {
     await app.close();
-    app = createApp({ ffaEnv, tickMs: TICK_MS });
+    app = createApp({ ffaEnv, tickMs: TICK_MS, botClock: threadCpuMs });
     port = await app.listen(0, '127.0.0.1');
   }
 
@@ -329,6 +332,30 @@ describe('переключатели общей игры из окружения
     expect(await stateOf(client, FfaPhase.Lobby)).toMatchObject({ minimum: 7, players: 1, ticksLeft: null });
   });
 
+  // Медиана прохода хода ботов за полсекунды боя ffa10 с шестью ботами.
+  async function botPassMs(ffaEnv: Record<string, string>): Promise<number> {
+    await restart({ FFA_LOBBY_QUIET_SECONDS: '1', ...ffaEnv });
+    const client = await connect();
+    client.join('ffa10');
+    await stateOf(client, FfaPhase.Fight);
+    const metricsUrl = `http://127.0.0.1:${String(port)}/metrics`;
+    await fetch(metricsUrl);
+    await sleep(BOT_PASS_WINDOW_MS);
+    const text = await (await fetch(metricsUrl)).text();
+    return Number(/^tanks_bot_think_ms\{quantile="0\.5"\} (\S+)$/m.exec(text)?.[1] ?? NaN);
+  }
+
+  it(
+    'FFA_BOT_SLOWDOWN и FFA_BOT_BUDGET_MS — замедление удлиняет проход ботов, бюджет его обрезает',
+    async () => {
+      const roomy = await botPassMs({ FFA_BOT_BUDGET_MS: '33', FFA_BOT_SLOWDOWN: '100' });
+      const tight = await botPassMs({ FFA_BOT_BUDGET_MS: '1', FFA_BOT_SLOWDOWN: '100' });
+      expect(roomy).toBeGreaterThan(SLOW_BOT_PASS_MS);
+      expect(tight).toBeLessThan(roomy / 2);
+    },
+    4 * WAIT_MS,
+  );
+
   it.each([
     ['FFA_MINIMUM', 'много'],
     ['FFA_MINIMUM', '0'],
@@ -340,6 +367,11 @@ describe('переключатели общей игры из окружения
     ['FFA_IDLE_WARN_SECONDS', 'x'],
     ['FFA_IDLE_KICK_SECONDS', '3000'],
     ['FFA_SERVER_BOTS', 'да'],
+    ['FFA_BOT_BUDGET_MS', '0'],
+    ['FFA_BOT_BUDGET_MS', '2.5'],
+    ['FFA_BOT_BUDGET_MS', '34'],
+    ['FFA_BOT_SLOWDOWN', 'быстро'],
+    ['FFA_BOT_SLOWDOWN', '101'],
   ])('%s=«%s» — createApp бросает ошибку с именем переменной', (name, value) => {
     expect(() => createApp({ ffaEnv: { [name]: value } })).toThrow(name);
   });
@@ -352,8 +384,10 @@ describe('переключатели общей игры из окружения
     expect(() => createApp({ ffaEnv })).toThrow(/FFA_IDLE_WARN_SECONDS.*FFA_IDLE_KICK_SECONDS/);
   });
 
-  it('граничные значения принимаются: минимум 10, длительность 2184 с', async () => {
-    await createApp({ ffaEnv: { FFA_MINIMUM: '10', FFA_MATCH_SECONDS: '2184' } }).close();
+  it('граничные значения принимаются: минимум 10, длительность 2184 с, бюджет ботов 33 мс, замедление 100', async () => {
+    await createApp({
+      ffaEnv: { FFA_MINIMUM: '10', FFA_MATCH_SECONDS: '2184', FFA_BOT_BUDGET_MS: '33', FFA_BOT_SLOWDOWN: '100' },
+    }).close();
   });
 });
 

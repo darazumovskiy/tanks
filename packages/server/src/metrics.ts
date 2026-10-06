@@ -1,4 +1,5 @@
 import { createHistogram, type RecordableHistogram } from 'node:perf_hooks';
+import type { BotTurnReport } from './crowd/botTurns.js';
 
 export type Direction = 'in' | 'out';
 export type DropReason = 'stale' | 'limit' | 'overflow' | 'backlog';
@@ -35,7 +36,7 @@ export interface MetricsGauges {
 // Счётчики процесса для ручки /metrics. В тике — только инкременты и запись в гистограмму; текст собирается по запросу.
 export interface Metrics extends InputDropCounter {
   recordTick(durationMs: number, isLate: boolean): void;
-  recordBotThink(durationMs: number): void;
+  recordBotThink(durationMs: number, turns: BotTurnReport): void;
   countMessage(direction: Direction, bytes: number): void;
   render(gauges: MetricsGauges): string;
   close(): void;
@@ -56,10 +57,10 @@ function recordMs(histogram: RecordableHistogram, ms: number): void {
   histogram.record(Math.max(1, Math.round(ms * MICROS_PER_MS)));
 }
 
-function quantilesOf(histogram: RecordableHistogram): [string, number][] {
+function quantilesOf(histogram: RecordableHistogram, unit = MICROS_PER_MS): [string, number][] {
   return QUANTILES.map((quantile) => {
-    const micros = quantile.percentile === 'max' ? histogram.max : histogram.percentile(quantile.percentile);
-    return [quantile.label, micros / MICROS_PER_MS];
+    const value = quantile.percentile === 'max' ? histogram.max : histogram.percentile(quantile.percentile);
+    return [quantile.label, value / unit];
   });
 }
 
@@ -84,6 +85,9 @@ class MetricsLines {
 export function createMetrics(): Metrics {
   const tickDuration = createHistogram();
   const botThink = createHistogram();
+  // Гистограмма не принимает 0: ожидание пишется со сдвигом на тик и при выводе сдвигается обратно.
+  const botWait = createHistogram();
+  let botSkipped = 0;
   const eventLoopDelay = createHistogram();
   let probeExpectedAt = performance.now() + EVENT_LOOP_PROBE_MS;
   const probe = setInterval(() => {
@@ -107,8 +111,12 @@ export function createMetrics(): Metrics {
       }
       recordMs(tickDuration, durationMs);
     },
-    recordBotThink(durationMs): void {
+    recordBotThink(durationMs, turns): void {
       recordMs(botThink, durationMs);
+      botSkipped += turns.skipped;
+      for (const ticks of turns.waits) {
+        botWait.record(ticks + 1);
+      }
     },
     countMessage(direction, size): void {
       messages[direction]++;
@@ -131,9 +139,20 @@ export function createMetrics(): Metrics {
       for (const [quantile, value] of quantilesOf(botThink)) {
         out.value('tanks_bot_think_ms', value, { quantile });
       }
+      out.header(
+        'tanks_bot_wait_ticks',
+        'gauge',
+        'сколько тиков серверный бот ждал решения за окно с прошлого запроса',
+      );
+      for (const [quantile, value] of quantilesOf(botWait, 1)) {
+        out.value('tanks_bot_wait_ticks', Math.max(0, value - 1), { quantile });
+      }
+      out.header('tanks_bot_skipped_total', 'counter', 'решений серверных ботов, пропущенных из-за бюджета хода');
+      out.value('tanks_bot_skipped_total', botSkipped);
       tickDuration.reset();
       eventLoopDelay.reset();
       botThink.reset();
+      botWait.reset();
       out.header('tanks_ticks_total', 'counter', 'тиков с запуска');
       out.value('tanks_ticks_total', ticks);
       out.header('tanks_ticks_late_total', 'counter', 'тиков, начавшихся позже расписания больше чем на тик');

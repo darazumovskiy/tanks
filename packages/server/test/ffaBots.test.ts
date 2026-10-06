@@ -42,7 +42,7 @@ import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaOptions } from '../src/ffaGame.js
 import { NO_LOG } from '../src/gameLog.js';
 import { NO_DROP_COUNTER } from '../src/metrics.js';
 import { TestClient } from './client.js';
-import { seededRandom, sleep } from './support.js';
+import { seededRandom, sleep, threadCpuMs } from './support.js';
 
 // Открытое поле без стен: стрелок теста видит цель по прямой, боты ездят без застреваний.
 const OPEN_MAP: FfaMap = {
@@ -1073,5 +1073,128 @@ describe('связь людей и уход последнего', () => {
       expect(started.stats().rooms).toBe(0);
     },
     TEST_TIMEOUT_MS,
+  );
+});
+
+describe('бюджет хода ботов', () => {
+  const BOTS = 34;
+  // Замедление — как у боевой машины против Mac: без бюджета проход 34 ботов в два-три раза длиннее бюджета.
+  const SLOWDOWN = 15;
+  // Меньше одного решения медленного мозга: за проход решает ровно первый в очереди.
+  const ONE_DECISION_BUDGET_MS = 1;
+  // Во весь тик: за проход решают почти все боты, и поиски пути упираются в разрешение на проход.
+  const WHOLE_TICK_BUDGET_MS = Math.floor(1000 / TICK_RATE);
+  const FIGHT_TICKS = 200;
+  const SLOW_TIMEOUT_MS = 120_000;
+  // Бот без решения дольше INPUT_TIMEOUT_TICKS без повтора команды замолчал бы и встал; с повтором живые боты едут
+  // почти всегда.
+  const MOVING_SHARE_MIN = 0.85;
+  // Проход перерастает бюджет на последнее начатое решение: в медиане — на полбюджета, в 99-м процентиле — на четыре.
+  const TYPICAL_PASS_BUDGETS = 1.5;
+  const SLOW_PASS_BUDGETS = 5;
+
+  interface SlowFight {
+    typicalPassMs: number;
+    slowPassMs: number;
+    skipped: number;
+    longestWait: number;
+    // Доля тиков, в которые живой танк бота сдвинулся.
+    movingShare: number;
+  }
+
+  async function metricsOf(): Promise<Map<string, number>> {
+    const text = await (await fetch(`http://127.0.0.1:${String(port)}/metrics`)).text();
+    const series = new Map<string, number>();
+    for (const line of text.split('\n').filter((entry) => entry !== '' && !entry.startsWith('#'))) {
+      const space = line.lastIndexOf(' ');
+      series.set(line.slice(0, space), Number(line.slice(space + 1)));
+    }
+    return series;
+  }
+
+  async function slowFight(botBudgetMs: number): Promise<SlowFight> {
+    for (const client of clients.splice(0)) {
+      client.close();
+    }
+    await app?.close();
+    await startApp(
+      {
+        mapFor: DEFAULT_FFA_OPTIONS.mapFor,
+        minimum: { 10: 7, 30: 7, 50: BOTS + 1 },
+        botSlowdown: SLOWDOWN,
+        botBudgetMs,
+      },
+      { tickMs: 1000 / TICK_RATE, silenceTimeoutMs: SLOW_TIMEOUT_MS, botClock: threadCpuMs },
+    );
+    const client = await TestClient.connect(port);
+    clients.push(client);
+    client.join('ffa50', 'Человек', DEFAULT_STATS, PROTOCOL_VERSION, '', false, '');
+    const human = new View({ client, welcome: await client.nextOfType(MessageType.FfaWelcome) });
+    await human.until(isPhase(FfaPhase.Fight), 'бой');
+    expect(botIds(human.roster)).toHaveLength(BOTS);
+    const before = await metricsOf();
+    const previous = new Map<number, { x: number; y: number }>();
+    let fightTicks = 0;
+    let aliveSamples = 0;
+    let movingSamples = 0;
+    await human.until(
+      () => fightTicks >= FIGHT_TICKS,
+      'бой идёт',
+      (message, view) => {
+        if (message.type !== MessageType.FfaSnapshot || view.state?.phase !== FfaPhase.Fight) {
+          return;
+        }
+        fightTicks++;
+        const bots = new Set(botIds(view.roster));
+        for (const tank of message.tanks.filter((candidate) => bots.has(candidate.id))) {
+          const last = previous.get(tank.id);
+          previous.set(tank.id, { x: tank.x, y: tank.y });
+          if (!tank.isAlive || last === undefined) {
+            continue;
+          }
+          aliveSamples++;
+          movingSamples += Number(tank.x !== last.x || tank.y !== last.y);
+        }
+      },
+      SLOW_TIMEOUT_MS,
+    );
+    const after = await metricsOf();
+    const fight: SlowFight = {
+      typicalPassMs: after.get('tanks_bot_think_ms{quantile="0.5"}') ?? Infinity,
+      slowPassMs: after.get('tanks_bot_think_ms{quantile="0.99"}') ?? Infinity,
+      skipped: (after.get('tanks_bot_skipped_total') ?? 0) - (before.get('tanks_bot_skipped_total') ?? 0),
+      longestWait: after.get('tanks_bot_wait_ticks{quantile="max"}') ?? Infinity,
+      movingShare: movingSamples / aliveSamples,
+    };
+    console.log(
+      `медленный мозг, бюджет ${String(botBudgetMs)} мс: проход ${fight.typicalPassMs.toFixed(2)} · 99-й ` +
+        `${fight.slowPassMs.toFixed(2)} мс, пропусков ${String(fight.skipped)}, дольше всех ждал ` +
+        `${String(fight.longestWait)} тиков, живые боты едут в ${fight.movingShare.toFixed(2)} тиков`,
+    );
+    return fight;
+  }
+
+  it(
+    'медленный мозг: ffa50, 34 бота, замедление 15 — проход около бюджета, пропусков тем меньше, чем больше бюджет, каждый бот решает не реже раза за число ботов, пропущенные едут по прошлой команде',
+    async () => {
+      const budgetMs = DEFAULT_FFA_OPTIONS.botBudgetMs;
+      // За проход решает только первый в очереди: проход — обязательная часть, разбор ящиков и одно решение.
+      const mandatory = await slowFight(ONE_DECISION_BUDGET_MS);
+      expect(mandatory.longestWait).toBeLessThan(BOTS);
+      expect(mandatory.movingShare).toBeGreaterThanOrEqual(MOVING_SHARE_MIN);
+      const fight = await slowFight(budgetMs);
+      // Код под замером покрытия медленнее в разы: одно решение само длиннее бюджета, и проход упирается в него, а не в
+      // бюджет. Длительность прохода сверяется с бюджетом, только когда обязательная часть его не съедает.
+      const isBudgetMeasurable = mandatory.typicalPassMs <= budgetMs;
+      const measuredBudgetMs = isBudgetMeasurable ? budgetMs : Infinity;
+      expect(fight.typicalPassMs).toBeLessThanOrEqual(TYPICAL_PASS_BUDGETS * measuredBudgetMs);
+      expect(fight.slowPassMs).toBeLessThanOrEqual(SLOW_PASS_BUDGETS * measuredBudgetMs);
+      expect(fight.skipped).toBeGreaterThan(0);
+      expect(fight.longestWait).toBeLessThan(BOTS);
+      expect(fight.movingShare).toBeGreaterThanOrEqual(MOVING_SHARE_MIN);
+      const roomy = await slowFight(WHOLE_TICK_BUDGET_MS);
+      expect(roomy.skipped).toBeLessThan(fight.skipped);
+    },
+    3 * SLOW_TIMEOUT_MS,
   );
 });
