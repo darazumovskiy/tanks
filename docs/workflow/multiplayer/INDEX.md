@@ -37,7 +37,7 @@
 | Где | Что |
 |---|---|
 | [round.ts](../../../packages/shared/src/engine/round.ts) | Поле боя `World` на N танков, `stepWorld`, `flyBullets`; дуэль `Round`, `stepRound` |
-| [ffa.ts](../../../packages/shared/src/engine/ffa.ts), [spawn.ts](../../../packages/shared/src/engine/spawn.ts), [ffaMaps.ts](../../../packages/shared/src/engine/ffaMaps.ts), [random.ts](../../../packages/shared/src/engine/random.ts) | Матч, выбор точки возрождения, карты 10/30/50, генератор с сидом |
+| [ffa.ts](../../../packages/shared/src/engine/ffa.ts), [spawn.ts](../../../packages/shared/src/engine/spawn.ts), [ffaMaps.ts](../../../packages/shared/src/engine/ffaMaps.ts), [random.ts](../../../packages/shared/src/engine/random.ts) | Матч, выбор точки возрождения, расстановка на старте, карты 10/30/50, генератор с сидом |
 | [messages.ts](../../../packages/shared/src/protocol/messages.ts), [codec.ts](../../../packages/shared/src/protocol/codec.ts), [ffaRoom.ts](../../../packages/shared/src/protocol/ffaRoom.ts), [ffaEvents.ts](../../../packages/shared/src/protocol/ffaEvents.ts), [bullets.ts](../../../packages/shared/src/protocol/bullets.ts) | Сообщения и кодек v6, коды `ffa10/30/50`, события снимка, снаряды: разница на сервере и зеркало у клиента |
 | [ffaGame.ts](../../../packages/server/src/ffaGame.ts), [roomManager.ts](../../../packages/server/src/roomManager.ts), [inputs.ts](../../../packages/server/src/inputs.ts), [app.ts](../../../packages/server/src/app.ts) | Общая игра, подбор, очередь команд, маршрут кодов |
 | [server/src/bots/](../../../packages/server/src/bots/) | Лестница дуэли — заморожена, отпечаток в [ladder.test.ts](../../../packages/server/test/ladder.test.ts) |

@@ -44,6 +44,9 @@ export const SPAWN = {
   nearBestShare: 0.8,
   placementTries: 24,
   tankGap: 8,
+  startGridStep: 40,
+  startNearBestShare: 0.9,
+  startEdgeWeight: 3,
 } as const;
 export const STAT_POINTS = 10;
 export const STAT_MAX = 5;

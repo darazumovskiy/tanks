@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BULLET_LIFETIME, BULLET_RADIUS, DEFAULT_STATS, FFA, TANK_RADIUS, TICK_RATE } from './constants.js';
+import { BULLET_LIFETIME, BULLET_RADIUS, DEFAULT_STATS, FFA, SPAWN, TANK_RADIUS, TICK_RATE } from './constants.js';
 import {
   createFfaMatch,
   FFA_RESPAWN_WAIT_TICKS,
@@ -13,8 +13,8 @@ import {
   type FfaPlayer,
   type FfaSetup,
 } from './ffa.js';
-import { FFA_SIZES, ffaMap, type FfaMap, type SpawnArea } from './ffaMaps.js';
-import type { Wall } from './geometry.js';
+import { FFA_SIZES, ffaMap, type FfaMap, type FfaSize, type SpawnArea } from './ffaMaps.js';
+import { circleRect, type Wall } from './geometry.js';
 import { createRandom, nextRandom } from './random.js';
 import { DEFAULT_RULES, IDLE_ACTION, zoneRadiusAt, type Action, type Tank } from './round.js';
 import { traceShot } from './trajectory.js';
@@ -30,6 +30,12 @@ const CORNER_AREAS: SpawnArea[] = [
   { x: 1700, y: 900, radius: 90 },
 ];
 const NO_ACTIONS: ReadonlyMap<number, unknown> = new Map();
+// Минимум, с которым стартует игра каждого размера.
+const START_MINIMUM: Readonly<Record<FfaSize, number>> = { 10: 7, 30: 20, 50: 35 };
+const START_SEEDS = 200;
+const START_MIN_ENEMY_DISTANCE = 350;
+const START_MIN_EDGE_DISTANCE = 120;
+const START_TEST_TIMEOUT_MS = 60_000;
 const WRECK_TICKS = FFA.wreckSeconds * TICK_RATE;
 const RESPAWN_TICKS = FFA.respawnSeconds * TICK_RATE;
 
@@ -115,25 +121,82 @@ function openMatch(count: number, map: FfaMap = testMap()): FfaMatch {
   return createFfaMatch(map, setups(count), 1, DEFAULT_RULES);
 }
 
+function nearestEnemy(match: FfaMatch, tank: Tank): number {
+  return match.world.tanks
+    .filter((other) => other !== tank)
+    .reduce((nearest, other) => Math.min(nearest, Math.hypot(tank.x - other.x, tank.y - other.y)), Infinity);
+}
+
+function isTankClearOfWalls(map: FfaMap, tank: Tank): boolean {
+  const isInsideField =
+    tank.x >= TANK_RADIUS &&
+    tank.x <= map.width - TANK_RADIUS &&
+    tank.y >= TANK_RADIUS &&
+    tank.y <= map.height - TANK_RADIUS;
+  return isInsideField && map.walls.every((wall) => circleRect(tank.x, tank.y, TANK_RADIUS, wall) === null);
+}
+
 describe('старт матча', () => {
-  it.each(FFA_SIZES.map((size) => [size] as const))(
-    'полный состав на карте %i: все на поле, порознь, в областях',
-    (size) => {
+  it.each(FFA_SIZES.flatMap((size) => [size, START_MINIMUM[size]].map((count) => [size, count] as const)))(
+    'карта на %i, игроков %i: все на поле, не в стенах, ближайший соперник не ближе 350, край не ближе 120 на 200 сидах',
+    (size, count) => {
       const map = ffaMap(size);
-      const match = createFfaMatch(map, setups(size), 42, DEFAULT_RULES);
-      expect(match.world.tanks).toHaveLength(size);
-      for (const tank of match.world.tanks) {
-        expect(tank.shieldLeft).toBe(FFA.shieldSeconds);
-        expect(map.spawnAreas.some((area) => Math.hypot(tank.x - area.x, tank.y - area.y) <= area.radius)).toBe(true);
-        for (const other of match.world.tanks) {
-          if (other !== tank) {
-            expect(Math.hypot(tank.x - other.x, tank.y - other.y)).toBeGreaterThanOrEqual(TANK_RADIUS * 2);
-          }
+      let worstNearest = Infinity;
+      let worstEdge = Infinity;
+      let blockedTanks = 0;
+      let unshieldedTanks = 0;
+      for (let seed = 1; seed <= START_SEEDS; seed++) {
+        const match = createFfaMatch(map, setups(count), seed, DEFAULT_RULES);
+        expect(match.world.tanks).toHaveLength(count);
+        expect(match.players.every((player) => player.state === 'alive')).toBe(true);
+        for (const tank of match.world.tanks) {
+          worstNearest = Math.min(worstNearest, nearestEnemy(match, tank));
+          worstEdge = Math.min(worstEdge, tank.x, tank.y, map.width - tank.x, map.height - tank.y);
+          blockedTanks += isTankClearOfWalls(map, tank) ? 0 : 1;
+          unshieldedTanks += tank.shieldLeft === FFA.shieldSeconds ? 0 : 1;
         }
       }
-      expect(match.players.every((player) => player.state === 'alive')).toBe(true);
+      expect(worstNearest).toBeGreaterThanOrEqual(START_MIN_ENEMY_DISTANCE);
+      expect(worstEdge).toBeGreaterThanOrEqual(START_MIN_EDGE_DISTANCE);
+      expect(blockedTanks).toBe(0);
+      expect(unshieldedTanks).toBe(0);
     },
+    START_TEST_TIMEOUT_MS,
   );
+
+  it('тот же сид — те же места, другой сид — другие', () => {
+    const places = (seed: number): string =>
+      JSON.stringify(createFfaMatch(ffaMap(30), setups(30), seed, DEFAULT_RULES).world.tanks.map(({ x, y }) => [x, y]));
+    expect(places(5)).toBe(places(5));
+    expect(places(5)).not.toBe(places(6));
+  });
+
+  it('зона сжимается в первые секунды матча — все места внутри круга через 5 с', () => {
+    const match = createFfaMatch(testMap(), setups(10), 3, DEFAULT_RULES, 6);
+    const radiusAhead = zoneRadiusAt(match.world.zonePlan, FFA.spawnLookaheadSeconds);
+    expect(radiusAhead).toBeLessThan(WIDTH / 2);
+    for (const tank of match.world.tanks) {
+      expect(Math.hypot(tank.x - WIDTH / 2, tank.y - HEIGHT / 2) + TANK_RADIUS).toBeLessThanOrEqual(radiusAhead);
+    }
+  });
+
+  // На поле 140 × 100 узлов сетки старта два, в 40 друг от друга: место старта одно, остальные — у точки возрождения.
+  it('поле тесное: место старта одно, второй — у точки возрождения, остальные ждут места; все порознь', () => {
+    const cramped: FfaMap = { ...testMap([{ x: 70, y: 50, radius: 60 }]), width: 140, height: 100 };
+    const match = createFfaMatch(cramped, setups(4), 1, DEFAULT_RULES);
+    expect(match.world.tanks.length).toBeGreaterThan(1);
+    expect(match.world.tanks.length).toBeLessThan(4);
+    for (const tank of match.world.tanks) {
+      expect(nearestEnemy(match, tank)).toBeGreaterThanOrEqual(TANK_RADIUS * 2 + SPAWN.tankGap);
+    }
+    const onField = new Set(match.world.tanks.map((tank) => tank.id));
+    for (const player of match.players) {
+      expect(player.state).toBe(onField.has(player.id) ? 'alive' : 'waiting');
+    }
+    // Места старта лежат в узлах сетки; танк вне узла поставлен у точки возрождения.
+    const isOnStartGrid = (value: number): boolean => (value - SPAWN.startGridStep / 2) % SPAWN.startGridStep === 0;
+    expect(match.world.tanks.some((tank) => !isOnStartGrid(tank.x) || !isOnStartGrid(tank.y))).toBe(true);
+  });
 });
 
 describe('счёт', () => {
@@ -263,10 +326,12 @@ describe('подбитый и возрождение', () => {
   });
 
   it('места для возрождения нет — ждёт; место освободилось — появляется на следующем тике', () => {
-    const match = openMatch(2, testMap([{ x: 1000, y: 600, radius: 10 }]));
+    const match = openMatch(1, testMap([{ x: 1000, y: 600, radius: 10 }]));
+    put(match, 0, 1000, 600);
+    joinFfaMatch(match, { id: 1, name: 'Игрок 1', stats: DEFAULT_STATS });
+    run(match, 5);
     expect(match.world.tanks.map((tank) => tank.id)).toEqual([0]);
     expect(playerOf(match, 1)).toMatchObject({ state: 'waiting', ticksLeft: 0 });
-    run(match, 5);
     expect(playerOf(match, 1).state).toBe('waiting');
     put(match, 0, 300, 300);
     const events = run(match, 1);
@@ -390,8 +455,16 @@ function kill(match: FfaMatch, victim: number, by: number): FfaEvent[] {
   return run(match, 1);
 }
 
+// Танки сцены — у углов поля: снаряды сцен летят вдоль оси и не задевают чужих.
 function finalMatch(kinds: readonly Kind[]): FfaMatch {
   const match = createFfaMatch(testMap(), mixedSetups(kinds), 1, DEFAULT_RULES);
+  for (const [index, tank] of match.world.tanks.entries()) {
+    const corner = CORNER_AREAS[index];
+    if (corner !== undefined) {
+      tank.x = corner.x;
+      tank.y = corner.y;
+    }
+  }
   match.suddenDeathAt = 1;
   run(match, TICK_RATE + 1);
   return match;

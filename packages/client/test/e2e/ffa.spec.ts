@@ -27,6 +27,8 @@ const MATCH_BOT_COUNT = SIZE - 3;
 const SHOT_RETURN_TIMEOUT_MS = 3_000;
 const MAX_SELF_SHOTS = 5;
 const MIN_WALL_DISTANCE = 45;
+// Стена может быть в сотнях единиц: ошибка башни удваивается на обратном пути и не должна увести снаряд с танка.
+const RICOCHET_AIM_PRECISION = 0.005;
 // Возрождение через 4 с после гибели: обломки 2 с и ожидание 2 с.
 const RESPAWN_MS = 4_000;
 const RESPAWN_SLACK_MS = 1_500;
@@ -250,11 +252,13 @@ test('свой рикошет: три выстрела в стену — «са�
     settings: { hasRicochetGuard: false },
   });
   const me = ownTank(await player.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой'));
-  await player.aimFfaAngle(ricochetAngle(me));
+  const angle = ricochetAngle(me);
 
   let shots = 0;
   for (; shots < MAX_SELF_SHOTS && (await player.ffaState())?.screen === 'fight'; shots++) {
     const hpBefore = ownTank(await player.waitForFfa(isFighting, SCREEN_TIMEOUT_MS, 'бой')).hp;
+    // Камера после выстрела сдвигается, и курсор на поле уезжает с луча: прицел доводится перед каждым выстрелом.
+    await player.aimFfaAngleExactly(angle, RICOCHET_AIM_PRECISION);
     await player.page.mouse.down();
     await player.waitForFfa((state) => state.bullets > 0, SCREEN_TIMEOUT_MS, 'выстрел');
     await player.page.mouse.up();

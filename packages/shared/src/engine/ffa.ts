@@ -1,5 +1,6 @@
 import { FFA, TICK_RATE, ZONE_START_MARGIN } from './constants.js';
 import type { FfaMap } from './ffaMaps.js';
+import type { Spawn } from './maps.js';
 import { createRandom, type Random } from './random.js';
 import {
   createWorld,
@@ -7,11 +8,12 @@ import {
   stepWorld,
   type WorldEvent,
   type RoundRules,
+  type Tank,
   type TankSetup,
   type World,
   type ZonePlan,
 } from './round.js';
-import { chooseSpawn } from './spawn.js';
+import { chooseSpawn, chooseStartPlaces } from './spawn.js';
 
 // alive — танк на поле; wreck — подбит, ещё на поле; waiting — ждёт возрождения; spectator — зритель до конца матча.
 export type FfaPlayerState = 'alive' | 'wreck' | 'waiting' | 'spectator';
@@ -117,16 +119,21 @@ function playerById(match: FfaMatch, id: number): FfaPlayer | undefined {
   return match.players.find((player) => player.id === id);
 }
 
-function spawnPlayer(match: FfaMatch, player: FfaPlayer, events: FfaEvent[]): void {
-  const place = chooseSpawn(match.world, match.map.spawnAreas, match.random);
-  if (place === null) {
-    return;
-  }
+function placeTank(match: FfaMatch, player: FfaPlayer, place: Spawn): Tank {
   const tank = makeTank({ name: player.name, stats: player.stats }, player.id, place);
   tank.shieldLeft = FFA.shieldSeconds;
   match.world.tanks.push(tank);
   player.state = 'alive';
   player.hasPlayed = true;
+  return tank;
+}
+
+function spawnPlayer(match: FfaMatch, player: FfaPlayer, events: FfaEvent[]): void {
+  const place = chooseSpawn(match.world, match.map.spawnAreas, match.random);
+  if (place === null) {
+    return;
+  }
+  const tank = placeTank(match, player, place);
   events.push({ type: 'spawn', tank: tank.id, x: tank.x, y: tank.y });
 }
 
@@ -149,8 +156,14 @@ export function createFfaMatch(
     isOver: false,
     pendingEvents: [],
   };
-  for (const player of match.players) {
-    spawnPlayer(match, player, []);
+  const places = chooseStartPlaces(match.world, match.players.length, match.random);
+  for (const [index, player] of match.players.entries()) {
+    const place = places[index];
+    if (place === undefined) {
+      spawnPlayer(match, player, []);
+      continue;
+    }
+    placeTank(match, player, place);
   }
   return match;
 }
