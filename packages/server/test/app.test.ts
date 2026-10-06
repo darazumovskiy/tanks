@@ -673,6 +673,13 @@ describe('журнал игры', () => {
     expect(lines[2]).toMatch(/ C1 gt=3 sec c$/);
   });
 
+  it('принимает источник с наибольшим номером игрока боя толпы', async () => {
+    const base = `http://127.0.0.1:${String(port)}`;
+    expect((await fetch(`${base}/log?key=K7QX&src=C65534`, { method: 'POST', body: 'gt=1 sec a' })).status).toBe(204);
+    await app.close();
+    expect(logLines('K7QX')[0]).toMatch(/ C65534 gt=1 sec a$/);
+  });
+
   it('правила процесса уходят в RoundStart и в строку game start', async () => {
     await app.close();
     app = createApp({ logDir, rules: { wallSlidePercent: 50 }, room: FAST_ROOM, tickMs: TICK_MS });
@@ -688,6 +695,7 @@ describe('журнал игры', () => {
     const base = `http://127.0.0.1:${String(port)}`;
     expect((await fetch(`${base}/log?key=../etc&src=C1`, { method: 'POST', body: 'x' })).status).toBe(400);
     expect((await fetch(`${base}/log?key=K7MF&src=client-0`, { method: 'POST', body: 'x' })).status).toBe(400);
+    expect((await fetch(`${base}/log?key=K7MF&src=C123456`, { method: 'POST', body: 'x' })).status).toBe(400);
     expect((await fetch(`${base}/log?src=C1`, { method: 'POST', body: 'x' })).status).toBe(400);
     expect((await fetch(`${base}/log?key=K7MF`, { method: 'POST', body: 'x' })).status).toBe(400);
     const overLimit = 'y'.repeat(LOG_BODY_LIMIT_BYTES + 1);

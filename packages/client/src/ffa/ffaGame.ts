@@ -412,6 +412,7 @@ export class FfaGame {
     if (outcome === 'returned') {
       this.camera.snap();
     }
+    this.diag.setSource(message.playerId);
     this.diag.setGame(message.gameId);
     this.diag.write(`net welcome id=${String(message.playerId)} game=${message.gameId} outcome=${outcome}`);
     this.options.telemetry.setGame(message.gameId);

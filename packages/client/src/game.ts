@@ -174,7 +174,7 @@ export class Game {
       {
         onWelcome: (message): void => {
           this.side = message.side;
-          this.diag.setSide(message.side);
+          this.diag.setSource(message.side);
           this.options.telemetry.setSide(message.side);
           this.diag.write(`net welcome side=${String(message.side)} room=${message.roomCode}`);
           this.options.telemetry.event('net', 'welcome', { room: message.roomCode });

@@ -46,7 +46,7 @@ describe('DiagLog', () => {
     expect(posted[0]?.url).toBe('/log?key=room-abc123&src=C');
     expect(posted[0]?.body).toBe('gt=0 tc=00:00 now=1000 device ua=test');
 
-    diag.setSide(1);
+    diag.setSource(1);
     diag.write('net welcome');
     diag.setGame('K7MF');
     expect(beaconed).toHaveLength(1);

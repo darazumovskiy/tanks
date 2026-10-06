@@ -10,7 +10,7 @@ export interface GameLog {
 export const LOG_ROUTE = '/log';
 export const LOG_SOURCE_SERVER = 'S';
 const LOG_KEY_PATTERN = /^[A-Za-z0-9-]{1,40}$/;
-const LOG_SOURCE_PATTERN = /^[A-Za-z0-9]{1,4}$/;
+const LOG_SOURCE_PATTERN = /^[A-Za-z0-9]{1,6}$/;
 const LOG_BODY_LIMIT_BYTES = 256 * 1024;
 const FLUSH_INTERVAL_MS = 500;
 const HTTP_NO_CONTENT = 204;

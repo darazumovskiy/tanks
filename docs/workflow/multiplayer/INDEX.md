@@ -12,7 +12,7 @@
 | Что решили | [decisions.md](decisions.md) |
 | Что агент решил сам и ждёт подтверждения | [knowledge/pending-decisions.md](knowledge/pending-decisions.md) |
 | Замечания после игры: причины и требования к правкам | [knowledge/playtest-findings.md](knowledge/playtest-findings.md) |
-| Почему игра RWV3 лагала: канал Mac с роем, а не сервер и не журнал каждого тика | [knowledge/incident-rwv3.md](knowledge/incident-rwv3.md) |
+| Почему игра RWV3 лагала: приступ потерь пакетов на пути от Mac, рой на том же Mac его усиливает; сервер и журнал каждого тика ни при чём | [knowledge/incident-rwv3.md](knowledge/incident-rwv3.md) |
 | Почему свёрнутый айфон заводил новую дуэль каждые 20 секунд и как это повторено тестом | [knowledge/incident-yct4.md](knowledge/incident-yct4.md) |
 | Правила боя: вход, матч, счёт, возрождение, зона и финал, бездействие, что видит игрок, карты, боты | [concept/ffa.md](../../concept/ffa.md) |
 | Движок на N танков, матч, выбор точки возрождения, карты; план тестирования | [tech/impl/backend/ffa-engine.md](../../tech/impl/backend/ffa-engine.md) |

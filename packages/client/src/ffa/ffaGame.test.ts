@@ -125,6 +125,11 @@ class RecordingRenderer implements FfaRendererLike {
   }
 }
 
+interface DiagSent {
+  url: string;
+  body: string;
+}
+
 interface Harness {
   game: FfaGame;
   sockets: FakeSocket[];
@@ -139,6 +144,7 @@ interface Harness {
   copied: string[];
   autoFire: boolean[];
   fieldControls: boolean[];
+  diagSent: DiagSent[];
   socket: () => FakeSocket;
   frames: (count: number) => void;
   state: () => Record<string, unknown>;
@@ -170,6 +176,7 @@ function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings>
   const copied: string[] = [];
   const autoFire: boolean[] = [];
   const fieldControls: boolean[] = [];
+  const diagSent: DiagSent[] = [];
   let effects = null as Effects | null;
   const game = new FfaGame(
     {
@@ -198,7 +205,17 @@ function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings>
         return effects;
       },
       createSfx: () => new Sfx(() => document.visibilityState === 'hidden'),
-      createDiag: (roomCode) => new DiagLog(roomCode, { post: () => Promise.resolve(true), beacon: () => true }),
+      createDiag: (roomCode) =>
+        new DiagLog(roomCode, {
+          post: (url, body) => {
+            diagSent.push({ url, body });
+            return Promise.resolve(true);
+          },
+          beacon: (url, body) => {
+            diagSent.push({ url, body });
+            return true;
+          },
+        }),
       now: () => clock,
       requestFrame: (callback) => {
         pendingFrame = callback;
@@ -237,6 +254,7 @@ function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings>
     copied,
     autoFire,
     fieldControls,
+    diagSent,
     socket,
     frames: (count) => {
       for (let index = 0; index < count; index++) {
@@ -666,6 +684,46 @@ describe('обрыв и возврат', () => {
     early.frames(2);
     expect(early.state()).toMatchObject({ isFinal: false, screen: 'dead' });
     expect(statusText(early)).toContain('ТЕБЯ ПОДБИЛ Вася');
+  });
+});
+
+describe('журнал клиента', () => {
+  function sentWith(harness: Harness, text: string): DiagSent {
+    const found = harness.diagSent.filter((sent) => sent.body.includes(text)).at(-1);
+    if (found === undefined) {
+      throw new Error(`строка «${text}» не отправлена`);
+    }
+    return found;
+  }
+
+  async function reconnect(harness: Harness, message: ServerMessage): Promise<void> {
+    harness.socket().drop();
+    await vi.advanceTimersByTimeAsync(1000);
+    const next = harness.socket();
+    next.open();
+    next.receive(message);
+    await vi.advanceTimersByTimeAsync(1000);
+  }
+
+  it('источник — номер игрока: неотправленное до входа уходит в журнал комнаты с номером, дальше — в журнал игры', async () => {
+    const harness = makeGame();
+    harness.socket().open();
+    harness.socket().receive(welcome());
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sentWith(harness, ' device ').url).toBe(`/log?key=room-ffa${String(SIZE)}&src=C${String(ME)}`);
+    expect(sentWith(harness, ' net welcome id=4 ').url).toBe(`/log?key=K7QX&src=C${String(ME)}`);
+  });
+
+  it('возврат тем же номером — источник прежний; место ушло — строки идут под новым номером до закрытия', async () => {
+    const harness = makeGame();
+    harness.socket().open();
+    harness.socket().receive(welcome());
+    await reconnect(harness, welcome());
+    expect(sentWith(harness, 'outcome=returned').url).toBe(`/log?key=K7QX&src=C${String(ME)}`);
+    await reconnect(harness, welcome(9, 'новый'));
+    expect(sentWith(harness, 'outcome=lost').url).toBe('/log?key=K7QX&src=C9');
+    harness.game.close();
+    expect(sentWith(harness, ' close').url).toBe('/log?key=K7QX&src=C9');
   });
 });
 

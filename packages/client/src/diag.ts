@@ -1,4 +1,4 @@
-import { DT, type Side } from '@tanks/shared/engine';
+import { DT } from '@tanks/shared/engine';
 import { gameTimecode } from '@tanks/shared/protocol';
 
 export interface DiagOptions {
@@ -67,8 +67,9 @@ export class DiagLog {
     this.flushWithBeacon();
   };
 
-  setSide(side: Side): void {
-    this.source = `${SOURCE_PREFIX}${String(side)}`;
+  // Новый номер достаётся и строкам, ещё не отправленным под прежним источником.
+  setSource(id: number): void {
+    this.source = `${SOURCE_PREFIX}${String(id)}`;
   }
 
   // Новая дуэль: накопленное до неё уходит под старым ключом, дальше строки идут в файл игры.
