@@ -2,6 +2,9 @@
   "mcpServers": {
     "grafana-tanks": {
       "command": "${workspaceFolder}/.cursor/bin/mcp-grafana.sh"
+    },
+    "transcript-finder": {
+      "url": "http://localhost:7877/mcp"
     }
   }
 }
