@@ -276,6 +276,17 @@ PANELS = [
         width=THIRD,
     ),
     timeseries(
+        "Ожидание процессора, мс в секунду",
+        PROM,
+        [
+            prom('rate(tanks_cpu_pressure_seconds_total{scope="game"}[1m]) * 1000', "игра ждала ядро"),
+            prom('rate(tanks_cpu_pressure_seconds_total{scope="machine"}[1m]) * 1000', "кто-то на машине ждал ядро"),
+            prom("rate(tanks_cpu_steal_seconds_total[1m]) * 1000", "забрали соседи по железу"),
+        ],
+        unit="ms",
+        width=THIRD,
+    ),
+    timeseries(
         "Память машины",
         PROM,
         [
@@ -304,7 +315,7 @@ PANELS = [
         unit="percent",
         width=THIRD,
     ),
-    logs("Журнал сервера (systemd)", '{app="tanks",stream="server"}', width=THIRD),
+    logs("Журнал сервера (systemd)", '{app="tanks",stream="server"}', width=WIDTH),
 ]
 
 

@@ -1406,7 +1406,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Память машины",
+      "title": "Ожидание процессора, мс в секунду",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1415,6 +1415,70 @@
         "w": 8,
         "h": 8,
         "x": 8,
+        "y": 75
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "rate(tanks_cpu_pressure_seconds_total{scope=\"game\"}[1m]) * 1000",
+          "legendFormat": "игра ждала ядро",
+          "refId": "игра ждала ядро"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "rate(tanks_cpu_pressure_seconds_total{scope=\"machine\"}[1m]) * 1000",
+          "legendFormat": "кто-то на машине ждал ядро",
+          "refId": "кто-то на машине ждал ядро"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "rate(tanks_cpu_steal_seconds_total[1m]) * 1000",
+          "legendFormat": "забрали соседи по железу",
+          "refId": "забрали соседи по железу"
+        }
+      ],
+      "id": 29
+    },
+    {
+      "type": "timeseries",
+      "title": "Память машины",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 16,
         "y": 75
       },
       "fieldConfig": {
@@ -1466,7 +1530,7 @@
           "refId": "своп"
         }
       ],
-      "id": 29
+      "id": 30
     },
     {
       "type": "timeseries",
@@ -1478,8 +1542,8 @@
       "gridPos": {
         "w": 8,
         "h": 8,
-        "x": 16,
-        "y": 75
+        "x": 0,
+        "y": 83
       },
       "fieldConfig": {
         "defaults": {
@@ -1521,7 +1585,7 @@
           "refId": "5 мин"
         }
       ],
-      "id": 30
+      "id": 31
     },
     {
       "type": "timeseries",
@@ -1533,7 +1597,7 @@
       "gridPos": {
         "w": 8,
         "h": 8,
-        "x": 0,
+        "x": 8,
         "y": 83
       },
       "fieldConfig": {
@@ -1576,7 +1640,7 @@
           "refId": "отдача"
         }
       ],
-      "id": 31
+      "id": 32
     },
     {
       "type": "timeseries",
@@ -1588,7 +1652,7 @@
       "gridPos": {
         "w": 8,
         "h": 8,
-        "x": 8,
+        "x": 16,
         "y": 83
       },
       "fieldConfig": {
@@ -1622,7 +1686,7 @@
           "refId": "/"
         }
       ],
-      "id": 32
+      "id": 33
     },
     {
       "type": "logs",
@@ -1632,10 +1696,10 @@
         "uid": "grafanacloud-logs"
       },
       "gridPos": {
-        "w": 8,
+        "w": 24,
         "h": 10,
-        "x": 16,
-        "y": 83
+        "x": 0,
+        "y": 91
       },
       "options": {
         "showTime": true,
@@ -1653,7 +1717,7 @@
           "refId": "A"
         }
       ],
-      "id": 33
+      "id": 34
     }
   ]
 }

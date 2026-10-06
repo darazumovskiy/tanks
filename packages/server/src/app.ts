@@ -21,11 +21,13 @@ import { createMetrics, type Metrics } from './metrics.js';
 import { DEFAULT_ROOM_OPTIONS, type RoomOptions } from './room.js';
 import { isValidRoomCode, RoomManager } from './roomManager.js';
 import { APK_ROUTE, requestPath, serveApk, serveStatic } from './static.js';
+import { createSystemCpuReader } from './systemCpu.js';
 
 // logDir — папка журналов игр; без неё журнал не ведётся и приёмщик строк клиента отключён.
 // rules — правила движка для всех комнат процесса.
 // ffaEnv — переключатели общей игры строками окружения (ключ — имя переменной) поверх `ffa`; пусто — умолчание.
 // botClock — часы бюджета хода ботов в мс; умолчание — время процесса.
+// systemRoot — корень файловой системы, из которого /metrics читает давление на процессор и steal; умолчание — `/`.
 export interface AppOptions {
   staticRoot?: string;
   apkPath?: string;
@@ -38,6 +40,7 @@ export interface AppOptions {
   random?: () => number;
   silenceTimeoutMs?: number;
   botClock?: () => number;
+  systemRoot?: string;
 }
 
 export interface App {
@@ -173,6 +176,7 @@ export function createApp(options: AppOptions = {}): App {
   const fileLog = options.logDir === undefined ? null : new FileGameLog(options.logDir);
   const log: GameLog = fileLog ?? NO_LOG;
   const metrics = createMetrics();
+  const readSystemCpu = createSystemCpuReader(options.systemRoot ?? '/');
   const rooms = new RoomManager(
     options.room ?? DEFAULT_ROOM_OPTIONS,
     options.random ?? Math.random,
@@ -193,7 +197,12 @@ export function createApp(options: AppOptions = {}): App {
     if (path === METRICS_PATH) {
       response.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
       response.end(
-        metrics.render({ rooms: rooms.roomCount, connections: connections.size, players: rooms.playerCounts() }),
+        metrics.render({
+          rooms: rooms.roomCount,
+          connections: connections.size,
+          players: rooms.playerCounts(),
+          cpu: readSystemCpu(),
+        }),
       );
       return;
     }

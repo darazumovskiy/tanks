@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_STATS } from '@tanks/shared/engine';
 import { MessageType, PROTOCOL_VERSION } from '@tanks/shared/protocol';
 import { createApp, type App } from '../src/app.js';
@@ -42,10 +45,46 @@ const EXPECTED_SERIES = [
   'process_cpu_seconds_total',
   'process_start_time_seconds',
 ];
+const SYSTEM_CPU_SERIES = [
+  'tanks_cpu_pressure_seconds_total{scope="machine"}',
+  'tanks_cpu_pressure_seconds_total{scope="game"}',
+  'tanks_cpu_steal_seconds_total',
+];
+const SERIES_WITH_SYSTEM_CPU = EXPECTED_SERIES.flatMap((key) =>
+  key === 'process_resident_memory_bytes' ? [...SYSTEM_CPU_SERIES, key] : [key],
+);
+const GAME_CGROUP = '/system.slice/tanks.service';
+const MACHINE_PRESSURE = 'proc/pressure/cpu';
+const OWN_CGROUP = 'proc/self/cgroup';
+const GAME_PRESSURE = `sys/fs/cgroup${GAME_CGROUP}/cpu.pressure`;
+const STAT = 'proc/stat';
 
 let app: App;
 let port: number;
 const clients: TestClient[] = [];
+const systemRoots: string[] = [];
+
+function systemRoot(files: Readonly<Record<string, string>>): string {
+  const root = mkdtempSync(join(tmpdir(), 'tanks-system-'));
+  systemRoots.push(root);
+  writeSystemFiles(root, files);
+  return root;
+}
+
+function writeSystemFiles(root: string, files: Readonly<Record<string, string>>): void {
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), text);
+  }
+}
+
+function pressureText(totalMicros: number): string {
+  return `full avg10=0.00 avg60=0.00 avg300=0.00 total=7\nsome avg10=0.85 avg60=0.83 avg300=0.96 total=${String(totalMicros)}\n`;
+}
+
+function statText(stealTicks: number): string {
+  return `cpu  5050 1398 3931 130405 70 0 346 ${String(stealTicks)} 0 0\ncpu0 2525 699 1965 65202 35 0 173 4 0 0\n`;
+}
 
 async function connect(): Promise<TestClient> {
   const client = await TestClient.connect(port);
@@ -76,8 +115,8 @@ function valueOf(series: Series, key: string): number {
   return value ?? 0;
 }
 
-async function startApp(tickMs: number): Promise<void> {
-  app = createApp({ room: FAST_ROOM, random: seededRandom(42), tickMs });
+async function startApp(tickMs: number, root = systemRoot({})): Promise<void> {
+  app = createApp({ room: FAST_ROOM, random: seededRandom(42), tickMs, systemRoot: root });
   port = await app.listen(0, '127.0.0.1');
 }
 
@@ -90,6 +129,12 @@ afterEach(async () => {
     client.close();
   }
   await app.close();
+});
+
+afterAll(() => {
+  for (const root of systemRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 describe('GET /metrics', () => {
@@ -213,6 +258,58 @@ describe('GET /metrics', () => {
     const emptyWindow = await scrape();
     expect(valueOf(emptyWindow, 'tanks_ticks_total')).toBe(1);
     expect(valueOf(emptyWindow, 'tanks_tick_duration_ms{quantile="max"}')).toBe(0);
+  });
+
+  it('давление на процессор машины и игры и steal читаются из системных файлов на каждый запрос', async () => {
+    await app.close();
+    const root = systemRoot({
+      [MACHINE_PRESSURE]: pressureText(29_794_109),
+      [OWN_CGROUP]: `1:name=systemd:/legacy\n0::${GAME_CGROUP}\n`,
+      [GAME_PRESSURE]: pressureText(5_521_267),
+      [STAT]: statText(123),
+    });
+    await startApp(TICK_MS, root);
+
+    const first = await scrape();
+    expect([...first.keys()]).toEqual(SERIES_WITH_SYSTEM_CPU);
+    expect(valueOf(first, 'tanks_cpu_pressure_seconds_total{scope="machine"}')).toBe(29.794109);
+    expect(valueOf(first, 'tanks_cpu_pressure_seconds_total{scope="game"}')).toBe(5.521267);
+    expect(valueOf(first, 'tanks_cpu_steal_seconds_total')).toBe(1.23);
+
+    writeSystemFiles(root, {
+      [MACHINE_PRESSURE]: pressureText(30_000_000),
+      [GAME_PRESSURE]: pressureText(6_000_000),
+      [STAT]: statText(456),
+    });
+    const second = await scrape();
+    expect(valueOf(second, 'tanks_cpu_pressure_seconds_total{scope="machine"}')).toBe(30);
+    expect(valueOf(second, 'tanks_cpu_pressure_seconds_total{scope="game"}')).toBe(6);
+    expect(valueOf(second, 'tanks_cpu_steal_seconds_total')).toBe(4.56);
+  });
+
+  it.each([
+    {
+      name: 'без строки some, без группы 0::, без строки cpu',
+      files: {
+        [MACHINE_PRESSURE]: 'full avg10=0.00 avg60=0.00 avg300=0.00 total=5\n',
+        [OWN_CGROUP]: '1:name=systemd:/legacy\n',
+        [STAT]: 'intr 5\n',
+      },
+    },
+    {
+      name: 'some без total, нет cpu.pressure своей группы, строка cpu короче восьми чисел',
+      files: {
+        [MACHINE_PRESSURE]: 'some avg10=0.00 avg60=0.00 avg300=0.00\n',
+        [OWN_CGROUP]: `0::${GAME_CGROUP}\n`,
+        [STAT]: 'cpu  1 2 3 4 5 6 7\n',
+      },
+    },
+  ])('системные файлы не разобрались ($name) — рядов давления и steal нет', async ({ files }) => {
+    await app.close();
+    await startApp(TICK_MS, systemRoot(files));
+
+    const series = await scrape();
+    expect([...series.keys()]).toEqual(EXPECTED_SERIES);
   });
 
   it('остановка процесса видна как опоздавшие тики и задержка цикла событий', async () => {

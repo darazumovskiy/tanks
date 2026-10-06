@@ -1,5 +1,6 @@
 import { createHistogram, type RecordableHistogram } from 'node:perf_hooks';
 import type { BotTurnReport } from './crowd/botTurns.js';
+import type { SystemCpu } from './systemCpu.js';
 
 export type Direction = 'in' | 'out';
 export type DropReason = 'stale' | 'limit' | 'overflow' | 'backlog';
@@ -31,6 +32,7 @@ export interface MetricsGauges {
   rooms: number;
   connections: number;
   players: PlayerCounts;
+  cpu: SystemCpu;
 }
 
 // Счётчики процесса для ручки /metrics. В тике — только инкременты и запись в гистограмму; текст собирается по запросу.
@@ -178,6 +180,26 @@ export function createMetrics(): Metrics {
       out.header('tanks_inputs_dropped_total', 'counter', 'команд отброшено');
       for (const reason of ['stale', 'limit', 'overflow', 'backlog'] as const) {
         out.value('tanks_inputs_dropped_total', dropped[reason], { reason });
+      }
+      const { machinePressureSeconds, gamePressureSeconds, stealSeconds } = gauges.cpu;
+      out.header(
+        'tanks_cpu_pressure_seconds_total',
+        'counter',
+        'сколько программы машины (machine) или потоки игры (game) были готовы работать и ждали ядро',
+      );
+      if (machinePressureSeconds !== null) {
+        out.value('tanks_cpu_pressure_seconds_total', machinePressureSeconds, { scope: 'machine' });
+      }
+      if (gamePressureSeconds !== null) {
+        out.value('tanks_cpu_pressure_seconds_total', gamePressureSeconds, { scope: 'game' });
+      }
+      out.header(
+        'tanks_cpu_steal_seconds_total',
+        'counter',
+        'процессорное время машины, которое забрали соседи по железу',
+      );
+      if (stealSeconds !== null) {
+        out.value('tanks_cpu_steal_seconds_total', stealSeconds);
       }
       const cpu = process.cpuUsage();
       out.header('process_resident_memory_bytes', 'gauge', 'память процесса');
