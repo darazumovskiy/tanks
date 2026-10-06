@@ -4,6 +4,7 @@ import { BOT_LEVEL_INFO, BOT_LEVELS, botRoomCode, type BotLevel } from '@tanks/s
 import QRCode from 'qrcode';
 import { resolveAdminMode } from './admin.js';
 import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
+import { bindImmersive } from './immersive.js';
 import { readClientInfo } from './clientInfo.js';
 import { mountFfaEntry } from './ffaEntry.js';
 import { fetchHomeHtml, reloadOnNewBuild } from './freshBuild.js';
@@ -276,6 +277,27 @@ function bindRotateHint(hint: HTMLElement): void {
   apply();
 }
 
+// Бой, открытый в браузере Android: плашка ведёт в приложение, а оставшимся в браузере касание разворачивает игру.
+function bindAndroidBrowser(): void {
+  if (!isAndroidBrowser(navigator.userAgent, Capacitor.isNativePlatform())) {
+    return;
+  }
+  const banner = byId('open-app', HTMLElement);
+  showOpenInApp(
+    banner,
+    byId('open-app-link', HTMLAnchorElement),
+    byId('open-app-close', HTMLButtonElement),
+    androidIntentUrl(location.href, new URL(APK_ROUTE, location.href).href),
+  );
+  bindImmersive({
+    events: document,
+    root: document.documentElement,
+    orientation: screen.orientation,
+    isFullscreen: () => document.fullscreenElement !== null,
+    isOutside: (target) => !(target instanceof Node && banner.contains(target)),
+  });
+}
+
 function startDuel(roomCode: string): void {
   const nickname = localStorage.getItem(NICKNAME_KEY) ?? '';
   const stats = parseStats(localStorage.getItem(STATS_KEY));
@@ -315,15 +337,7 @@ function startDuel(roomCode: string): void {
     game.toggleAutoFire();
   });
   bindRotateHint(byId('rotate', HTMLElement));
-  if (isAndroidBrowser(navigator.userAgent, Capacitor.isNativePlatform())) {
-    const apkUrl = new URL(APK_ROUTE, location.href).href;
-    showOpenInApp(
-      byId('open-app', HTMLElement),
-      byId('open-app-link', HTMLAnchorElement),
-      byId('open-app-close', HTMLButtonElement),
-      androidIntentUrl(location.href, apkUrl),
-    );
-  }
+  bindAndroidBrowser();
   // Точка доступа для сквозных тестов и отладки из консоли браузера.
   Object.assign(window, { tanksGame: game });
   window.addEventListener('beforeunload', () => {
@@ -331,8 +345,7 @@ function startDuel(roomCode: string): void {
   });
 }
 
-// Общий бой: та же страница боя, что у дуэли, — холст, кнопки поверх и корень интерфейса толпы. Ссылки `/ffa`
-// приложение-оболочка не перехватывает, поэтому баннера «Открыть в приложении» здесь нет.
+// Общий бой: та же страница боя, что у дуэли, — холст, кнопки поверх и корень интерфейса толпы.
 // Код толпы — отдельный кусок сборки: страница дуэли его не грузит.
 async function startFfa(size: FfaSize): Promise<void> {
   const ffaModule = await import('./ffa/ffaGame.js');
@@ -375,6 +388,7 @@ async function startFfa(size: FfaSize): Promise<void> {
     game.toggleAutoFire();
   });
   bindRotateHint(byId('rotate', HTMLElement));
+  bindAndroidBrowser();
   Object.assign(window, { tanksGame: game });
   window.addEventListener('beforeunload', () => {
     game.close();

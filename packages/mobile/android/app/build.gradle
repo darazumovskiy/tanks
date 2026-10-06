@@ -7,9 +7,9 @@ android {
         applicationId "io.github.darazumovskiy.tanks"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
-        versionName "0.3"
-        // Хост для intent-filter ссылок на дуэль — тот же сервер, что открывает оболочка (capacitor.config.ts).
+        versionCode 4
+        versionName "0.4"
+        // Хост для intent-filter ссылок на бой — тот же сервер, что открывает оболочка (capacitor.config.ts).
         manifestPlaceholders = [appLinkHost: new URI(System.getenv("TANKS_SERVER_URL") ?: "https://172-232-212-157.sslip.io").host]
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

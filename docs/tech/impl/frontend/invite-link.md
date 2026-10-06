@@ -17,15 +17,19 @@ Android открывает https-ссылку приложением без во
 
 | Где | Что |
 |---|---|
-| `packages/mobile/android/app/src/main/AndroidManifest.xml` | `intent-filter` с `android:autoVerify="true"`: `https://${appLinkHost}/d/…`. Хост — плейсхолдер из `build.gradle`: берётся из `TANKS_SERVER_URL` (тот же адрес, что в `capacitor.config.ts`) |
+| `packages/mobile/android/app/src/main/AndroidManifest.xml` | `intent-filter` с `android:autoVerify="true"`: `https://${appLinkHost}/d/…` и `https://${appLinkHost}/ffa…`. Хост — плейсхолдер из `build.gradle`: берётся из `TANKS_SERVER_URL` (тот же адрес, что в `capacitor.config.ts`) |
 | `packages/client/public/.well-known/assetlinks.json` | Подтверждение домена: `package_name` `io.github.darazumovskiy.tanks` и SHA-256 ключа подписи из `~/.secrets-tank/android/keystore.jks` (`keytool -list -v`). Vite копирует `public/` в `dist/`, сервер отдаёт файл как обычную статику с `application/json` без переадресаций. Новый ключ подписи — новый отпечаток в файле |
 | `MainActivity.java` → `onNewIntent` | Capacitor сам ничего не делает с URL запуска. Активити берёт `intent.getData()`, проверяет, что хост совпадает с `server.url`, и грузит URL в WebView — и при холодном старте (`BridgeActivity.load` вызывает `onNewIntent` с intent запуска), и когда приложение уже открыто (`launchMode="singleTask"`): текущая дуэль закрывается через `beforeunload`, открывается новая |
 
-Android проверяет домен при установке APK, поэтому порядок выкладки: сначала сервер с `assetlinks.json`, потом новый APK. Состояние проверки на устройстве: `adb shell pm get-app-links io.github.darazumovskiy.tanks` → `verified`. Старые версии приложения (без intent-filter) ссылки не ловят — нужна переустановка по QR.
+Android проверяет домен при установке APK, поэтому порядок выкладки: сначала сервер с `assetlinks.json`, потом новый APK. Состояние проверки на устройстве: `adb shell pm get-app-links io.github.darazumovskiy.tanks` → `verified`. Старые версии приложения ссылки не ловят — нужна переустановка по QR: до версии 0.3 — никакие, до 0.4 — ссылки общего боя.
 
 ## Плашка «Открыть в приложении»
 
-`packages/client/src/appLink.ts`. На странице `/d/<код>` в браузере Android (User-Agent содержит `Android`, `Capacitor.isNativePlatform()` ложно) сверху появляется плашка с кнопкой «Открыть в приложении» и крестиком. Кнопка — `intent://<хост>/d/<код>#Intent;scheme=https;package=<appId>;S.browser_fallback_url=<APK>;end`: Chrome открывает приложение по имени пакета даже если подтверждение домена не прошло; приложения нет — скачивает `/app/tanks.apk`. В приложении и на компьютере плашки нет.
+`packages/client/src/appLink.ts`. На странице боя — `/d/<код>` и `/ffa…` — в браузере Android (User-Agent содержит `Android`, `Capacitor.isNativePlatform()` ложно) сверху появляется плашка с кнопкой «Открыть в приложении» и крестиком. Кнопка — `intent://<хост><путь страницы>#Intent;scheme=https;package=<appId>;S.browser_fallback_url=<APK>;end`: Chrome открывает приложение по имени пакета даже если подтверждение домена не прошло; приложения нет — скачивает `/app/tanks.apk`. В приложении и на компьютере плашки нет.
+
+## Браузер телефона — на весь экран
+
+`packages/client/src/immersive.ts`. Если игрок остался в браузере Android, адресная строка и портрет съедают поле боя. На странице боя любое касание вне плашки «Открыть в приложении» разворачивает страницу на весь экран без панелей браузера (`requestFullscreen` с `navigationUI: 'hide'`) и закрепляет альбомную ориентацию (`screen.orientation.lock('landscape')`). Браузер разрешает это только из жеста игрока, поэтому — по касанию. Игрок вышел из полного экрана жестом «назад» — следующее касание разворачивает снова. Браузер отказал (нет поддержки, iPhone) — игра идёт как была, подсказка «поверни телефон» остаётся.
 
 ## План тестирования
 
@@ -41,6 +45,8 @@ Android проверяет домен при установке APK, поэто�
 | `isAndroidBrowser`: Android-браузер / Android внутри приложения / iPhone / компьютер | `true` / `false` / `false` / `false` | автоматизирован |
 | `androidIntentUrl` | `intent://` с хостом и путём страницы, `scheme=https`, `package=`, `S.browser_fallback_url=` на APK | автоматизирован |
 | `showOpenInApp`: показ и крестик | плашка видна, `href` — intent-ссылка; крестик прячет | автоматизирован |
+| `androidIntentUrl` для `/ffa/30` | путь `/ffa/30` в intent-ссылке | автоматизирован |
+| `bindImmersive`: касание вне плашки; касание по плашке; уже на весь экран; браузер отказал в полном экране; отказал в ориентации | полный экран без панелей, затем альбомная; ничего; ничего; ошибка не всплывает, ориентация не просится; ошибка не всплывает | автоматизирован |
 
 ### Сервер
 
@@ -53,6 +59,7 @@ Android проверяет домен при установке APK, поэто�
 | Создатель ждёт соперника, клик «Копировать» | в буфере обмена — адрес страницы `/d/<код>`, кнопка показывает «Скопировано» | автоматизирован |
 | Страница дуэли с User-Agent Android | плашка видна, `href` начинается с `intent://`, содержит `package=io.github.darazumovskiy.tanks`; крестик прячет | автоматизирован |
 | Страница дуэли на компьютере | плашки нет | автоматизирован |
+| Страница общего боя `/ffa` с User-Agent Android | плашка видна, `href` содержит `<хост>/ffa`; касание поля разворачивает страницу на весь экран | автоматизирован |
 | `GET /.well-known/assetlinks.json` с собранного сервера | 200, `application/json`, `package_name` приложения | автоматизирован |
 
 ### Устройство (эмулятор Android, вручную агентом)
@@ -61,6 +68,7 @@ Android проверяет домен при установке APK, поэто�
 |---|---|---|
 | `am start -a VIEW -d https://<сервер>/d/<код>` при закрытом приложении | приложение открывается сразу на дуэли, без главной | 2026-10-04, эмулятор Android 15: открылась дуэль `linkcheck1` |
 | То же при открытом приложении на главной / в другой дуэли | WebView переходит на новую дуэль | 2026-10-04: из `linkcheck1` перешло в `linkcheck2`, активити одна |
+| `am start -a VIEW -d https://<сервер>/ffa/30` с версией 0.4 | приложение открывается сразу в общем бою | 2026-10-06, эмулятор: домен `verified`, открылся общий бой на боевом сервере |
 | `pm get-app-links` после установки APK поверх выложенного `assetlinks.json` | домен `verified` | 2026-10-04: `172-232-212-157.sslip.io: verified` |
 | Кнопка «Поделиться» в приложении | системное меню «поделиться» с текстом и ссылкой | 2026-10-04: открылся системный выбор приложений (Messages, Chrome, Drive…) |
 | Ссылка из Telegram на телефоне | открывается приложение; если мессенджер открыл браузер — плашка ведёт в приложение | **оператор, телефон** |
