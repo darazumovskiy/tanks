@@ -13,6 +13,7 @@ import {
 import {
   ErrorCode,
   EventFlag,
+  FfaInviteMiss,
   FfaPhase,
   type FfaMatchStartMessage,
   type FfaRosterEntry,
@@ -46,7 +47,7 @@ export type WelcomeOutcome = 'first' | 'returned' | 'lost';
 // new — новый матч: всё матчевое с нуля; same — тот же матч (возврат), ничего не сбрасывается.
 export type MatchStartOutcome = 'new' | 'same';
 
-export type DeathCause = 'bullet' | 'ricochet' | 'self' | 'zone';
+export type DeathCause = 'bullet' | 'ricochet' | 'self' | 'zone' | 'out';
 
 export interface FfaMatchInfo {
   index: number;
@@ -145,7 +146,9 @@ export interface FfaSpectatorModel {
   isBot: boolean;
 }
 
-export type FfaFinalModel = { kind: 'soon'; secondsLeft: number } | { kind: 'started' };
+// hasBots — в матче есть невыбывший бот: в финале первыми выбывают боты, подбитый человек пока возвращается.
+export type FfaFinalModel =
+  { kind: 'soon'; secondsLeft: number; hasBots: boolean } | { kind: 'started'; hasBots: boolean };
 
 export type FfaResultsTitle = 'champion' | 'podium' | 'solid' | 'nextTime' | 'notPlayed';
 
@@ -172,6 +175,8 @@ export interface FfaResultsModel {
 
 // lost — связь пропала; returned — вернулись на своё место; late — место ушло, вход заново.
 export type FfaConnectionNotice = 'lost' | 'returned' | 'late';
+// Вошёл по приглашению, а попал не к другу: full — там нет мест, gone — той игры нет.
+export type FfaInviteNotice = 'full' | 'gone';
 
 export interface FfaHudLayout {
   feedRows: number;
@@ -190,6 +195,7 @@ export interface FfaHudModel {
   idleInS: number | null;
   results: FfaResultsModel | null;
   connection: FfaConnectionNotice | null;
+  invite: FfaInviteNotice | null;
 }
 
 const UNKNOWN_NAME = 'Неизвестный танкист';
@@ -201,6 +207,12 @@ const FINAL_NOTICE_MS = 2000;
 const GO_HOLD_MS = 900;
 const SPECTATOR_CARD_MS = 4000;
 const CONNECTION_NOTICE_MS = 2000;
+const INVITE_NOTICE_MS = 8000;
+const INVITE_NOTICES: Readonly<Record<FfaInviteMiss, FfaInviteNotice | null>> = {
+  [FfaInviteMiss.None]: null,
+  [FfaInviteMiss.Full]: 'full',
+  [FfaInviteMiss.Gone]: 'gone',
+};
 // «НА ПЬЕДЕСТАЛЕ» — второе и третье место, когда в матче не меньше шести игроков.
 const PODIUM_LAST_PLACE = 3;
 const PODIUM_MIN_PLAYERS = 6;
@@ -218,6 +230,9 @@ function hasFlag(event: FfaSnapshotEvent, flag: number): boolean {
 }
 
 function deathCause(event: FfaSnapshotEvent): DeathCause {
+  if (hasFlag(event, EventFlag.Out)) {
+    return 'out';
+  }
   if (hasFlag(event, EventFlag.Zone)) {
     return 'zone';
   }
@@ -236,6 +251,8 @@ export function feedText(row: FfaFeedRow): string {
   switch (row.cause) {
     case 'zone':
       return `${row.victim} ◎ сгорел в зоне`;
+    case 'out':
+      return `${row.victim} ⊘ выбыл`;
     case 'self':
       return `${row.victim} ↺ сам себя`;
     case 'ricochet':
@@ -268,9 +285,12 @@ export class FfaSession {
   private feedEntries: FeedEntry[] = [];
   private nextFeedKey = 1;
   private suddenDeathNoticeAt: number | null = null;
+  // Боты, выбывшие в финале этого матча; null — финал ещё не начался или не учтён.
+  private outBotIds: Set<number> | null = null;
   private spectatorSince: number | null = null;
   private spectatorId: number | null = null;
   private welcomeNotice: { kind: 'returned' | 'late'; at: number } | null = null;
+  private inviteNotice: { kind: FfaInviteNotice; at: number } | null = null;
   private fatal: FatalScreen | null = null;
 
   constructor(readonly size: FfaSize) {}
@@ -311,6 +331,8 @@ export class FfaSession {
     this.playerId = message.playerId;
     this.gameId = message.gameId;
     this.rules = { ...message.rules };
+    const invite = INVITE_NOTICES[message.inviteMiss];
+    this.inviteNotice = invite === null ? null : { kind: invite, at: receivedAt };
     if (isFirst) {
       return 'first';
     }
@@ -387,6 +409,7 @@ export class FfaSession {
     this.lastSnapshotTick = message.tick;
     this.tick = message.tick;
     this.self = message.self;
+    this.noteFinalBots(message);
     for (const event of message.events) {
       if (event.kind === 'suddenDeath') {
         this.suddenDeathNoticeAt = receivedAt;
@@ -514,6 +537,7 @@ export class FfaSession {
       idleInS: screen === 'fight' ? this.idleInS() : null,
       results: screen === 'results' ? this.results(now, layout.resultsTop) : null,
       connection: this.fatal === null ? this.connection(now) : null,
+      invite: this.fatal === null ? this.invite(now) : null,
     };
   }
 
@@ -537,13 +561,14 @@ export class FfaSession {
   }
 
   // Своё событие гибели в этом соединении даёт вид смерти; вернулся подбитым без него — убийца из своего
-  // состояния. Финал — «ты выбыл» без отсчёта; ни разу не погибал (ждёт высадки) — карточки нет.
+  // состояния. Выбыл (решает сервер) — «ты выбыл» без отсчёта; подбитый в финале без этого признака — обычная
+  // карточка: за него выбыл бот. Ни разу не погибал — карточки нет.
   private death(): FfaDeathModel | null {
     const self = this.self;
     if (self === null || !this.hasDied()) {
       return null;
     }
-    if (this.isFinal) {
+    if (self.state === 'wreck' && self.isOut) {
       return { kind: 'out' };
     }
     const waitTicks = self.state === 'wreck' ? self.ticksLeft + FFA_RESPAWN_WAIT_TICKS : self.ticksLeft;
@@ -675,14 +700,15 @@ export class FfaSession {
       return null;
     }
     const isNoticeShown = this.suddenDeathNoticeAt !== null && now - this.suddenDeathNoticeAt < FINAL_NOTICE_MS;
+    const hasBots = this.hasBotsInMatch();
     if (isNoticeShown) {
-      return { kind: 'started' };
+      return { kind: 'started', hasBots };
     }
     const untilFinalS = match.suddenDeathAt - this.matchTimeS;
     if (this.isFinal || untilFinalS > FINAL_WARNING_S) {
       return null;
     }
-    return { kind: 'soon', secondsLeft: Math.max(1, Math.ceil(untilFinalS - FINAL_EPSILON)) };
+    return { kind: 'soon', secondsLeft: Math.max(1, Math.ceil(untilFinalS - FINAL_EPSILON)), hasBots };
   }
 
   private idleInS(): number | null {
@@ -696,6 +722,14 @@ export class FfaSession {
     }
     const notice = this.welcomeNotice;
     if (notice === null || now - notice.at >= CONNECTION_NOTICE_MS) {
+      return null;
+    }
+    return notice.kind;
+  }
+
+  private invite(now: number): FfaInviteNotice | null {
+    const notice = this.inviteNotice;
+    if (notice === null || now - notice.at >= INVITE_NOTICE_MS) {
       return null;
     }
     return notice.kind;
@@ -733,6 +767,29 @@ export class FfaSession {
       .filter((id) => aliveIds.includes(id));
     const unranked = aliveIds.filter((id) => !ranked.includes(id)).sort((a, b) => a - b);
     return [...ranked, ...unranked];
+  }
+
+  // В финале подбитый бот всегда выбывает: выбывшие — боты без живого танка на первом снимке финала и погибшие
+  // после.
+  private noteFinalBots(message: FfaSnapshotMessage): void {
+    if (!this.isFinal) {
+      return;
+    }
+    if (this.outBotIds === null) {
+      const aliveIds = new Set(message.tanks.filter((tank) => tank.isAlive).map((tank) => tank.id));
+      this.outBotIds = new Set(
+        this.roster.filter((player) => player.isBot && !aliveIds.has(player.id)).map((player) => player.id),
+      );
+    }
+    for (const event of message.events) {
+      if (event.kind === 'death' && event.tank !== null && this.isBot(event.tank)) {
+        this.outBotIds.add(event.tank);
+      }
+    }
+  }
+
+  private hasBotsInMatch(): boolean {
+    return this.roster.some((player) => player.isBot && this.outBotIds?.has(player.id) !== true);
   }
 
   private noteDeath(event: FfaSnapshotEvent, receivedAt: number): void {
@@ -782,6 +839,7 @@ export class FfaSession {
     this.feedEntries = [];
     this.lastSnapshotTick = null;
     this.ownDeath = null;
+    this.outBotIds = null;
     this.fightStartedAt = null;
     this.suddenDeathNoticeAt = null;
     this.spectatorSince = null;

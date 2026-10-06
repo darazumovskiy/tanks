@@ -55,7 +55,7 @@ const CANVAS_FRAMES: Omit<FfaFrameInfo, 'kind'>[] = [
   { id: 'floor-pending', screens: ['phone'] },
   { id: 'crowd-50', screens: ['phone'] },
   { id: 'zone-50', screens: ['phone'] },
-  { id: 'shield-shake', screens: ['phone'] },
+  { id: 'shield', screens: ['phone'] },
   { id: 'art-color', screens: ['phone'] },
   { id: 'arrows-one', screens: ['phone'] },
   { id: 'arrows-three', screens: ['phone'] },
@@ -66,6 +66,7 @@ const CANVAS_FRAMES: Omit<FfaFrameInfo, 'kind'>[] = [
 const PAGE_FRAMES: Omit<FfaFrameInfo, 'kind'>[] = [
   { id: 'hud-connecting', screens: ['phone'] },
   { id: 'hud-lobby-few', screens: ['phone'] },
+  { id: 'hud-lobby-invite', screens: ['phone'] },
   { id: 'hud-lobby-start', screens: BOTH },
   { id: 'hud-lobby-full', screens: ['phone'] },
   { id: 'hud-lobby-50', screens: ['phone'] },

@@ -2,7 +2,7 @@ import { DEFAULT_AIM_LINE_STYLE_ID, isAimLineStyleId, type AimLineStyleId } from
 import { PHONE_CAMERA_MODES, type PhoneCameraMode } from './render/cameraStrategy.js';
 
 // Настройки ощущения игры на устройстве: читаются вводом и рендером каждый тик, меняются из панели в бою,
-// хранятся в localStorage. Умолчания стиков подобраны Димой на Xiaomi 14T Pro (2026-10-03).
+// хранятся в localStorage. Умолчания стиков подобраны на Xiaomi 14T Pro (2026-10-03).
 export interface Settings {
   stickRadiusPx: number;
   deadZone: number;
@@ -55,7 +55,7 @@ export interface NumericSettingField {
   requiresFlag?: BooleanSettingKey;
 }
 
-// Умолчания — настройки Димы из боевых игр 2026-10-04 (журнал 4SFJ): стик 54 px, разворот 0,8, предохранитель включён,
+// Умолчания — настройки игрока из боевых игр 2026-10-04 (журнал 4SFJ): стик 54 px, разворот 0,8, предохранитель включён,
 // прицел «Точки», обзор 85 %, упреждение камеры 0,4, догон 410 мс. Одинаковы для телефона и компьютера.
 export function defaultSettings(): Settings {
   return {

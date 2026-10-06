@@ -198,9 +198,11 @@ function viewAt(frame: FfaStandFrame, zone: ZonePlan, t: number): FfaFrameView {
       owner: bullet.owner,
       x: bullet.x + Math.cos(bullet.angle) * BULLET_SPEED * t,
       y: bullet.y + Math.sin(bullet.angle) * BULLET_SPEED * t,
+      tick: 0,
     })),
     kits: frame.hasKits ? map.kits.map((kit) => ({ x: kit.x, y: kit.y, isActive: true, respawnIn: 0 })) : [],
     zoneRadius: frame.zoneTimeS === null ? 0 : zoneRadiusAt(zone, frame.zoneTimeS),
+    clock: { myTick: 0, othersTick: 0, me: null, others: [] },
   };
 }
 
@@ -244,7 +246,6 @@ function playFrame(target: StandTarget, frame: FfaStandFrame, zone: ZonePlan): v
   const steps = Math.max(DRAWN_FRAMES, Math.ceil(oldest / FRAME_S) + 1);
   effects.update(FLUSH_S, []);
   effects.reset();
-  fxPolicy.reset();
   camera.snap();
   effects.time = EFFECTS_TIME_S - (steps + 1) * FRAME_S;
   const pending = [...frame.events].sort((a, b) => b.ageS - a.ageS);
@@ -279,7 +280,6 @@ function playFrame(target: StandTarget, frame: FfaStandFrame, zone: ZonePlan): v
       ...helpersOf(frame, view, framing.camera, renderer.screen.pixelRatio),
       controls: { sticks: [], isShotGuarded: false, isZoneFiring: false, isReversing: false },
       readout: { ...READOUT, gameTick: Math.round((frame.zoneTimeS ?? 0) * TICK_RATE) },
-      isFullReadout: false,
       frameMs: FRAME_MS,
       frameTimes: [],
     });

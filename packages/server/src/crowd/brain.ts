@@ -78,6 +78,21 @@ const NEIGHBOURS: readonly (readonly [number, number])[] = [
   [-1, -1],
 ];
 
+// Шаг поиска к соседу сдвигом номера клетки; по диагонали — ещё две смежные клетки, которые обе должны быть свободны.
+interface PathStep {
+  offset: number;
+  isDiagonal: boolean;
+  sideColumn: number;
+  sideRow: number;
+}
+
+// Расстояния от свободных клеток до центра зоны — в порядке freeCells; центр зоны общий для всех ботов карты.
+interface ZoneDistances {
+  x: number;
+  y: number;
+  values: Float64Array;
+}
+
 interface Grid {
   cols: number;
   rows: number;
@@ -85,6 +100,37 @@ interface Grid {
   freeCells: Point[];
   previous: Int32Array;
   queue: Int32Array;
+  steps: PathStep[];
+  zoneDistances: ZoneDistances | null;
+}
+
+// Разрешение на поиск пути на этом ходу: take() — забрать одно, false — разрешений не осталось.
+export interface PathAllowance {
+  take(): boolean;
+}
+
+export const UNLIMITED_PATHS: PathAllowance = {
+  take: () => true,
+};
+
+// Поиск пути — самая дорогая разовая работа мозга: на весь процесс не больше стольких за проход, сверх первого —
+// пока бюджет не вышел. Первый разрешён всегда: иначе на медленной машине пути не обновлялись бы вовсе.
+const PATH_SEARCHES_PER_TURN = 2;
+
+// Разрешение одного прохода хода серверных ботов, общее для всех.
+export class PathQuota implements PathAllowance {
+  used = 0;
+
+  constructor(private readonly isOverBudget: () => boolean) {}
+
+  take(): boolean {
+    const isSpent = this.used >= PATH_SEARCHES_PER_TURN || (this.used > 0 && this.isOverBudget());
+    if (isSpent) {
+      return false;
+    }
+    this.used++;
+    return true;
+  }
 }
 
 type Drive = Pick<Action, 'throttle' | 'turn'>;
@@ -116,6 +162,13 @@ function buildGrid(map: BattleMap): Grid {
     freeCells: [],
     previous: new Int32Array(cols * rows),
     queue: new Int32Array(cols * rows),
+    steps: NEIGHBOURS.map(([dr, dc]) => ({
+      offset: dr * cols + dc,
+      isDiagonal: dr !== 0 && dc !== 0,
+      sideColumn: dc,
+      sideRow: dr * cols,
+    })),
+    zoneDistances: null,
   };
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
@@ -145,6 +198,11 @@ function gridFor(map: BattleMap): Grid {
   const grid = buildGrid(map);
   GRIDS.set(map, grid);
   return grid;
+}
+
+// Сетка пути карты строится заранее, чтобы первый тик боя её не строил.
+export function prepareCrowdMap(map: BattleMap): void {
+  gridFor(map);
 }
 
 function isFree(grid: Grid, row: number, col: number): boolean {
@@ -180,11 +238,11 @@ function nearestFree(grid: Grid, x: number, y: number): number {
 }
 
 // Поиск в ширину по восьми соседям; по диагонали — только если обе смежные клетки свободны. Крайние клетки
-// сетки всегда заняты (отступ PAD), поэтому соседи раскрытой клетки не выходят за сетку.
+// сетки всегда заняты (отступ PAD), поэтому соседи раскрытой клетки не выходят за сетку и сдвиг номера не
+// переносит на соседнюю строку.
 function findPath(grid: Grid, from: number, to: number): Point[] {
-  const previous = grid.previous;
+  const { free, previous, queue, steps } = grid;
   previous.fill(-1);
-  const queue = grid.queue;
   let tail = 0;
   queue[tail++] = from;
   previous[from] = from;
@@ -193,17 +251,12 @@ function findPath(grid: Grid, from: number, to: number): Point[] {
     if (current === undefined || current === to) {
       break;
     }
-    const row = Math.floor(current / grid.cols);
-    const col = current % grid.cols;
-    for (const [dr, dc] of NEIGHBOURS) {
-      const r = row + dr;
-      const c = col + dc;
-      const next = r * grid.cols + c;
-      if (!isFree(grid, r, c) || previous[next] !== -1) {
+    for (const step of steps) {
+      const next = current + step.offset;
+      if (free[next] !== 1 || previous[next] !== -1) {
         continue;
       }
-      const isDiagonal = dr !== 0 && dc !== 0;
-      if (isDiagonal && (!isFree(grid, row, c) || !isFree(grid, r, col))) {
+      if (step.isDiagonal && (free[current + step.sideColumn] !== 1 || free[current + step.sideRow] !== 1)) {
         continue;
       }
       previous[next] = current;
@@ -220,6 +273,39 @@ function findPath(grid: Grid, from: number, to: number): Point[] {
     node = previous[node];
   }
   return path.reverse();
+}
+
+function zoneDistancesOf(grid: Grid, zone: Point): Float64Array {
+  const known = grid.zoneDistances;
+  if (known !== null && known.x === zone.x && known.y === zone.y) {
+    return known.values;
+  }
+  const values = Float64Array.from(grid.freeCells, (cell) => Math.hypot(cell.x - zone.x, cell.y - zone.y));
+  grid.zoneDistances = { x: zone.x, y: zone.y, values };
+  return values;
+}
+
+// Свободная клетка ближе limit к центру зоны с номером floor(random × число таких) в порядке freeCells; null — таких
+// нет. Без массива кандидатов: выбор идёт по всей сетке.
+function pickZoneCell(grid: Grid, zone: Point, limit: number, random: number): Point | null {
+  const distances = zoneDistancesOf(grid, zone);
+  let count = 0;
+  for (const distance of distances) {
+    if (distance < limit) {
+      count++;
+    }
+  }
+  const pick = Math.floor(random * count);
+  let seen = 0;
+  const index = distances.findIndex((distance) => {
+    if (distance >= limit) {
+      return false;
+    }
+    seen++;
+    return seen > pick;
+  });
+  // Таких клеток нет — index равен -1, клетки под ним нет.
+  return grid.freeCells[index] ?? null;
 }
 
 function driveForward(me: CrowdTank, angle: number): Drive {
@@ -269,11 +355,6 @@ function sidestep(me: CrowdTank, alongX: number, alongY: number, side: number): 
     me.x + Math.cos(perpendicular) * SIDESTEP_DISTANCE * side,
     me.y + Math.sin(perpendicular) * SIDESTEP_DISTANCE * side,
   );
-}
-
-function pickOne<T>(list: readonly T[], random: number): T[] {
-  const index = Math.floor(random * list.length);
-  return list.slice(index, index + 1);
 }
 
 function positionAt(me: CrowdTank, move: Move, time: number): Point {
@@ -330,6 +411,11 @@ export class CrowdBrain {
   private path: Point[] = [];
   private pathTick = -Infinity;
   private pathGoal: Point | null = null;
+  private isPathPending = false;
+  // Тик прошлого хода в этой жизни: тик расписания между ходами засчитывается.
+  private thoughtTick: number | null = null;
+  // Тиков с прошлого хода в этой жизни: таймеры мозга считают тики, а не ходы.
+  private elapsedTicks = 1;
   private aimNoise = 0;
   private aimNoiseTicksLeft = 0;
   private isLeadingShot = false;
@@ -364,6 +450,8 @@ export class CrowdBrain {
     this.path = [];
     this.pathTick = -Infinity;
     this.pathGoal = null;
+    this.isPathPending = false;
+    this.thoughtTick = null;
     this.aimNoiseTicksLeft = 0;
     this.isLeadingShot = this.random() < this.profile.leadChance;
     this.isCarelessShot = this.random() < this.profile.carelessness;
@@ -382,13 +470,15 @@ export class CrowdBrain {
     this.unstickTicksLeft = 0;
   }
 
-  tick(view: CrowdView, target: CrowdTank | null): Action {
+  tick(view: CrowdView, target: CrowdTank | null, paths: PathAllowance = UNLIMITED_PATHS): Action {
+    this.elapsedTicks = this.thoughtTick === null ? 1 : Math.max(1, view.tick - this.thoughtTick);
     const grid = gridFor(view.map);
     const aim = target === null ? this.lookAhead(view.me) : this.aim(view, target);
-    const drive = this.drive(view, grid, target);
+    const drive = this.drive(view, grid, target, paths);
     const cap = this.profile.throttleCap;
     const throttle = clamp(drive.throttle, -cap, cap);
     this.lastThrottle = throttle;
+    this.thoughtTick = view.tick;
     return { throttle, turn: drive.turn, ...aim };
   }
 
@@ -402,7 +492,7 @@ export class CrowdBrain {
       this.aimNoise = (this.random() * 2 - 1) * this.profile.aimNoiseRad;
       this.aimNoiseTicksLeft = AIM_NOISE_PERIOD_TICKS;
     }
-    this.aimNoiseTicksLeft--;
+    this.aimNoiseTicksLeft -= this.elapsedTicks;
     // Монетки упреждения и беспечности бросаются на каждый новый выстрел — в момент, когда перезарядка закончилась.
     const isReady = me.reloadLeft <= 0;
     if (isReady && this.hasBeenReloading) {
@@ -424,7 +514,7 @@ export class CrowdBrain {
       return { turretTurn, isFiring: false };
     }
     if (this.fireRetryTicksLeft > 0) {
-      this.fireRetryTicksLeft--;
+      this.fireRetryTicksLeft -= this.elapsedTicks;
       return { turretTurn, isFiring: false };
     }
     if (this.random() < this.profile.fireChance) {
@@ -435,7 +525,7 @@ export class CrowdBrain {
   }
 
   // Приоритеты корпуса: пауза > выезд из застревания > уклонение > зона > аптечка > движение уровня.
-  private drive(view: CrowdView, grid: Grid, target: CrowdTank | null): Drive {
+  private drive(view: CrowdView, grid: Grid, target: CrowdTank | null, paths: PathAllowance): Drive {
     const { me } = view;
     if (this.isPausing()) {
       return HOLD;
@@ -450,18 +540,18 @@ export class CrowdBrain {
     }
     const zoneDistance = Math.hypot(me.x - view.zone.x, me.y - view.zone.y);
     if (zoneDistance > view.zone.radius - ZONE_MARGIN) {
-      return this.followPath(view, grid, view.zone);
+      return this.followPath(view, grid, view.zone, paths);
     }
     const kit = view.kits
       .filter((candidate) => candidate.isActive)
       .sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y))[0];
     if (this.profile.hasKits && kit !== undefined && me.hp < me.maxHp * KIT_HP_FRACTION) {
-      return this.followPath(view, grid, kit);
+      return this.followPath(view, grid, kit, paths);
     }
     if (target === null || this.profile.movement === 'patrol') {
-      return this.patrol(view, grid);
+      return this.patrol(view, grid, paths);
     }
-    return this.hunt(view, grid, target);
+    return this.hunt(view, grid, target, paths);
   }
 
   private isPausing(): boolean {
@@ -470,10 +560,10 @@ export class CrowdBrain {
       return false;
     }
     if (this.pauseTicksLeft > 0) {
-      this.pauseTicksLeft--;
+      this.pauseTicksLeft -= this.elapsedTicks;
       return true;
     }
-    this.sincePauseTicks++;
+    this.sincePauseTicks += this.elapsedTicks;
     if (this.sincePauseTicks >= period * TICK_RATE) {
       this.sincePauseTicks = 0;
       this.pauseTicksLeft = PAUSE_TICKS;
@@ -485,7 +575,7 @@ export class CrowdBrain {
   // полсекунды задним ходом с поворотом, стороны поворота чередуются, путь — заново.
   private unstick(me: CrowdTank): Drive | null {
     if (this.unstickTicksLeft > 0) {
-      this.unstickTicksLeft--;
+      this.unstickTicksLeft -= this.elapsedTicks;
       return this.unstickDrive;
     }
     const anchor = this.anchor ?? me;
@@ -495,7 +585,7 @@ export class CrowdBrain {
       this.pushTicks = 0;
       return null;
     }
-    this.pushTicks++;
+    this.pushTicks += this.elapsedTicks;
     if (this.pushTicks < STUCK_TICKS) {
       return null;
     }
@@ -504,7 +594,6 @@ export class CrowdBrain {
     this.unstickDrive = { throttle: this.lastThrottle > 0 ? -1 : 1, turn: this.unstickSide };
     this.unstickSide = -this.unstickSide;
     this.path = [];
-    this.pathGoal = null;
     return this.unstickDrive;
   }
 
@@ -540,7 +629,7 @@ export class CrowdBrain {
       return null;
     }
     if (this.dodgeTicksLeft > 0 && this.dodgeMove !== null) {
-      this.dodgeTicksLeft--;
+      this.dodgeTicksLeft -= this.elapsedTicks;
       return driveAlong(me, this.dodgeMove);
     }
     let best: Move | null = null;
@@ -568,30 +657,27 @@ export class CrowdBrain {
   }
 
   // Случайная свободная точка внутри зоны; новая — когда доехал или по таймеру.
-  private patrol(view: CrowdView, grid: Grid): Drive {
+  private patrol(view: CrowdView, grid: Grid, paths: PathAllowance): Drive {
     const { me } = view;
     const isReached =
       this.patrolTarget !== null && Math.hypot(this.patrolTarget.x - me.x, this.patrolTarget.y - me.y) < PATROL_REACHED;
     if (this.patrolTarget === null || isReached || view.tick - this.patrolTick > PATROL_REPLAN_TICKS) {
-      const limit = view.zone.radius - PATROL_ZONE_MARGIN;
-      const candidates = grid.freeCells.filter(
-        (cell) => Math.hypot(cell.x - view.zone.x, cell.y - view.zone.y) < limit,
-      );
-      for (const cell of pickOne(candidates, this.random())) {
+      const cell = pickZoneCell(grid, view.zone, view.zone.radius - PATROL_ZONE_MARGIN, this.random());
+      if (cell !== null) {
         this.patrolTarget = cell;
       }
       this.patrolTick = view.tick;
     }
-    return this.followPath(view, grid, this.patrolTarget ?? view.zone);
+    return this.followPath(view, grid, this.patrolTarget ?? view.zone, paths);
   }
 
   // Сближение держит дистанцию без кружения; круг в перестрелке ходит вокруг цели.
-  private hunt(view: CrowdView, grid: Grid, target: CrowdTank): Drive {
+  private hunt(view: CrowdView, grid: Grid, target: CrowdTank, paths: PathAllowance): Drive {
     const { me, map } = view;
     const distance = Math.hypot(target.x - me.x, target.y - me.y);
     const hasLineOfSight = isSegmentClear(map.walls, me.x, me.y, target.x, target.y, SHOT_PAD);
     if (!hasLineOfSight || distance >= FIGHT_DISTANCE) {
-      return this.followPath(view, grid, target);
+      return this.followPath(view, grid, target, paths);
     }
     if (this.profile.movement === 'approach') {
       if (distance < RETREAT_DISTANCE) {
@@ -612,19 +698,32 @@ export class CrowdBrain {
     return driveTo(me, target.x + Math.cos(around) * radius, target.y + Math.sin(around) * radius);
   }
 
+  // Тик расписания с прошлого хода: бот, пропустивший ход, не теряет пересчёт. Ход на том же тике или первый в
+  // жизни — только сам тик.
+  private isReplanDue(tick: number): boolean {
+    const sinceDue = (tick + this.phase) % REPLAN_TICKS;
+    const thought = this.thoughtTick;
+    if (thought === null || thought >= tick) {
+      return sinceDue === 0;
+    }
+    return sinceDue < tick - thought;
+  }
+
   // Путь пересчитывается по расписанию (свой тик у каждого бота), когда цель пути заметно сдвинулась или путь
-  // кончился — но не чаще раза в MIN_REPLAN_GAP_TICKS: недостижимая цель не гоняет поиск каждый тик.
-  private followPath(view: CrowdView, grid: Grid, goal: Point): Drive {
+  // кончился — но не чаще раза в MIN_REPLAN_GAP_TICKS: недостижимая цель не гоняет поиск каждый тик. Первый путь —
+  // только по расписанию: на старте боя боты ищут его не все в одном тике. Поиск без разрешения откладывается до
+  // следующего хода.
+  private followPath(view: CrowdView, grid: Grid, goal: Point, paths: PathAllowance): Drive {
     const { me, map } = view;
+    const isDue = this.isPathPending || this.isReplanDue(view.tick);
+    const isFirst = this.pathGoal === null;
     const isStale =
       this.pathGoal === null ||
       this.path.length === 0 ||
       Math.hypot(goal.x - this.pathGoal.x, goal.y - this.pathGoal.y) > GOAL_SHIFT;
-    const isDue = (view.tick + this.phase) % REPLAN_TICKS === 0;
-    if ((isStale || isDue) && view.tick - this.pathTick >= MIN_REPLAN_GAP_TICKS) {
-      this.path = findPath(grid, nearestFree(grid, me.x, me.y), nearestFree(grid, goal.x, goal.y));
-      this.pathTick = view.tick;
-      this.pathGoal = { x: goal.x, y: goal.y };
+    const isReplanWanted = isFirst ? isDue : isStale || isDue;
+    if (isReplanWanted && view.tick - this.pathTick >= MIN_REPLAN_GAP_TICKS) {
+      this.replan(grid, me, goal, view.tick, paths);
     }
     while (this.path.length > 1) {
       const next = this.path[1];
@@ -638,5 +737,15 @@ export class CrowdBrain {
       this.path.shift();
     }
     return driveTo(me, waypoint.x, waypoint.y);
+  }
+
+  private replan(grid: Grid, me: CrowdTank, goal: Point, tick: number, paths: PathAllowance): void {
+    this.isPathPending = !paths.take();
+    if (this.isPathPending) {
+      return;
+    }
+    this.path = findPath(grid, nearestFree(grid, me.x, me.y), nearestFree(grid, goal.x, goal.y));
+    this.pathTick = tick;
+    this.pathGoal = { x: goal.x, y: goal.y };
   }
 }

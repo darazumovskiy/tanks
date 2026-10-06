@@ -57,7 +57,7 @@ function commandPrint(lines: readonly string[]): number {
 }
 
 // Одна игра стенда: комната сервера, бот лестницы как на бою и двойник за каналом сети; журнал — в памяти,
-// разбор — тем же модулем метрик, что журналы Димы. Детали раунда остаются только у раундов смеси.
+// разбор — тем же модулем метрик, что журналы игрока. Детали раунда остаются только у раундов смеси.
 export function playGame(plan: GamePlan, profile: TwinProfile, logDir: string | null): GameResult {
   const roomCode = botRoomCode(plan.level, ROOM_SUFFIX);
   const log = new MemoryGameLog(plan.id, roomCode);

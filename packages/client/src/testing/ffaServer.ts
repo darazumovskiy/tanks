@@ -34,11 +34,13 @@ export function placedTank(id: number, x: number, y: number, heading = 0): Tank 
 
 export interface SnapshotDetails {
   ackSeq?: number;
+  hasSpareInput?: boolean;
   events?: FfaSnapshotEvent[];
   changes?: BulletChanges;
   state?: FfaPlayerState;
   killerId?: number | null;
   gameTick?: number;
+  isOut?: boolean;
 }
 
 export function snapshotOf(world: World, details: SnapshotDetails = {}): FfaSnapshotMessage {
@@ -47,7 +49,14 @@ export function snapshotOf(world: World, details: SnapshotDetails = {}): FfaSnap
     tick: world.tick,
     gameTick: details.gameTick ?? world.tick,
     ackSeq: details.ackSeq ?? 0,
-    self: { state: details.state ?? 'alive', ticksLeft: 0, killerId: details.killerId ?? null, idleTicksLeft: null },
+    hasSpareInput: details.hasSpareInput ?? false,
+    self: {
+      state: details.state ?? 'alive',
+      ticksLeft: 0,
+      killerId: details.killerId ?? null,
+      idleTicksLeft: null,
+      isOut: details.isOut ?? false,
+    },
     tanks: world.tanks.map((tank) => ({
       id: tank.id,
       x: tank.x,

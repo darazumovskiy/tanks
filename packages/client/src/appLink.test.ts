@@ -31,6 +31,11 @@ describe('androidIntentUrl', () => {
         'S.browser_fallback_url=https%3A%2F%2Ftanks.example%2Fapp%2Ftanks.apk;end',
     );
   });
+
+  it('ведёт и в общий бой', () => {
+    const url = androidIntentUrl('https://tanks.example/ffa/30', 'https://tanks.example/app/tanks.apk');
+    expect(url).toMatch(/^intent:\/\/tanks\.example\/ffa\/30#Intent;scheme=https;package=/);
+  });
 });
 
 describe('showOpenInApp', () => {

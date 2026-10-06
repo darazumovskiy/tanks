@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { TANK_RADIUS } from './constants.js';
+import { DEFAULT_STATS, TANK_RADIUS } from './constants.js';
+import { createFfaMatch } from './ffa.js';
 import { buildFfaMap, FFA_PASSAGE_CLEARANCE, FFA_SIZES, ffaMap, type FfaMap, type FfaSize } from './ffaMaps.js';
 import { circleRect, type Wall } from './geometry.js';
 import type { Point } from './maps.js';
+import { DEFAULT_RULES } from './round.js';
 
 const EXPECTED: Readonly<Record<FfaSize, { width: number; height: number; areas: number; kits: number }>> = {
   10: { width: 2300, height: 1300, areas: 5, kits: 4 },
@@ -11,6 +13,7 @@ const EXPECTED: Readonly<Record<FfaSize, { width: number; height: number; areas:
 };
 const GRID_STEP = 10;
 const MIN_AREA_SPACING = 400;
+const START_SEEDS = 20;
 // Стены округляются до целых: края соседних клеток сдвигаются на единицу.
 const PASSAGE_ROUNDING = 1;
 // Отпечатки карт, одинаковые на V8 и JavaScriptCore (проверено jsc из macOS): клиент строит карту сам,
@@ -108,6 +111,21 @@ describe.each(FFA_SIZES.map((size) => [size] as const))('карта на %i ме
     const grid = reachableGrid(map, first);
     for (const point of [...map.spawnAreas, ...map.kits]) {
       expect(grid.isReachable(point), `(${String(point.x)}, ${String(point.y)})`).toBe(true);
+    }
+  });
+
+  it('места старта матча достижимы танком из точек возрождения', () => {
+    const [first] = map.spawnAreas;
+    expect(first).toBeDefined();
+    if (first === undefined) {
+      return;
+    }
+    const grid = reachableGrid(map, first);
+    const setups = Array.from({ length: size }, (_, id) => ({ id, name: `Игрок ${String(id)}`, stats: DEFAULT_STATS }));
+    for (let seed = 1; seed <= START_SEEDS; seed++) {
+      for (const tank of createFfaMatch(map, setups, seed, DEFAULT_RULES).world.tanks) {
+        expect(grid.isReachable(tank), `сид ${String(seed)}: (${String(tank.x)}, ${String(tank.y)})`).toBe(true);
+      }
     }
   });
 

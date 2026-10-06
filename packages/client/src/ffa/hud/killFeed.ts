@@ -4,18 +4,20 @@ import { element, layer, setShown, setStyle, strokeIcon } from './dom.js';
 // Строка гаснет последние 200 мс своей жизни.
 const FADE_MS = 200;
 
-// Рикошет — стрелка разворотом назад; зона — кольцо с центром.
+// Рикошет — стрелка разворотом назад; зона — кольцо с центром; выбыл — перечёркнутый круг.
 const RICOCHET_PATHS = ['M14.5 16 V8.5 A4.5 4.5 0 0 0 5.5 8.5 V13', 'M2.8 10.5 L5.5 13.2 L8.2 10.5'];
 const ICON_PATHS: Readonly<Record<DeathCause, readonly string[]>> = {
   bullet: ['M5 5 L15 15', 'M15 5 L5 15'],
   ricochet: RICOCHET_PATHS,
   self: RICOCHET_PATHS,
   zone: ['M10 3 A7 7 0 1 1 9.99 3', 'M10 8 A2 2 0 1 1 9.99 8'],
+  out: ['M10 3 A7 7 0 1 1 9.99 3', 'M5 15 L15 5'],
 };
 
 const NOTE_BY_CAUSE: Readonly<Partial<Record<DeathCause, string>>> = {
   self: 'сам себя',
   zone: 'сгорел в зоне',
+  out: 'выбыл',
 };
 
 // Номер записи начинается с единицы в каждой сессии: узел строки узнаётся по номеру вместе с содержимым.

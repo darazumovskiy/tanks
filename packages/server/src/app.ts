@@ -25,6 +25,7 @@ import { APK_ROUTE, requestPath, serveApk, serveStatic } from './static.js';
 // logDir — папка журналов игр; без неё журнал не ведётся и приёмщик строк клиента отключён.
 // rules — правила движка для всех комнат процесса.
 // ffaEnv — переключатели общей игры строками окружения (ключ — имя переменной) поверх `ffa`; пусто — умолчание.
+// botClock — часы бюджета хода ботов в мс; умолчание — время процесса.
 export interface AppOptions {
   staticRoot?: string;
   apkPath?: string;
@@ -36,6 +37,7 @@ export interface AppOptions {
   tickMs?: number;
   random?: () => number;
   silenceTimeoutMs?: number;
+  botClock?: () => number;
 }
 
 export interface App {
@@ -63,15 +65,23 @@ const SILENCE_CHECKS_PER_TIMEOUT = 4;
 const FFA_ENV = {
   minimum: 'FFA_MINIMUM',
   matchSeconds: 'FFA_MATCH_SECONDS',
-  lobbyQuietSeconds: 'FFA_LOBBY_QUIET_SECONDS',
+  lobbyWaitSeconds: 'FFA_LOBBY_WAIT_SECONDS',
   resultsSeconds: 'FFA_RESULTS_SECONDS',
   idleWarnSeconds: 'FFA_IDLE_WARN_SECONDS',
   idleKickSeconds: 'FFA_IDLE_KICK_SECONDS',
+  serverBots: 'FFA_SERVER_BOTS',
+  botBudgetMs: 'FFA_BOT_BUDGET_MS',
+  botSlowdown: 'FFA_BOT_SLOWDOWN',
 } as const;
+const SWITCH_ON = '1';
+const SWITCH_OFF = '0';
 // Минимум один на все размеры, поэтому не больше самой маленькой игры.
 const FFA_MINIMUM_LIMIT = Math.min(...FFA_SIZES);
 // ticksLeft и idleTicksLeft уходят двумя байтами, а 0xFFFF там значит «нет»: длительность в тиках меньше него.
 const FFA_SECONDS_LIMIT = Math.floor((NO_ID - 1) / TICK_RATE);
+// Бюджет хода ботов — не больше тика; замедление для замера — с запасом на машину в разы медленнее боевой.
+const BOT_BUDGET_LIMIT_MS = Math.floor(1000 / TICK_RATE);
+const BOT_SLOWDOWN_LIMIT = 100;
 
 type FfaEnv = Readonly<Record<string, string | undefined>>;
 
@@ -87,6 +97,17 @@ function envInteger(env: FfaEnv, name: string, limit: number): number | null {
   return value;
 }
 
+function envSwitch(env: FfaEnv, name: string): boolean | null {
+  const raw = env[name];
+  if (raw === undefined || raw === '') {
+    return null;
+  }
+  if (raw !== SWITCH_ON && raw !== SWITCH_OFF) {
+    throw new Error(`${name} должен быть ${SWITCH_OFF} или ${SWITCH_ON}, получено «${raw}»`);
+  }
+  return raw === SWITCH_ON;
+}
+
 function ticksOr(seconds: number | null, fallback: number): number {
   return seconds === null ? fallback : seconds * TICK_RATE;
 }
@@ -94,7 +115,7 @@ function ticksOr(seconds: number | null, fallback: number): number {
 function ffaOptionsFromEnv(base: FfaOptions, env: FfaEnv): FfaOptions {
   const minimum = envInteger(env, FFA_ENV.minimum, FFA_MINIMUM_LIMIT);
   const matchSeconds = envInteger(env, FFA_ENV.matchSeconds, FFA_SECONDS_LIMIT);
-  const lobbyQuietSeconds = envInteger(env, FFA_ENV.lobbyQuietSeconds, FFA_SECONDS_LIMIT);
+  const lobbyWaitSeconds = envInteger(env, FFA_ENV.lobbyWaitSeconds, FFA_SECONDS_LIMIT);
   const resultsSeconds = envInteger(env, FFA_ENV.resultsSeconds, FFA_SECONDS_LIMIT);
   const idleWarnSeconds = envInteger(env, FFA_ENV.idleWarnSeconds, FFA_SECONDS_LIMIT);
   const idleKickSeconds = envInteger(env, FFA_ENV.idleKickSeconds, FFA_SECONDS_LIMIT);
@@ -104,16 +125,21 @@ function ffaOptionsFromEnv(base: FfaOptions, env: FfaEnv): FfaOptions {
   if (isIdleSet && idleWarnTicks >= idleKickTicks) {
     throw new Error(`${FFA_ENV.idleWarnSeconds} должен быть меньше ${FFA_ENV.idleKickSeconds}`);
   }
+  const botBudgetMs = envInteger(env, FFA_ENV.botBudgetMs, BOT_BUDGET_LIMIT_MS);
+  const botSlowdown = envInteger(env, FFA_ENV.botSlowdown, BOT_SLOWDOWN_LIMIT);
   const minimums: Readonly<Record<FfaSize, number>> =
     minimum === null ? base.minimum : { 10: minimum, 30: minimum, 50: minimum };
   return {
     ...base,
+    hasServerBots: envSwitch(env, FFA_ENV.serverBots) ?? base.hasServerBots,
     minimum: minimums,
     matchSeconds: matchSeconds ?? base.matchSeconds,
-    lobbyQuietTicks: ticksOr(lobbyQuietSeconds, base.lobbyQuietTicks),
+    lobbyWaitTicks: ticksOr(lobbyWaitSeconds, base.lobbyWaitTicks),
     resultsTicks: ticksOr(resultsSeconds, base.resultsTicks),
     idleWarnTicks,
     idleKickTicks,
+    botBudgetMs: botBudgetMs ?? base.botBudgetMs,
+    botSlowdown: botSlowdown ?? base.botSlowdown,
   };
 }
 
@@ -156,6 +182,7 @@ export function createApp(options: AppOptions = {}): App {
     ffaOptions,
   );
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
+  const botClock = options.botClock ?? ((): number => performance.now());
   const server = createServer((request, response) => {
     const path = requestPath(request);
     if (path === HEALTH_PATH) {
@@ -165,7 +192,9 @@ export function createApp(options: AppOptions = {}): App {
     }
     if (path === METRICS_PATH) {
       response.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
-      response.end(metrics.render({ rooms: rooms.roomCount, connections: connections.size }));
+      response.end(
+        metrics.render({ rooms: rooms.roomCount, connections: connections.size, players: rooms.playerCounts() }),
+      );
       return;
     }
     if (path === LOG_ROUTE && request.method === 'POST' && fileLog !== null) {
@@ -188,6 +217,7 @@ export function createApp(options: AppOptions = {}): App {
   let tick = 0;
   let tickDurationMaxMs = 0;
   let timer: NodeJS.Timeout | undefined;
+  let thinkTimer: NodeJS.Immediate | undefined;
   let silenceTimer: NodeJS.Timeout | undefined;
 
   function stats(): AppStats {
@@ -236,6 +266,10 @@ export function createApp(options: AppOptions = {}): App {
     }
     if (message.type === MessageType.Input) {
       seat.input(message.seq, message.action);
+      return;
+    }
+    if (message.type === MessageType.Leave) {
+      rooms.quit(connection);
       return;
     }
     seat.ping(message.clientTime);
@@ -289,7 +323,15 @@ export function createApp(options: AppOptions = {}): App {
     }
   }
 
+  function thinkBots(): void {
+    const started = botClock();
+    const deadline = started + ffaOptions.botBudgetMs;
+    const report = rooms.thinkBots(() => botClock() >= deadline);
+    metrics.recordBotThink(botClock() - started, report);
+  }
+
   // Тик с компенсацией дрейфа таймера: следующий срок считается от расписания, а не от фактического времени.
+  // Мозг серверных ботов ходит отдельной задачей после тика: тик он не удлиняет.
   function startLoop(): void {
     let next = performance.now() + tickMs;
     let windowStart = performance.now();
@@ -305,6 +347,7 @@ export function createApp(options: AppOptions = {}): App {
       }
       tickDurationMaxMs = Math.max(tickDurationMaxMs, duration);
       metrics.recordTick(duration, lateMs > tickMs);
+      thinkTimer = setImmediate(thinkBots);
       next += tickMs;
       const delay = next - performance.now();
       if (delay < -CATCH_UP_LIMIT_TICKS * tickMs) {
@@ -331,6 +374,7 @@ export function createApp(options: AppOptions = {}): App {
     },
     close(): Promise<void> {
       clearTimeout(timer);
+      clearImmediate(thinkTimer);
       clearInterval(silenceTimer);
       metrics.close();
       fileLog?.close();

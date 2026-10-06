@@ -42,94 +42,61 @@ describe('эффекты толпы: частицы, тряска, вспышк�
     });
   });
 
-  it('чужая смерть в кадре — тряска вдвое слабее своей, без вспышки; за краем кадра — без тряски', () => {
+  it('P1 ни одно событие не трясёт экран и не вспыхивает: свои выстрел, попадание, смерть; чужая смерть в кадре', () => {
     const policy = new FfaFxPolicy();
-    policy.optionsFor(kill(OTHER, THIRD), ME, CAMERA);
-    expect(policy.optionsFor(event('death', THIRD), ME, CAMERA)).toMatchObject({ shake: 13, flash: 0 });
-    expect(policy.optionsFor(event('death', THIRD, NEAR_OUTSIDE), ME, CAMERA)).toMatchObject({ shake: 0, flash: 0 });
-  });
-
-  it('свои события трясут как в дуэли; своя смерть — тряска и вспышка; урон зоной экран не трогает', () => {
-    const policy = new FfaFxPolicy();
-    expect(policy.optionsFor(event('shot', ME), ME, CAMERA)).toMatchObject({ shake: 2.5, flash: 0 });
-    expect(policy.optionsFor(event('hit', ME, INSIDE, { by: OTHER }), ME, CAMERA)).toMatchObject({ shake: 9 });
-    expect(policy.optionsFor(event('hit', ME, INSIDE, { flags: EventFlag.Zone }), ME, CAMERA)).toMatchObject({
-      shake: 0,
-    });
-    expect(policy.optionsFor(event('death', ME, INSIDE, { flags: EventFlag.Zone }), ME, CAMERA)).toEqual({
-      shake: 26,
-      flash: 0.55,
-      announcement: null,
-      hasParticles: true,
-    });
-    expect(policy.optionsFor(event('shot', OTHER), ME, CAMERA)).toMatchObject({ shake: 0, flash: 0 });
-    expect(policy.optionsFor(event('hit', OTHER, INSIDE, { by: ME }), ME, CAMERA)).toMatchObject({ shake: 0 });
+    const events = [
+      event('shot', ME),
+      event('hit', ME, INSIDE, { by: OTHER }),
+      kill(ME, OTHER),
+      event('death', ME, INSIDE, { flags: EventFlag.Zone }),
+      kill(THIRD, OTHER),
+      event('shot', OTHER),
+    ];
+    for (const fired of events) {
+      expect(policy.optionsFor(fired, ME, CAMERA)).toMatchObject({ shake: 0, flash: 0 });
+    }
   });
 });
 
 describe('объявления толпы', () => {
-  it('первое убийство матча своим танком — «ПЕРВАЯ КРОВЬ», второе — нет', () => {
+  it('P1 «ПЕРВАЯ КРОВЬ» нет: ни первое убийство матча своим танком, ни по танку за окном', () => {
     const policy = new FfaFxPolicy();
-    expect(policy.optionsFor(kill(OTHER, ME), ME, CAMERA)?.announcement).toBe('firstBlood');
-    expect(policy.optionsFor(kill(THIRD, ME), ME, CAMERA)?.announcement).toBeNull();
-  });
-
-  it('первое убийство чужим — своё следующее уже не первое', () => {
-    const policy = new FfaFxPolicy();
-    expect(policy.optionsFor(kill(THIRD, OTHER, FAR), ME, CAMERA)).toBeNull();
     expect(policy.optionsFor(kill(OTHER, ME), ME, CAMERA)?.announcement).toBeNull();
+    expect(policy.optionsFor(kill(THIRD, ME, FAR), ME, CAMERA)).toBeNull();
   });
 
-  it('своя первая кровь по танку далеко за окном — объявление без частиц', () => {
-    const policy = new FfaFxPolicy();
-    expect(policy.optionsFor(kill(OTHER, ME, FAR), ME, CAMERA)).toEqual({
-      shake: 0,
-      flash: 0,
-      announcement: 'firstBlood',
-      hasParticles: false,
-    });
-  });
-
-  it('своя смерть от своего рикошета — «САМ СЕБЯ!», первое убийство не тратит; чужой свой рикошет — без надписи', () => {
+  it('P1 своя смерть от своего рикошета — «САМ СЕБЯ!» в 1,5 раза меньше и на 30 % короче; чужой — без надписи', () => {
     const policy = new FfaFxPolicy();
     const selfFlags = EventFlag.Self | EventFlag.Ricochet;
     expect(policy.optionsFor(event('death', OTHER, INSIDE, { by: OTHER, flags: selfFlags }), ME, CAMERA)).toMatchObject(
       { announcement: null },
     );
-    expect(policy.optionsFor(event('death', ME, INSIDE, { by: ME, flags: selfFlags }), ME, CAMERA)).toMatchObject({
-      announcement: 'selfHit',
-    });
+    const own = policy.optionsFor(event('death', ME, INSIDE, { by: ME, flags: selfFlags }), ME, CAMERA);
+    expect(own?.announcement).toEqual({ kind: 'selfHit', size: 1 / 1.5, duration: 0.7 });
     expect(policy.optionsFor(event('death', THIRD, INSIDE, { flags: EventFlag.Zone }), ME, CAMERA)?.announcement).toBe(
       null,
     );
-    expect(policy.optionsFor(kill(OTHER, ME), ME, CAMERA)?.announcement).toBe('firstBlood');
   });
 
-  it('«ЗОНА СУЖАЕТСЯ» — всем, в том числе без своего танка; новый матч снова ждёт первой крови', () => {
+  it('свой рикошет в себя далеко за окном — объявление без частиц', () => {
     const policy = new FfaFxPolicy();
-    expect(policy.optionsFor(event('zoneStart', null, { x: 0, y: 0 }), null, CAMERA)?.announcement).toBe('zoneStart');
-    expect(policy.optionsFor(kill(OTHER, THIRD), null, CAMERA)?.announcement).toBeNull();
-    policy.reset();
-    expect(policy.optionsFor(kill(OTHER, ME), ME, CAMERA)?.announcement).toBe('firstBlood');
+    const selfFlags = EventFlag.Self | EventFlag.Ricochet;
+    expect(policy.optionsFor(event('death', ME, FAR, { by: ME, flags: selfFlags }), ME, CAMERA)).toEqual({
+      shake: 0,
+      flash: 0,
+      announcement: { kind: 'selfHit', size: 1 / 1.5, duration: 0.7 },
+      hasParticles: false,
+    });
   });
 
-  it('счёт с убийствами — первая кровь пролита до входа; счёт без убийств её не трогает', () => {
-    const row = (
-      id: number,
-      kills: number,
-    ): { id: number; kills: number; deaths: number; damageDealt: number; damageTaken: number } => ({
-      id,
-      kills,
-      deaths: 0,
-      damageDealt: 0,
-      damageTaken: 0,
+  it('«ЗОНА СУЖАЕТСЯ» — всем, в том числе без своего танка, базового размера и длительности', () => {
+    const policy = new FfaFxPolicy();
+    expect(policy.optionsFor(event('zoneStart', null, { x: 0, y: 0 }), null, CAMERA)?.announcement).toEqual({
+      kind: 'zoneStart',
+      size: 1,
+      duration: 1,
     });
-    const fresh = new FfaFxPolicy();
-    fresh.noteScore([row(ME, 0), row(OTHER, 0)]);
-    expect(fresh.optionsFor(kill(OTHER, ME), ME, CAMERA)?.announcement).toBe('firstBlood');
-    const joiner = new FfaFxPolicy();
-    joiner.noteScore([row(ME, 0), row(OTHER, 2)]);
-    expect(joiner.optionsFor(kill(OTHER, ME), ME, CAMERA)?.announcement).toBeNull();
+    expect(policy.optionsFor(kill(OTHER, THIRD), null, CAMERA)?.announcement).toBeNull();
   });
 });
 

@@ -106,7 +106,7 @@ export function checkReport(honesty: Honesty, print: number): string[] {
     item.verdict,
   ]);
   levelRows.push([
-    'сводный, веса Димы',
+    'сводный, веса игрока',
     EMPTY,
     `${number(honesty.overall.twinPct)} %`,
     dimaWins(honesty.overall.dima),
@@ -122,13 +122,13 @@ export function checkReport(honesty: Honesty, print: number): string[] {
   const found = violations(honesty);
   return [
     'Винрейт',
-    ...table(['Уровень', 'Раундов двойника', 'Двойник', 'Дима', 'Вердикт'], levelRows),
+    ...table(['Уровень', 'Раундов двойника', 'Двойник', 'Игрок', 'Вердикт'], levelRows),
     '',
     'Исходы',
-    ...table(['Метрика', 'Дима', 'n', 'Двойник', 'Вердикт'], outcomeRows),
+    ...table(['Метрика', 'Игрок', 'n', 'Двойник', 'Вердикт'], outcomeRows),
     '',
     'Входы',
-    ...table(['Метрика', 'Дима', 'Двойник', 'Допуск', 'Вердикт'], inputRows(honesty.inputs)),
+    ...table(['Метрика', 'Игрок', 'Двойник', 'Допуск', 'Вердикт'], inputRows(honesty.inputs)),
     ...edgeLines(honesty.inputs),
     '',
     `Отпечаток команд: ${print.toString(16).padStart(PRINT_DIGITS, '0')}`,
@@ -155,7 +155,7 @@ export function calibrationReport(summary: CalibrationSummary): string[] {
     item.points.map((point) => `${number(point.value, 2)} → ${number(point.measured, 2)}`).join('; '),
   ]);
   return [
-    ...table(['Вход', 'Дима', 'Двойник', 'Параметр'], rows),
+    ...table(['Вход', 'Игрок', 'Двойник', 'Параметр'], rows),
     ...edgeLines(summary.inputs),
     '',
     'Чувствительность: параметр → метрика по грубой сетке первого прохода',

@@ -391,7 +391,7 @@ function coarseGames(games: readonly GamePlan[]): GamePlan[] {
   });
 }
 
-// Входы двойника против Диминых; twinValue — значение входа у двойника, spread — его погрешность.
+// Входы двойника против входов игрока; twinValue — значение входа у двойника, spread — его погрешность.
 // Допуск — погрешность, но не меньше округления профиля.
 export function checkInputs(
   reference: TwinReference,
@@ -513,7 +513,7 @@ function partialStart(start: ParamValues, partial: PartialCalibration): ParamVal
 }
 
 // Калибровка входов: двойник играет раунды смеси проверки, модуль метрик меряет входы, параметры подбираются
-// по своим метрикам. Входы, которых у Димы нет, не калибруются.
+// по своим метрикам. Входы, которых у игрока нет, не калибруются.
 export async function calibrate(
   reference: TwinReference,
   seed: number,

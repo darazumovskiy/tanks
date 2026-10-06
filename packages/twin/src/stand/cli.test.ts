@@ -10,7 +10,7 @@ const PHONE = JSON.parse(readFileSync(new URL('../../reference/phone.json', impo
 const NO_SHARE = { part: 0, total: 0, pct: null };
 const CALIBRATE_THREADS = 4;
 
-// Справка с одним раундом Димы на уровне 8 и без метрик-входов: калибровке нечего подбирать, она мерит один раз.
+// Справка с одним раундом игрока на уровне 8 и без метрик-входов: калибровке нечего подбирать, она мерит один раз.
 function tinyReference(): TwinReference {
   const reference = structuredClone(PHONE);
   const level8 = reference.main.conditions['8'];
@@ -60,7 +60,7 @@ afterEach(() => {
 });
 
 describe('команды стенда', () => {
-  it('calibrate: мерит входы против набора соперников Димы, печатает таблицу и пишет файл калибровки', async () => {
+  it('calibrate: мерит входы против набора соперников игрока, печатает таблицу и пишет файл калибровки', async () => {
     const dir = makeLogDir({ 'phone.json': JSON.stringify(tinyReference()) });
 
     // Смесь калибровки — около тысячи раундов уровня 8: потоки исполняют собранный dist, без инструментовки покрытия.
@@ -68,7 +68,7 @@ describe('команды стенда', () => {
     const calibration = JSON.parse(readFileSync(join(dir, 'phone.calibration.json'), 'utf8')) as TwinCalibration;
 
     expect(code).toBe(0);
-    expect(lines[0]).toBe('| Вход | Дима | Двойник | Параметр |');
+    expect(lines[0]).toBe('| Вход | Игрок | Двойник | Параметр |');
     expect(lines.some((line) => line.startsWith('| Отставание башни по ходу цели, тиков | — |'))).toBe(true);
     expect(lines).toContain('Прогонов стенда: 1; все входы в допуске');
     expect(lines).toContain(`Время: 0.5 с · потоков ${String(CALIBRATE_THREADS)}`);
@@ -104,7 +104,7 @@ describe('команды стенда', () => {
       lines: ['в калибровке phone нет параметров или они не числа: returnAvoidShare — пересоберите twin calibrate'],
     });
     expect(code).toBe(0);
-    // У Димы входа нет — параметр группы встаёт на середину диапазона, остальные остаются прежними.
+    // У игрока входа нет — параметр группы встаёт на середину диапазона, остальные остаются прежними.
     expect(calibration).toMatchObject({ lagTicks: 2, returnAvoidShare: 0.5 });
   }, 60000);
 

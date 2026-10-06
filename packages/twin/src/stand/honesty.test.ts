@@ -26,7 +26,7 @@ import { runStand } from './run.js';
 const PHONE = JSON.parse(readFileSync(new URL('../../reference/phone.json', import.meta.url), 'utf8')) as TwinReference;
 const DIMA: PlayerMetrics = { main: PHONE.main, movement: PHONE.movement };
 const MAIN_GAME = PROFILE_WINDOWS.phone.periods.find((period) => period.name === 'C2')?.games[0] ?? '';
-// Доли раундов вне выборки как у Димы в главном окне.
+// Доли раундов вне выборки как у игрока в главном окне.
 const STAND: StandCount = { played: 94, excluded: { ...emptyExclusionCounts(), short: 6, noShot: 10, idle: 1 } };
 
 function roundsOf(level: 6 | 7 | 8 | 9, wins: number, total: number): ProfileRound[] {
@@ -71,7 +71,7 @@ function recording<T extends object>(target: T, reads: Set<string>, paths: WeakM
 }
 
 describe('критерии честности', () => {
-  it('винрейт внутри интервала Димы — честно, снаружи — нарушение; уровень с 9 раундами Димы — без вердикта', () => {
+  it('винрейт внутри интервала игрока — честно, снаружи — нарушение; уровень с 9 раундами игрока — без вердикта', () => {
     const rounds = [...roundsOf(8, 10, 100), ...roundsOf(9, 40, 100), ...roundsOf(7, 90, 100)];
     const honesty = judge(PHONE, [7, 8, 9], rounds, STAND, DIMA, []);
 
@@ -83,7 +83,7 @@ describe('критерии честности', () => {
     expect(honesty.isHonest).toBe(false);
   });
 
-  it('сводный винрейт взвешен долями раундов Димы и сверяется с его сводным интервалом без округления', () => {
+  it('сводный винрейт взвешен долями раундов игрока и сверяется с его сводным интервалом без округления', () => {
     const rounds = [...roundsOf(6, 1, 8), ...roundsOf(7, 2, 9), ...roundsOf(8, 4, 47), ...roundsOf(9, 0, 13)];
     const honesty = judge(PHONE, [6, 7, 8, 9], rounds, STAND, DIMA, []);
 
@@ -92,7 +92,7 @@ describe('критерии честности', () => {
     expect(honesty.levels.every((row) => row.verdict !== 'нарушение')).toBe(true);
   });
 
-  it('исходы: медиана в квартилях и доля в интервале Димы — честно, снаружи — нарушение; n < 30 у Димы — без вердикта', () => {
+  it('исходы: медиана в квартилях и доля в интервале игрока — честно, снаружи — нарушение; n < 30 у игрока — без вердикта', () => {
     const shifted = structuredClone(DIMA);
     shifted.main.dodge.dodge.dodged = { part: 1, total: 100, pct: 1 };
     const speed = shifted.movement.speed;
@@ -110,7 +110,7 @@ describe('критерии честности', () => {
     expect(verdictOf('Попадания в позиции')).toBe('без вердикта');
   });
 
-  it('доля сверяется интервалами: точка двойника вне интервала Димы, но интервалы пересекаются — честно', () => {
+  it('доля сверяется интервалами: точка двойника вне интервала игрока, но интервалы пересекаются — честно', () => {
     const dima = DIMA.main.dodge.dodge.dodged;
     const wide = structuredClone(DIMA);
     wide.main.dodge.dodge.dodged = { part: 1, total: 3, pct: 100 / 3 };
@@ -152,7 +152,7 @@ describe('критерии честности', () => {
 });
 
 describe('раунды вне выборки', () => {
-  it('доля «не играл» у двойника сверяется с долей Димы в главном окне; втрое больше коротких — нарушение', () => {
+  it('доля «не играл» у двойника сверяется с долей игрока в главном окне; втрое больше коротких — нарушение', () => {
     const rounds = roundsOf(8, 4, 47);
     const same = judge(PHONE, [8], rounds, STAND, DIMA, []);
     const dying = judge(PHONE, [8], rounds, { played: 94, excluded: { ...STAND.excluded, short: 30 } }, DIMA, []);
@@ -164,7 +164,7 @@ describe('раунды вне выборки', () => {
     expect(verdictOf(dying, 'Вне выборки: не играл')).toBe('нарушение');
   });
 
-  it('событие, которое у Димы случилось меньше 5 раз, — без вердикта даже при явном расхождении; 5 раз — с вердиктом', () => {
+  it('событие, которое у игрока случилось меньше 5 раз, — без вердикта даже при явном расхождении; 5 раз — с вердиктом', () => {
     const rounds = roundsOf(8, 4, 47);
     const verdictOf = (dimaIdle: number): string | undefined => {
       const reference = structuredClone(PHONE);
@@ -284,7 +284,7 @@ describe('калибровка входов', () => {
     expect(checkOf('correlationTicks')).toMatchObject({ tolerance: 0.5, verdict: 'нарушение' });
   });
 
-  it('отчёт калибровки: вход — Дима, двойник, параметр; край при входе вне допуска и сетка чувствительности', () => {
+  it('отчёт калибровки: вход — игрок, двойник, параметр; край при входе вне допуска и сетка чувствительности', () => {
     const edge = { ...input('нарушение'), twin: 3.5, value: 0, isAtEdge: true };
     const settled = {
       ...input('честно'),
@@ -309,7 +309,7 @@ describe('калибровка входов', () => {
     });
 
     expect(report).toEqual([
-      '| Вход | Дима | Двойник | Параметр |',
+      '| Вход | Игрок | Двойник | Параметр |',
       '| --- | --- | --- | --- |',
       '| Вход | 0.50 | 3.50 | lagTicks = 0.000 |',
       '| Пеленг | 0.50 | 0.50 | hiddenAim bearing = 0.000 |',

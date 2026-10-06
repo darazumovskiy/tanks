@@ -85,18 +85,21 @@ describe('тряска, вспышка и объявления дуэли', () =
 
   it('начало сжатия — объявление зоны; остальные виды не трогают экран', () => {
     const policy = new DuelFxPolicy();
-    expect(policy.optionsFor(duelEvent('zoneStart', null))).toEqual({ ...QUIET, announcement: 'zoneStart' });
+    expect(policy.optionsFor(duelEvent('zoneStart', null))).toEqual({
+      ...QUIET,
+      announcement: { kind: 'zoneStart', size: 1, duration: 1 },
+    });
     for (const kind of ['impact', 'ricochet', 'fizzle', 'bump', 'kitSpawn', 'pickup', 'roundOver'] as const) {
       expect(policy.optionsFor(duelEvent(kind, 0)), kind).toEqual(QUIET);
     }
   });
 
-  it('первая кровь — одна на раунд: первое попадание снарядом, рикошетом тоже; дальше только тряска', () => {
+  it('P2 первая кровь — одна на раунд, вдвое короче базовой: первое попадание снарядом, рикошетом тоже; дальше только тряска', () => {
     const policy = new DuelFxPolicy();
     expect(policy.optionsFor(duelEvent('hit', 1, EventFlag.Ricochet))).toEqual({
       ...QUIET,
       shake: 9,
-      announcement: 'firstBlood',
+      announcement: { kind: 'firstBlood', size: 1, duration: 0.5 },
     });
     expect(policy.optionsFor(duelEvent('hit', 0))).toEqual({ ...QUIET, shake: 9 });
   });
@@ -106,17 +109,17 @@ describe('тряска, вспышка и объявления дуэли', () =
     expect(policy.optionsFor(duelEvent('hit', 0, EventFlag.Self | EventFlag.Ricochet))).toEqual({
       ...QUIET,
       shake: 9,
-      announcement: 'selfHit',
+      announcement: { kind: 'selfHit', size: 1, duration: 1 },
     });
     expect(policy.optionsFor(duelEvent('hit', 0, EventFlag.Zone))).toEqual(QUIET);
     expect(policy.optionsFor(duelEvent('hit', null))).toEqual(QUIET);
-    expect(policy.optionsFor(duelEvent('hit', 1)).announcement).toBe('firstBlood');
+    expect(policy.optionsFor(duelEvent('hit', 1)).announcement?.kind).toBe('firstBlood');
   });
 
   it('новый раунд — первая кровь снова впереди', () => {
     const policy = new DuelFxPolicy();
     policy.optionsFor(duelEvent('hit', 1));
     policy.reset();
-    expect(policy.optionsFor(duelEvent('hit', 0)).announcement).toBe('firstBlood');
+    expect(policy.optionsFor(duelEvent('hit', 0)).announcement?.kind).toBe('firstBlood');
   });
 });

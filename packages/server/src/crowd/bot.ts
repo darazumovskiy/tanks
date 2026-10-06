@@ -23,10 +23,10 @@ import {
   type JoinMessage,
   type ServerMessage,
 } from '@tanks/shared/protocol';
-import { CrowdBrain } from './brain.js';
+import { CrowdBrain, UNLIMITED_PATHS, type PathAllowance } from './brain.js';
 import { CROWD_PROFILES, type CrowdLevel, type CrowdProfile } from './profile.js';
 import { Targeting, type TargetBook } from './targets.js';
-import { crowdView, type CrowdTank, type Frame } from './view.js';
+import { crowdBullets, crowdTank, crowdView, UNKNOWN_STATS, type CrowdTank, type Frame } from './view.js';
 
 export interface CrowdBotOptions {
   level: CrowdLevel;
@@ -63,7 +63,10 @@ function emptyCounters(): CrowdBotCounters {
   };
 }
 
-const UNKNOWN_STATS = deriveStats(undefined);
+interface Absorbed {
+  message: FfaSnapshotMessage;
+  frame: Frame;
+}
 
 // Бот общей игры без транспорта: получает сообщения сервера, восстанавливает из них поле и отвечает командой.
 // Сокет роя и подключение внутри сервера — разные обёртки вокруг одного бота.
@@ -73,11 +76,11 @@ export class CrowdBot {
   playerId: number | null = null;
   phase: FfaPhase | null = null;
   matchTick = 0;
+  gameId = '';
   private readonly map: FfaMap;
   private readonly brain: CrowdBrain;
   private readonly targeting: Targeting;
   private readonly mirror: BulletMirror;
-  private gameId = '';
   private seq = 0;
   private roster = new Map<number, DerivedStats>();
   private zonePlan: ZonePlan | null = null;
@@ -86,6 +89,11 @@ export class CrowdBot {
   private lastGameTick: number | null = null;
   private isOnField = false;
   private counters = emptyCounters();
+  // Последний принятый снимок с танком бота в бою, по которому бот ещё не решал, и обидчики со всех принятых с
+  // прошлого решения.
+  private latest: Absorbed | null = null;
+  private attackers: number[] = [];
+  private lastAction: Action | null = null;
 
   constructor(private readonly options: CrowdBotOptions) {
     this.profile = CROWD_PROFILES[options.level];
@@ -99,6 +107,14 @@ export class CrowdBot {
     return this.options.nickname;
   }
 
+  get gameTick(): number | null {
+    return this.lastGameTick;
+  }
+
+  get hasUndecided(): boolean {
+    return this.latest !== null;
+  }
+
   // Новое соединение: вход с пропуском (пусто — новым игроком), номера команд — с единицы.
   joinMessage(): JoinMessage {
     this.seq = 0;
@@ -107,6 +123,7 @@ export class CrowdBot {
     this.history = [];
     this.unconfirmed = [];
     this.isOnField = false;
+    this.lastAction = null;
     return {
       type: MessageType.Join,
       protocolVersion: PROTOCOL_VERSION,
@@ -115,6 +132,7 @@ export class CrowdBot {
       stats: this.profile.stats,
       token: this.token,
       isBot: true,
+      gameId: '',
     };
   }
 
@@ -154,56 +172,27 @@ export class CrowdBot {
         this.zonePlan = message.zone;
         this.mirror.reset([]);
         this.history = [];
-        this.isOnField = false;
-        this.targeting.release();
+        this.latest = null;
+        this.attackers = [];
+        this.leaveField();
         return null;
       case MessageType.FfaBullets:
         this.mirror.reset(message.bullets);
         return null;
       case MessageType.FfaSnapshot:
-        return this.onSnapshot(message);
+        this.mirror.apply(message.tick, message);
+        this.absorb(message, {
+          tick: message.tick,
+          tanks: message.tanks.map((tank) => crowdTank(tank, this.statsOf(tank.id))),
+          bullets: crowdBullets(this.mirror.bullets),
+        });
+        return this.decide();
       default:
         return null;
     }
   }
 
-  private statsOf(id: number): DerivedStats {
-    return this.roster.get(id) ?? UNKNOWN_STATS;
-  }
-
-  private frameOf(message: FfaSnapshotMessage): Frame {
-    return {
-      tick: message.tick,
-      tanks: message.tanks.map((tank) => {
-        const stats = this.statsOf(tank.id);
-        return {
-          id: tank.id,
-          x: tank.x,
-          y: tank.y,
-          heading: tank.heading,
-          turret: tank.turret,
-          speed: tank.speed,
-          vx: Math.cos(tank.heading) * tank.speed,
-          vy: Math.sin(tank.heading) * tank.speed,
-          hp: tank.hp,
-          maxHp: stats.maxHp,
-          reloadLeft: tank.reloadLeft,
-          shieldLeft: tank.shieldLeft,
-          isAlive: tank.isAlive,
-          stats,
-        };
-      }),
-      bullets: this.mirror.bullets.map((bullet) => ({
-        id: bullet.id,
-        owner: bullet.owner,
-        x: bullet.x,
-        y: bullet.y,
-        vx: bullet.vx,
-        vy: bullet.vy,
-        hasBounced: bullet.hasBounced,
-      })),
-    };
-  }
+  private readonly statsOf = (id: number): DerivedStats => this.roster.get(id) ?? UNKNOWN_STATS;
 
   private kitsOf(message: FfaSnapshotMessage): Kit[] {
     return this.map.kits.map((kit, index) => ({
@@ -250,7 +239,9 @@ export class CrowdBot {
     return { ...tank, heading, turret, vx: Math.cos(heading) * tank.speed, vy: Math.sin(heading) * tank.speed };
   }
 
-  private onSnapshot(message: FfaSnapshotMessage): InputMessage | null {
+  // Снимок в историю, без решения: обидчики копятся до следующего decide. Подбит или бой не идёт — бот сразу уходит
+  // с поля: решать нечего, а пропущенный ход после возрождения не повторяет команду прошлой жизни.
+  absorb(message: FfaSnapshotMessage, frame: Frame): void {
     this.counters.snapshots++;
     this.unconfirmed = this.unconfirmed.filter((entry) => entry.seq > message.ackSeq);
     if (this.lastGameTick !== null && message.gameTick > this.lastGameTick + 1) {
@@ -258,23 +249,37 @@ export class CrowdBot {
     }
     this.lastGameTick = message.gameTick;
     this.matchTick = message.tick;
-    this.mirror.apply(message.tick, message);
-    const frame = this.frameOf(message);
     this.history.push(frame);
     if (this.history.length > this.profile.reactionTicks + 1) {
       this.history.shift();
     }
     const myId = this.playerId;
+    let attackers: number[] = [];
+    if (myId !== null && this.zonePlan !== null) {
+      attackers = this.attackersOf(message, this.withPredictedSelf(frame, myId), myId);
+    }
+    if (this.phase !== FfaPhase.Fight || message.self.state !== 'alive') {
+      this.latest = null;
+      this.attackers = [];
+      this.leaveField();
+      return;
+    }
+    this.latest = { message, frame };
+    this.attackers.push(...attackers);
+  }
+
+  // Решение по последнему принятому снимку; paths — разрешение на поиск пути на этом ходу.
+  decide(paths: PathAllowance = UNLIMITED_PATHS): InputMessage | null {
+    const latest = this.latest;
+    const attackers = this.attackers;
+    this.latest = null;
+    this.attackers = [];
+    const myId = this.playerId;
     const plan = this.zonePlan;
-    if (myId === null || plan === null) {
+    if (latest === null || myId === null || plan === null) {
       return null;
     }
-    const fresh: Frame = {
-      ...frame,
-      tanks: frame.tanks.map((tank) => (tank.id === myId ? this.predictedSelf(tank) : tank)),
-    };
-    const attackers = this.attackersOf(message, fresh, myId);
-    const isFighting = this.phase === FfaPhase.Fight && message.self.state === 'alive';
+    const { message, frame } = latest;
     // Пока истории меньше задержки реакции — самый старый из имеющихся снимков.
     let delayed = frame;
     for (const oldest of this.history.slice(0, 1)) {
@@ -282,16 +287,15 @@ export class CrowdBot {
     }
     const view = crowdView({
       myId,
-      fresh,
+      fresh: this.withPredictedSelf(frame, myId),
       delayed,
       map: this.map,
       kits: this.kitsOf(message),
       zone: { x: this.map.width / 2, y: this.map.height / 2, radius: zoneRadiusAt(plan, message.tick * DT) },
       attackers,
     });
-    if (!isFighting || view === null) {
-      this.isOnField = false;
-      this.targeting.release();
+    if (view === null) {
+      this.leaveField();
       return null;
     }
     if (!this.isOnField) {
@@ -302,9 +306,32 @@ export class CrowdBot {
     this.counters.visibleSamples++;
     this.counters.visibleMax = Math.max(this.counters.visibleMax, view.bullets.length);
     const target: CrowdTank | null = this.targeting.pick(view, this.gameId);
+    const action = this.brain.tick(view, target, paths);
+    this.lastAction = action;
+    return this.send(action);
+  }
+
+  // Ход пропущен: прошлая команда ещё раз, но без выстрела — бот не видел, куда смотрит башня.
+  repeat(): InputMessage | null {
+    if (this.lastAction === null) {
+      return null;
+    }
+    return this.send({ ...this.lastAction, isFiring: false });
+  }
+
+  private send(action: Action): InputMessage {
     this.seq++;
-    const action = this.brain.tick(view, target);
     this.unconfirmed.push({ seq: this.seq, action });
     return { type: MessageType.Input, seq: this.seq, action };
+  }
+
+  private withPredictedSelf(frame: Frame, myId: number): Frame {
+    return { ...frame, tanks: frame.tanks.map((tank) => (tank.id === myId ? this.predictedSelf(tank) : tank)) };
+  }
+
+  private leaveField(): void {
+    this.isOnField = false;
+    this.lastAction = null;
+    this.targeting.release();
   }
 }

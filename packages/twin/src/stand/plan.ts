@@ -12,7 +12,7 @@ const GAME_ID_PREFIX = 'T';
 const LEVEL_DIGITS = 2;
 const GAME_DIGITS = 4;
 export const DEFAULT_ROUNDS = 1000;
-// Уровни 1–2 правило выборки профиля отсекает — у Димы их раунды не считаются, у двойника тоже.
+// Уровни 1–2 правило выборки профиля отсекает — у игрока их раунды не считаются, у двойника тоже.
 const MIN_STAND_LEVEL = 3;
 export const STAND_LEVELS: readonly BotLevel[] = BOT_LEVELS.filter((level) => level >= MIN_STAND_LEVEL);
 
@@ -80,13 +80,13 @@ function allConditions(reference: TwinReference): Condition[] {
   return merged;
 }
 
-// Условия уровня в долях раундов Димы; уровень без раундов с условиями — доли всей выборки.
+// Условия уровня в долях раундов игрока; уровень без раундов с условиями — доли всей выборки.
 function levelConditions(reference: TwinReference, level: BotLevel): Condition[] {
   const own = reference.main.conditions[String(level)]?.conditions ?? [];
   return own.length > 0 ? own : allConditions(reference);
 }
 
-// Длины игр Димы на уровне по порядку; уровень без его игр — длины всех игр выборки.
+// Длины игр игрока на уровне по порядку; уровень без его игр — длины всех игр выборки.
 function gameLengths(reference: TwinReference, level: BotLevel): number[] {
   const own = reference.main.conditions[String(level)]?.gameRounds ?? [];
   if (own.length > 0) {
@@ -99,7 +99,7 @@ function gameLengths(reference: TwinReference, level: BotLevel): number[] {
   return all;
 }
 
-// Длины пар игр уровня: длины игр Димы по кругу, пока раундов не наберётся rounds.
+// Длины пар игр уровня: длины игр игрока по кругу, пока раундов не наберётся rounds.
 export function pairLengths(reference: TwinReference, level: BotLevel, rounds: number): number[] {
   const lengths = gameLengths(reference, level);
   const pairs: number[] = [];
@@ -144,8 +144,8 @@ function mixRoundsOf(remaining: number, length: number, side: number): number {
   return side === 0 ? Math.ceil(pairMix / SIDES_PER_PAIR) : Math.floor(pairMix / SIDES_PER_PAIR);
 }
 
-// Раскладка: на уровне — пары игр с обеих сторон длиной в игры Димы этого уровня, пока не наберётся roundsOf;
-// условия — парами в долях раундов Димы. Сиды — от общего сида, профиля, уровня и номера игры или раунда на
+// Раскладка: на уровне — пары игр с обеих сторон длиной в игры игрока этого уровня, пока не наберётся roundsOf;
+// условия — парами в долях раундов игрока. Сиды — от общего сида, профиля, уровня и номера игры или раунда на
 // уровне, поэтому исход не зависит от числа потоков.
 export function standPlan(reference: TwinReference, options: PlanOptions): GamePlan[] {
   const games: GamePlan[] = [];
@@ -189,7 +189,7 @@ export function standPlan(reference: TwinReference, options: PlanOptions): GameP
   return games;
 }
 
-// Раунды Димы по уровням главного окна — набор соперников калибровки и смеси уровней проверки.
+// Раунды игрока по уровням главного окна — набор соперников калибровки и смеси уровней проверки.
 export function referenceRounds(reference: TwinReference): Map<BotLevel, number> {
   const rounds = new Map<BotLevel, number>();
   for (const [level, conditions] of Object.entries(reference.main.conditions)) {
@@ -199,7 +199,7 @@ export function referenceRounds(reference: TwinReference): Map<BotLevel, number>
 }
 
 // Раскладка проверки: на каждом уровне не меньше roundsPerLevel раундов целыми парами игр; смесь уровней для
-// метрик поведения — в долях раундов Димы, столько раз, сколько помещается в раунды каждого уровня.
+// метрик поведения — в долях раундов игрока, столько раз, сколько помещается в раунды каждого уровня.
 export function checkPlan(
   reference: TwinReference,
   levels: readonly BotLevel[],

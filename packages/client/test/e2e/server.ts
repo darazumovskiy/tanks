@@ -9,6 +9,7 @@ const ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
 const SERVER_ENTRY = `${ROOT}/packages/server/dist/main.js`;
 const STATIC_ROOT = `${ROOT}/packages/client/dist`;
 const START_TIMEOUT_MS = 10_000;
+const STOP_TIMEOUT_MS = 5_000;
 const PORT_LINE = /tanks server on \S*:(\d+)/;
 
 // Окружение разработчика не меняет страницы: установщик Android из `APK_PATH` добавил бы на главную код со ссылкой
@@ -17,6 +18,20 @@ function inheritedEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.APK_PATH;
   return env;
+}
+
+// Процесс, не вышедший за STOP_TIMEOUT_MS после мягкого сигнала, убивается: зависшая уборка не держит тест.
+export async function stopChild(child: ChildProcess, signal: NodeJS.Signals): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  const exited = once(child, 'exit');
+  child.kill(signal);
+  const timer = setTimeout(() => {
+    child.kill('SIGKILL');
+  }, STOP_TIMEOUT_MS);
+  await exited;
+  clearTimeout(timer);
 }
 
 // Собранный игровой сервер как отдельный процесс — тот же бинарник, что едет на боевую машину.
@@ -77,8 +92,7 @@ export class GameServer {
       return;
     }
     this.child = null;
-    child.kill('SIGTERM');
-    await once(child, 'exit');
+    await stopChild(child, 'SIGTERM');
   }
 
   // Выкладка: процесс останавливается и поднимается на том же порту, клиенты должны вернуться сами.

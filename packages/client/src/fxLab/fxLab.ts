@@ -11,7 +11,7 @@ import { summarizeStyle, withParam } from './styleParams.js';
 import { roundById, type StyleRound, type StyleVariant } from './variants.js';
 
 // Лаборатория эффектов (`/?lab=fx`): сцена × вариант стиля × экран × момент времени настоящим рендером, без
-// сервера и случайности. `?view=review` — страница просмотра раунда для Димы.
+// сервера и случайности. `?view=review` — страница просмотра раунда для оператора.
 
 const MAX_TIME_S = 4;
 const TIME_STEP_S = 0.05;

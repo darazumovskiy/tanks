@@ -16,9 +16,10 @@ import {
   FFA_JOURNAL,
   FFA_LEAVE_IDLE,
   FFA_LEAVE_OFFLINE,
+  FFA_LEAVE_YIELD,
   formatJournalActions,
+  formatJournalJoin,
   formatJournalRoster,
-  formatJournalStats,
   formatJournalSum,
   isJournalSumTick,
   replayFfaJournal,
@@ -38,10 +39,48 @@ const ROSTER: FfaJournalPlayer[] = [
 const LATE_STATS: Stats = { armor: 4, engine: 4, gun: 1, reload: 1 };
 const FIGHT_START_TICK = 3;
 const COUNTDOWN_LEAVE = { tick: 2, id: 6 };
-const LATE_JOIN = { tick: 50, id: 7 };
-const OFFLINE_LEAVE = { tick: 100, id: 2 };
 const SILENT = { from: 120, to: 160, id: 3 };
-const IDLE_LEAVE = { tick: 200, id: 4 };
+
+interface Leave {
+  tick: number;
+  id: number;
+  reason: string;
+}
+
+interface Scenario {
+  roster: FfaJournalPlayer[];
+  seconds: number;
+  joins: { tick: number; player: FfaJournalPlayer }[];
+  leaves: Leave[];
+  // Входят на первом тике финала.
+  finalJoins: FfaJournalPlayer[];
+}
+
+const PLAIN: Scenario = {
+  roster: ROSTER,
+  seconds: MATCH_SECONDS,
+  joins: [{ tick: 50, player: { id: 7, stats: LATE_STATS } }],
+  leaves: [
+    { tick: 100, id: 2, reason: FFA_LEAVE_OFFLINE },
+    { tick: 200, id: 4, reason: FFA_LEAVE_IDLE },
+  ],
+  finalJoins: [],
+};
+
+// Чётные номера — боты; бот входит посреди боя и уступает место, в финал входят человек и бот.
+const WITH_BOTS: Scenario = {
+  roster: ROSTER.map((entry) => ({ ...entry, isBot: entry.id % 2 === 0 })),
+  seconds: 60,
+  joins: [{ tick: 50, player: { id: 8, stats: LATE_STATS, isBot: true } }],
+  leaves: [
+    { tick: 100, id: 2, reason: FFA_LEAVE_YIELD },
+    { tick: 200, id: 1, reason: FFA_LEAVE_IDLE },
+  ],
+  finalJoins: [
+    { id: 9, stats: LATE_STATS },
+    { id: 10, stats: LATE_STATS, isBot: true },
+  ],
+};
 
 function line(gameTick: number, text: string, source = 'S'): string {
   return `00:00:00.000 ${source} gt=${String(gameTick)} tc=00:00 ${text}`;
@@ -69,52 +108,73 @@ interface Written {
   match: FfaMatch;
 }
 
-// Пишет журнал так же, как сервер общей игры: выход по обрыву и вход — до шага, команды при смене, сверка после
+function leaveNow(lines: string[], match: FfaMatch, present: Set<number>, gameTick: number, leave: Leave): void {
+  lines.push(line(gameTick, `${FFA_JOURNAL.leave} id=${String(leave.id)} reason=${leave.reason}`));
+  leaveFfaMatch(match, leave.id);
+  present.delete(leave.id);
+}
+
+// Вход в игру пишется в том же тике до входа в матч, как у серверного бота: прогон не должен шагнуть на нём.
+function joinNow(
+  lines: string[],
+  match: FfaMatch,
+  present: Set<number>,
+  gameTick: number,
+  player: FfaJournalPlayer,
+): void {
+  lines.push(
+    line(gameTick, `join id=${String(player.id)} nick=#${String(player.id)} bot=${player.isBot === true ? '1' : '0'}`),
+  );
+  lines.push(line(gameTick, formatJournalJoin(player)));
+  joinFfaMatch(match, { ...player, name: `#${String(player.id)}` });
+  present.add(player.id);
+}
+
+// Пишет журнал так же, как сервер общей игры: выходы кроме idle и входы — до шага, команды при смене, сверка после
 // шага, выход за бездействие — после сверки. firstTick — тик игры, с которого начинается матч.
-function writeMatch(index: number, firstTick: number, endTick: number | null): Written {
+function writeMatch(index: number, firstTick: number, endTick: number | null, scenario: Scenario = PLAIN): Written {
   const random = lcg(SEED + index);
+  const { roster } = scenario;
   const lines = [
     line(
       firstTick,
-      `${FFA_JOURNAL.matchStart} idx=${String(index)} players=${String(ROSTER.length)} seed=${String(SEED)} dur=${String(MATCH_SECONDS)} roster=${formatJournalRoster(ROSTER)}`,
+      `${FFA_JOURNAL.matchStart} idx=${String(index)} players=${String(roster.length)} seed=${String(SEED)} dur=${String(scenario.seconds)} roster=${formatJournalRoster(roster)}`,
     ),
   ];
   const map = ffaMap(10);
   const match = createFfaMatch(
     map,
-    ROSTER.map((entry) => ({ ...entry, name: `#${String(entry.id)}` })),
+    roster.map((entry) => ({ ...entry, name: `#${String(entry.id)}` })),
     SEED,
     { wallSlidePercent: 30 },
-    MATCH_SECONDS,
+    scenario.seconds,
   );
-  const present = new Set(ROSTER.map((entry) => entry.id));
-  lines.push(
-    line(
-      firstTick + COUNTDOWN_LEAVE.tick,
-      `${FFA_JOURNAL.leave} id=${String(COUNTDOWN_LEAVE.id)} reason=${FFA_LEAVE_OFFLINE}`,
-    ),
-  );
-  leaveFfaMatch(match, COUNTDOWN_LEAVE.id);
-  present.delete(COUNTDOWN_LEAVE.id);
+  const present = new Set(roster.map((entry) => entry.id));
+  leaveNow(lines, match, present, firstTick + COUNTDOWN_LEAVE.tick, { ...COUNTDOWN_LEAVE, reason: FFA_LEAVE_OFFLINE });
   lines.push(line(firstTick + FIGHT_START_TICK, `${FFA_JOURNAL.fightStart} idx=${String(index)}`));
   let previous = new Map<number, Action>();
   const held = new Map<number, Action>();
+  let hasFinalJoins = false;
   for (let tick = FIGHT_START_TICK + 1; !match.isOver; tick++) {
     const gameTick = firstTick + tick;
     if (endTick !== null && gameTick > endTick) {
       break;
     }
-    if (tick === OFFLINE_LEAVE.tick) {
-      lines.push(line(gameTick, `${FFA_JOURNAL.leave} id=${String(OFFLINE_LEAVE.id)} reason=${FFA_LEAVE_OFFLINE}`));
-      leaveFfaMatch(match, OFFLINE_LEAVE.id);
-      present.delete(OFFLINE_LEAVE.id);
+    for (const leave of scenario.leaves) {
+      if (leave.tick === tick && leave.reason !== FFA_LEAVE_IDLE) {
+        leaveNow(lines, match, present, gameTick, leave);
+      }
     }
-    if (tick === LATE_JOIN.tick) {
-      lines.push(
-        line(gameTick, `${FFA_JOURNAL.join} id=${String(LATE_JOIN.id)} stats=${formatJournalStats(LATE_STATS)}`),
-      );
-      joinFfaMatch(match, { id: LATE_JOIN.id, name: 'поздний', stats: LATE_STATS });
-      present.add(LATE_JOIN.id);
+    for (const join of scenario.joins) {
+      if (join.tick === tick) {
+        joinNow(lines, match, present, gameTick, join.player);
+      }
+    }
+    if (match.isSuddenDeath && !hasFinalJoins) {
+      for (const player of scenario.finalJoins) {
+        joinNow(lines, match, present, gameTick, player);
+      }
+      hasFinalJoins = true;
     }
     const actions = new Map<number, Action>();
     for (const id of present) {
@@ -136,10 +196,10 @@ function writeMatch(index: number, firstTick: number, endTick: number | null): W
     if (isJournalSumTick(match)) {
       lines.push(line(gameTick, formatJournalSum(match)));
     }
-    if (tick === IDLE_LEAVE.tick) {
-      lines.push(line(gameTick, `${FFA_JOURNAL.leave} id=${String(IDLE_LEAVE.id)} reason=${FFA_LEAVE_IDLE}`));
-      leaveFfaMatch(match, IDLE_LEAVE.id);
-      present.delete(IDLE_LEAVE.id);
+    for (const leave of scenario.leaves) {
+      if (leave.tick === tick && leave.reason === FFA_LEAVE_IDLE) {
+        leaveNow(lines, match, present, gameTick, leave);
+      }
     }
     if (events.some((event) => event.type === 'matchOver')) {
       lines.push(line(gameTick, `${FFA_JOURNAL.matchOver} idx=${String(index)}`));
@@ -179,6 +239,44 @@ describe('журнал боя толпы', () => {
     expect(result?.ticks).toBe(written.match.world.tick);
     expect(worldDigest(result?.match.world ?? written.match.world)).toBe(worldDigest(written.match.world));
     expect(result?.match.players.map((player) => player.id).sort()).toEqual([1, 3, 5, 7]);
+  });
+
+  it('состав и вход с отметкой бота: у бота признак, без отметки — человек', () => {
+    expect(
+      formatJournalRoster([
+        { id: 3, stats: LATE_STATS },
+        { id: 4, stats: LATE_STATS, isBot: true },
+      ]),
+    ).toBe('3:4411,4:4411:b');
+    expect(formatJournalJoin({ id: 8, stats: LATE_STATS, isBot: true })).toBe(
+      `${FFA_JOURNAL.join} id=8 stats=4411 bot=1`,
+    );
+    expect(formatJournalJoin({ id: 9, stats: LATE_STATS })).toBe(`${FFA_JOURNAL.join} id=9 stats=4411`);
+    const written = writeMatch(1, 10, 120, WITH_BOTS);
+    const [result] = replayFfaJournal([GAME_START, ...written.lines]).matches;
+    const kinds = result?.match.players.map((player) => [player.id, player.isBot]);
+    expect(kinds).toEqual([
+      [1, false],
+      [3, false],
+      [4, true],
+      [5, false],
+      [8, true],
+    ]);
+  });
+
+  it('матч с ботами, выходом yield и входом в финал прогоняется без расхождений; без отметок ботов — расходится', () => {
+    const written = writeMatch(1, 10, null, WITH_BOTS);
+    const botsOut = written.match.players.filter((player) => player.isBot && player.state === 'spectator');
+    expect(botsOut.length).toBeGreaterThan(0);
+    expect(written.match.players.find((player) => player.id === 9)?.hasPlayed).toBe(true);
+    const [result] = replayFfaJournal([GAME_START, ...written.lines]).matches;
+    expect(result?.isComplete).toBe(true);
+    expect(result?.mismatches).toEqual([]);
+    expect(result?.sums).toBe(Math.ceil(written.match.world.tick / TICK_RATE));
+
+    const unmarked = written.lines.map((text) => text.replace(/:b(?=,|$)/g, '').replace(/ bot=1$/, ''));
+    const [blind] = replayFfaJournal([GAME_START, ...unmarked]).matches;
+    expect(blind?.mismatches.length).toBeGreaterThan(0);
   });
 
   it('прогон отдаёт каждый шаг: тики игры подряд, события шага', () => {

@@ -31,8 +31,9 @@ function statusText(model: FfaLobbyModel): string {
 }
 
 function hintText(minimum: number): string {
+  const gathered = plural(minimum, 'Набрался', 'Набралось', 'Набралось');
   const tanks = plural(minimum, 'танк', 'танка', 'танков');
-  return `Стартуем, когда наберётся ${String(minimum)} ${tanks} и новые перестанут подтягиваться. Набилось до отказа — сразу.`;
+  return `${gathered} ${String(minimum)} ${tanks} — через пять секунд в бой. Опоздавшие влетят прямо в драку.`;
 }
 
 function nickChip(nick: FfaRosterNick): HTMLSpanElement {

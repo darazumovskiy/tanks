@@ -1,11 +1,14 @@
 import { Capacitor } from '@capacitor/core';
-import { DEFAULT_STATS, FFA_SIZES, STAT_KEYS, STAT_POINTS, type FfaSize, type Stats } from '@tanks/shared/engine';
+import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
 import { BOT_LEVEL_INFO, BOT_LEVELS, botRoomCode, type BotLevel } from '@tanks/shared/protocol';
 import QRCode from 'qrcode';
 import { resolveAdminMode } from './admin.js';
 import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
+import { bindImmersive } from './immersive.js';
 import { readClientInfo } from './clientInfo.js';
+import { mountDropdown, type DropdownElements } from './dropdown.js';
 import { mountFfaEntry } from './ffaEntry.js';
+import { ffaRouteOf, type FfaRoute } from './ffaRoute.js';
 import { fetchHomeHtml, reloadOnNewBuild } from './freshBuild.js';
 import { Game } from './game.js';
 import { showFrameStand } from './frameStand/stand.js';
@@ -24,12 +27,7 @@ const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const APK_ROUTE = '/app/tanks.apk';
 const SETTINGS_KEY_CODE = 'KeyO';
 const AUTOFIRE_ACTIVE_CLASS = 'is-active';
-const LEVEL_SELECTED_CLASS = 'is-selected';
 const LEVEL_INFO_OPEN_CLASS = 'is-open';
-const LEVEL_LIST_OPEN_CLASS = 'is-open';
-// `/ffa` — игра на 30 мест, куда ведёт кнопка с главной.
-const FFA_DEFAULT_SIZE: FfaSize = 30;
-const FFA_ROUTE = /^\/ffa(?:\/(\d+))?$/;
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 // Один на страницу: ошибки главной и боя уходят с одинаковым описанием клиента.
 const telemetry = new Telemetry(readClientInfo());
@@ -67,11 +65,6 @@ function parseBotLevel(raw: string | null): BotLevel {
   return known ?? DEFAULT_BOT_LEVEL;
 }
 
-interface LevelCard {
-  level: BotLevel;
-  card: HTMLElement;
-}
-
 // Номер, имя и короткое описание уровня — одинаково в строке списка и на кнопке выбранного.
 function levelContent(level: BotLevel): HTMLElement[] {
   const info = BOT_LEVEL_INFO[level];
@@ -90,76 +83,36 @@ function levelContent(level: BotLevel): HTMLElement[] {
   return [badge, body];
 }
 
-function buildLevelCard(level: BotLevel): LevelCard {
-  const card = document.createElement('button');
-  card.type = 'button';
-  card.className = 'level';
-  card.dataset.level = String(level);
-  card.setAttribute('role', 'option');
-  card.append(...levelContent(level));
-  return { level, card };
-}
-
-interface LevelPickerElements {
-  toggle: HTMLButtonElement;
-  list: HTMLElement;
+interface LevelPickerElements extends DropdownElements {
   hint: HTMLElement;
   info: HTMLButtonElement;
 }
 
-// Выпадающий список уровней своего оформления: кнопка показывает выбранный уровень, панель — все десять.
-// Список — из общего с сервером контракта; выбранный уровень запоминается на устройстве.
+// Список уровней — из общего с сервером контракта; выбранный уровень запоминается на устройстве.
 function mountLevelPicker(elements: LevelPickerElements): { selected: () => BotLevel } {
-  const cards = BOT_LEVELS.map(buildLevelCard);
-  let selected = parseBotLevel(localStorage.getItem(BOT_LEVEL_KEY));
-  const setOpen = (isOpen: boolean): void => {
-    elements.list.hidden = !isOpen;
-    elements.toggle.setAttribute('aria-expanded', String(isOpen));
-    elements.toggle.classList.toggle(LEVEL_LIST_OPEN_CLASS, isOpen);
+  const initial = parseBotLevel(localStorage.getItem(BOT_LEVEL_KEY));
+  const showSummary = (level: BotLevel): void => {
+    elements.hint.textContent = BOT_LEVEL_INFO[level].summary;
   };
-  const render = (): void => {
-    for (const { level, card } of cards) {
-      const isSelected = level === selected;
-      card.classList.toggle(LEVEL_SELECTED_CLASS, isSelected);
-      card.setAttribute('aria-selected', String(isSelected));
-    }
-    const chevron = document.createElement('span');
-    chevron.className = 'dropdown-chevron';
-    chevron.textContent = '▾';
-    elements.toggle.replaceChildren(...levelContent(selected), chevron);
-    elements.hint.textContent = BOT_LEVEL_INFO[selected].summary;
-  };
-  for (const { level, card } of cards) {
-    card.addEventListener('click', () => {
-      selected = level;
+  const picker = mountDropdown(elements, {
+    values: BOT_LEVELS,
+    selected: initial,
+    optionClass: 'level',
+    dataKey: 'level',
+    optionContent: levelContent,
+    toggleContent: levelContent,
+    onSelect: (level) => {
       localStorage.setItem(BOT_LEVEL_KEY, String(level));
-      render();
-      setOpen(false);
-      elements.toggle.focus();
-    });
-    elements.list.append(card);
-  }
-  elements.toggle.addEventListener('click', () => {
-    setOpen(elements.list.hidden);
+      showSummary(level);
+    },
   });
-  document.addEventListener('pointerdown', (event) => {
-    const isInside = event.target instanceof Node && elements.list.parentElement?.contains(event.target) === true;
-    if (!isInside) {
-      setOpen(false);
-    }
-  });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      setOpen(false);
-    }
-  });
+  showSummary(initial);
   elements.info.addEventListener('click', () => {
     elements.hint.hidden = !elements.hint.hidden;
     elements.info.classList.toggle(LEVEL_INFO_OPEN_CLASS, !elements.hint.hidden);
     elements.info.setAttribute('aria-expanded', String(!elements.hint.hidden));
   });
-  render();
-  return { selected: () => selected };
+  return picker;
 }
 
 function formatStats(stats: Stats): string {
@@ -195,6 +148,8 @@ function showHome(): void {
       info: byId('ffa-info', HTMLButtonElement),
       hint: byId('ffa-hint', HTMLElement),
       locked: byId('ffa-locked', HTMLElement),
+      sizeToggle: byId('ffa-size-toggle', HTMLButtonElement),
+      sizeList: byId('ffa-sizes', HTMLElement),
     },
     {
       save: () => {
@@ -202,6 +157,7 @@ function showHome(): void {
       },
       navigate: goToFight,
     },
+    localStorage,
   );
   // Старт только с полностью розданными очками: иначе бой нечестный к сопернику с полной раскладкой.
   const picker = mountStatsPicker(
@@ -276,6 +232,27 @@ function bindRotateHint(hint: HTMLElement): void {
   apply();
 }
 
+// Бой, открытый в браузере Android: плашка ведёт в приложение, а оставшимся в браузере касание разворачивает игру.
+function bindAndroidBrowser(): void {
+  if (!isAndroidBrowser(navigator.userAgent, Capacitor.isNativePlatform())) {
+    return;
+  }
+  const banner = byId('open-app', HTMLElement);
+  showOpenInApp(
+    banner,
+    byId('open-app-link', HTMLAnchorElement),
+    byId('open-app-close', HTMLButtonElement),
+    androidIntentUrl(location.href, new URL(APK_ROUTE, location.href).href),
+  );
+  bindImmersive({
+    events: document,
+    root: document.documentElement,
+    orientation: screen.orientation,
+    isFullscreen: () => document.fullscreenElement !== null,
+    isOutside: (target) => !(target instanceof Node && banner.contains(target)),
+  });
+}
+
 function startDuel(roomCode: string): void {
   const nickname = localStorage.getItem(NICKNAME_KEY) ?? '';
   const stats = parseStats(localStorage.getItem(STATS_KEY));
@@ -315,15 +292,7 @@ function startDuel(roomCode: string): void {
     game.toggleAutoFire();
   });
   bindRotateHint(byId('rotate', HTMLElement));
-  if (isAndroidBrowser(navigator.userAgent, Capacitor.isNativePlatform())) {
-    const apkUrl = new URL(APK_ROUTE, location.href).href;
-    showOpenInApp(
-      byId('open-app', HTMLElement),
-      byId('open-app-link', HTMLAnchorElement),
-      byId('open-app-close', HTMLButtonElement),
-      androidIntentUrl(location.href, apkUrl),
-    );
-  }
+  bindAndroidBrowser();
   // Точка доступа для сквозных тестов и отладки из консоли браузера.
   Object.assign(window, { tanksGame: game });
   window.addEventListener('beforeunload', () => {
@@ -331,10 +300,9 @@ function startDuel(roomCode: string): void {
   });
 }
 
-// Общий бой: та же страница боя, что у дуэли, — холст, кнопки поверх и корень интерфейса толпы. Ссылки `/ffa`
-// приложение-оболочка не перехватывает, поэтому баннера «Открыть в приложении» здесь нет.
+// Общий бой: та же страница боя, что у дуэли, — холст, кнопки поверх и корень интерфейса толпы.
 // Код толпы — отдельный кусок сборки: страница дуэли его не грузит.
-async function startFfa(size: FfaSize): Promise<void> {
+async function startFfa(route: FfaRoute): Promise<void> {
   const ffaModule = await import('./ffa/ffaGame.js');
   const canvas = byId('stage', HTMLCanvasElement);
   canvas.hidden = false;
@@ -344,14 +312,14 @@ async function startFfa(size: FfaSize): Promise<void> {
   const autoFireButton = byId('autofire', HTMLButtonElement);
   const autoFire = bindAutoFire(autoFireButton, hasTouch);
   const game = new ffaModule.FfaGame({
-    size,
+    size: route.size,
+    inviteGameId: route.gameId,
     nickname: localStorage.getItem(NICKNAME_KEY) ?? '',
     stats: parseStats(localStorage.getItem(STATS_KEY)),
     canvas,
     hud: byId('ffa-hud', HTMLElement),
     settings: store.value,
     isTouchDevice: hasTouch,
-    isAdmin,
     telemetry,
     onAutoFireChange: autoFire.reflect,
     onFieldControlsChange: (isVisible) => {
@@ -360,7 +328,12 @@ async function startFfa(size: FfaSize): Promise<void> {
   });
   const settingsToggle = byId('settings-toggle', HTMLButtonElement);
   settingsToggle.hidden = false;
-  byId('menu', HTMLAnchorElement).hidden = false;
+  const menu = byId('menu', HTMLAnchorElement);
+  menu.hidden = false;
+  menu.addEventListener('click', (event) => {
+    event.preventDefault();
+    game.leave();
+  });
   // Камера толпы одна — стратегий выбирать не из чего.
   const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store, {
     isTouchDevice: hasTouch,
@@ -376,33 +349,21 @@ async function startFfa(size: FfaSize): Promise<void> {
     game.toggleAutoFire();
   });
   bindRotateHint(byId('rotate', HTMLElement));
+  bindAndroidBrowser();
   Object.assign(window, { tanksGame: game });
   window.addEventListener('beforeunload', () => {
     game.close();
   });
 }
 
-// null — адрес не общего боя или размер не из списка игр.
-function ffaSizeOfPath(pathname: string): FfaSize | null {
-  const match = FFA_ROUTE.exec(pathname);
-  if (match === null) {
-    return null;
-  }
-  const digits = match[1];
-  if (digits === undefined) {
-    return FFA_DEFAULT_SIZE;
-  }
-  return FFA_SIZES.find((size) => String(size) === digits) ?? null;
-}
-
 const duelMatch = /^\/d\/([a-z0-9]{3,16})$/.exec(location.pathname);
-const ffaSize = ffaSizeOfPath(location.pathname);
+const ffaRoute = ffaRouteOf(location.pathname);
 const query = new URLSearchParams(location.search);
 const labKind = query.get('lab');
 if (duelMatch?.[1] !== undefined) {
   startDuel(duelMatch[1]);
-} else if (ffaSize !== null) {
-  void startFfa(ffaSize);
+} else if (ffaRoute !== null) {
+  void startFfa(ffaRoute);
 } else if (labKind === 'camera') {
   showCameraLab(byId('lab', HTMLElement));
 } else if (labKind === 'fx') {

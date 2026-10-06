@@ -14,7 +14,9 @@ import {
 } from '@tanks/shared/engine';
 import {
   ErrorCode,
+  EventFlag,
   FFA_JOURNAL,
+  FfaInviteMiss,
   FfaPhase,
   MessageType,
   PROTOCOL_VERSION,
@@ -51,13 +53,39 @@ const TEST_MAP: FfaMap = {
   ],
 };
 
+// Финал — когда зона накрыла угловые места появления; углы замурованы стенами, поэтому все появляются в центре,
+// куда зона не доходит: в финале никого не ранит зона, гибнут только от снарядов.
+const HUDDLE_MAP: FfaMap = {
+  ...TEST_MAP,
+  name: 'Центр',
+  walls: [
+    { x: 0, y: 0, w: 100, h: 100 },
+    { x: 1500, y: 0, w: 100, h: 100 },
+    { x: 0, y: 800, w: 100, h: 100 },
+    { x: 1500, y: 800, w: 100, h: 100 },
+  ],
+  kits: [],
+  spawnAreas: [
+    { x: 50, y: 50, radius: 20 },
+    { x: 1550, y: 50, radius: 20 },
+    { x: 50, y: 850, radius: 20 },
+    { x: 1550, y: 850, radius: 20 },
+    { x: 700, y: 450, radius: 40 },
+    { x: 900, y: 450, radius: 40 },
+    { x: 800, y: 350, radius: 40 },
+    { x: 800, y: 550, radius: 40 },
+  ],
+};
+
 // Лимит ввода не проверяется: при тике в 1 мс он мешал бы скриптам, которые шлют ввод на каждый снимок.
 // Матч 600 с: при тике 1 мс финал наступает через ~10 с настоящего времени и не вмешивается в сценарии.
+// Игру заполняют сами тесты: серверные боты — в ffaBots.test.ts.
 const FAST: FfaOptions = {
   ...DEFAULT_FFA_OPTIONS,
+  hasServerBots: false,
   countdownTicks: 3,
   resultsTicks: 5,
-  lobbyQuietTicks: 5,
+  lobbyWaitTicks: 5,
   reconnectTicks: 2000,
   idleWarnTicks: 1_000_000,
   idleKickTicks: 2_000_000,
@@ -69,6 +97,7 @@ const FAST: FfaOptions = {
 const SHOOTER: Stats = { armor: 0, engine: 0, gun: 5, reload: 5 };
 const TARGET: Stats = { armor: 0, engine: 5, gun: 0, reload: 5 };
 const AIM_TOLERANCE = 0.02;
+const AWAY_TOLERANCE = 0.3;
 const SCRIPT_TIMEOUT_MS = 20_000;
 const STILL: Action = { throttle: 0, turn: 0, turretTurn: 0, isFiring: false };
 
@@ -102,6 +131,7 @@ interface EnterOptions {
   stats?: Stats;
   token?: string;
   isBot?: boolean;
+  gameId?: string;
 }
 
 async function enter(code = 'ffa10', options: EnterOptions = {}): Promise<Entered> {
@@ -114,6 +144,7 @@ async function enter(code = 'ffa10', options: EnterOptions = {}): Promise<Entere
     PROTOCOL_VERSION,
     options.token ?? '',
     options.isBot ?? false,
+    options.gameId ?? '',
   );
   return { client, welcome: await client.nextOfType(MessageType.FfaWelcome) };
 }
@@ -283,7 +314,7 @@ describe('вход в общую игру', () => {
 
 describe('лобби и подбор', () => {
   it('игра заполнилась — отсчёт сразу; у каждого свой снимок со всеми танками и своим ackSeq', async () => {
-    await startApp({ minimum: { 10: 10, 30: 2, 50: 2 }, lobbyQuietTicks: 1_000_000 });
+    await startApp({ minimum: { 10: 10, 30: 2, 50: 2 }, lobbyWaitTicks: 1_000_000 });
     const players: Entered[] = [];
     for (let i = 0; i < 10; i++) {
       players.push(await enter('ffa10', { nickname: `Игрок ${String(i)}` }));
@@ -310,22 +341,38 @@ describe('лобби и подбор', () => {
     expect(other.ackSeq).toBe(0);
   });
 
-  it('набран минимум — старт после тишины; вход сбрасывает тишину', async () => {
-    const quiet = 300;
-    await startApp({ minimum: { 10: 3, 30: 2, 50: 2 }, lobbyQuietTicks: quiet });
+  it('набран минимум — старт через ожидание; вход после минимума старт не отодвигает', async () => {
+    const wait = 300;
+    await startApp({ minimum: { 10: 3, 30: 2, 50: 2 }, lobbyWaitTicks: wait });
     const a = await enter();
     const below = await waitFor(a.client, MessageType.FfaState, (state) => state.players === 2 || state.players === 1);
     expect(below.ticksLeft).toBeNull();
     await enter();
     await enter();
     const atMinimum = await waitFor(a.client, MessageType.FfaState, (state) => state.players === 3);
-    expect(atMinimum.ticksLeft).toBe(quiet);
+    expect(atMinimum.ticksLeft).toBe(wait);
     await sleep(30);
     await enter();
-    const reset = await waitFor(a.client, MessageType.FfaState, (state) => state.players === 4);
-    expect(reset.ticksLeft).toBe(quiet);
+    const later = await waitFor(a.client, MessageType.FfaState, (state) => state.players === 4);
+    expect(later.ticksLeft).not.toBeNull();
+    expect(later.ticksLeft ?? wait).toBeLessThan(wait);
     const countdown = await waitFor(a.client, MessageType.FfaState, (state) => state.phase === FfaPhase.Countdown);
     expect(countdown.players).toBe(4);
+  });
+
+  it('набран минимум, один ушёл и снова вошёл — ожидание с начала', async () => {
+    const wait = 600;
+    await startApp({ minimum: { 10: 2, 30: 2, 50: 2 }, lobbyWaitTicks: wait, reconnectTicks: 5 });
+    const a = await enter();
+    const b = await enter();
+    await waitFor(a.client, MessageType.FfaState, (state) => state.players === 2);
+    await sleep(50);
+    b.client.close();
+    const alone = await waitFor(a.client, MessageType.FfaState, (state) => state.players === 1);
+    expect(alone.ticksLeft).toBeNull();
+    await enter();
+    const again = await waitFor(a.client, MessageType.FfaState, (state) => state.players === 2);
+    expect(again.ticksLeft).toBe(wait);
   });
 
   it('мест нет — новая игра; вошедший — в ту из открытых, где больше игроков', async () => {
@@ -362,6 +409,83 @@ describe('лобби и подбор', () => {
     await waitFor(witness.client, MessageType.FfaRoster, (roster) => roster.players.length === 2, 10_000);
     const newcomer = await enter();
     expect(newcomer.welcome.gameId).toBe(gameB);
+  }, 30_000);
+});
+
+describe('приглашение друга', () => {
+  async function fillGame(count: number): Promise<Entered[]> {
+    const entered: Entered[] = [];
+    for (let i = 0; i < count; i++) {
+      entered.push(await enter());
+    }
+    return entered;
+  }
+
+  it('в игре позвавшего есть место — друг в ней, хотя подбор выбрал бы другую; без номера — без промаха', async () => {
+    await startApp({ minimum: { 10: 10, 30: 2, 50: 2 }, reconnectTicks: 10 });
+    const full = await fillGame(10);
+    const host = await enter();
+    expect(host.welcome.inviteMiss).toBe(FfaInviteMiss.None);
+    const witness = full[0];
+    if (witness === undefined) {
+      throw new Error('нет игрока');
+    }
+    await drain(witness.client);
+    full[9]?.client.close();
+    await waitFor(witness.client, MessageType.FfaRoster, (roster) => roster.players.length === 9, 10_000);
+
+    const friend = await enter('ffa10', { gameId: host.welcome.gameId });
+    expect(friend.welcome.gameId).toBe(host.welcome.gameId);
+    expect(friend.welcome.inviteMiss).toBe(FfaInviteMiss.None);
+  }, 30_000);
+
+  it('игра позвавшего заполнена людьми — друг в другой игре, промах Full', async () => {
+    await startApp({ minimum: { 10: 10, 30: 2, 50: 2 } });
+    const full = await fillGame(10);
+    const hostGame = full[0]?.welcome.gameId ?? '';
+    const friend = await enter('ffa10', { gameId: hostGame });
+    expect(friend.welcome.gameId).not.toBe(hostGame);
+    expect(friend.welcome.inviteMiss).toBe(FfaInviteMiss.Full);
+  }, 30_000);
+
+  it('игры позвавшего уже нет — друг в новой игре, промах Gone', async () => {
+    const started = await startApp({ reconnectTicks: 20 });
+    const host = await enter();
+    host.client.close();
+    const deadline = Date.now() + 5000;
+    while (started.stats().rooms > 0 && Date.now() < deadline) {
+      await sleep(10);
+    }
+    expect(started.stats().rooms).toBe(0);
+    const friend = await enter('ffa10', { gameId: host.welcome.gameId });
+    expect(friend.welcome.gameId).not.toBe(host.welcome.gameId);
+    expect(friend.welcome.inviteMiss).toBe(FfaInviteMiss.Gone);
+  });
+
+  it('мусорный номер и номер игры другого размера — обычный подбор, промах Gone', async () => {
+    await startApp();
+    const host = await enter('ffa30');
+    const lobby = await enter();
+    const junk = await enter('ffa10', { gameId: 'не-номер!' });
+    expect(junk.welcome.gameId).toBe(lobby.welcome.gameId);
+    expect(junk.welcome.inviteMiss).toBe(FfaInviteMiss.Gone);
+    const otherSize = await enter('ffa10', { gameId: host.welcome.gameId });
+    expect(otherSize.welcome.gameId).toBe(lobby.welcome.gameId);
+    expect(otherSize.welcome.inviteMiss).toBe(FfaInviteMiss.Gone);
+  });
+
+  it('пропуск главнее номера: игрок возвращается на своё место в своей игре', async () => {
+    await startApp({ minimum: { 10: 10, 30: 2, 50: 2 } });
+    const full = await fillGame(10);
+    const own = full[0];
+    const other = await enter();
+    if (own === undefined) {
+      throw new Error('нет игрока');
+    }
+    const back = await enter('ffa10', { token: own.welcome.token, gameId: other.welcome.gameId });
+    expect(back.welcome.gameId).toBe(own.welcome.gameId);
+    expect(back.welcome.playerId).toBe(own.welcome.playerId);
+    expect(back.welcome.inviteMiss).toBe(FfaInviteMiss.None);
   }, 30_000);
 });
 
@@ -472,6 +596,59 @@ describe('бой', () => {
     const lobby = await waitFor(a.client, MessageType.FfaState, (state) => state.phase === FfaPhase.Lobby, 8000);
     expect(lobby.players).toBe(1);
   });
+
+  it('финал: человек, бот 1, бот 2 — бот 1 подбил человека, за него взорвался бот, бот 1 ушёл, пока человек в обломках: матч ждёт человека и кончается, когда он вернулся', async () => {
+    await startApp({ matchSeconds: 200, reconnectTicks: 5, mapFor: () => HUDDLE_MAP }, { tickMs: 2 });
+    const human = await enter('ffa10', { nickname: 'Мишень', stats: TARGET });
+    const bot1 = await enter('ffa10', { nickname: 'Бот 1', stats: SHOOTER, isBot: true });
+    const bot2 = await enter('ffa10', { nickname: 'Бот 2', isBot: true });
+    const humanId = human.welcome.playerId;
+    const bot1Id = bot1.welcome.playerId;
+    await waitFor(
+      human.client,
+      MessageType.FfaSnapshot,
+      (snapshot) => snapshot.events.some((event) => event.kind === 'suddenDeath'),
+      SCRIPT_TIMEOUT_MS,
+    );
+    await drain(bot1.client);
+    const events: FfaSnapshotEvent[] = [];
+    const deadline = Date.now() + SCRIPT_TIMEOUT_MS;
+    while (!events.some((event) => event.kind === 'death' && event.tank === humanId) && Date.now() < deadline) {
+      const fresh = await freshSnapshots(bot1.client);
+      events.push(...fresh.flatMap((snapshot) => snapshot.events));
+      const latest = fresh[fresh.length - 1];
+      if (latest !== undefined) {
+        hunt(bot1.client, latest, bot1Id, humanId);
+      }
+    }
+    bot1.client.close();
+    // Шальной снаряд бота 1 мог подбить бота 2 раньше человека — тогда за человека взрывается сам бот 1.
+    const humanDeathAt = events.findIndex((event) => event.kind === 'death' && event.tank === humanId);
+    const isBot2DownFirst = events
+      .slice(0, humanDeathAt)
+      .some((event) => event.kind === 'death' && event.tank === bot2.welcome.playerId);
+    const outTanks = events
+      .filter((event) => event.kind === 'death' && (event.flags & EventFlag.Out) !== 0)
+      .map((event) => event.tank);
+    expect(outTanks).toEqual([isBot2DownFirst ? bot1Id : bot2.welcome.playerId]);
+
+    const seen = { isDown: false, isBack: false, bot1LeftWhileDown: false, endedWhileDown: false };
+    for (;;) {
+      const message = await human.client.next(SCRIPT_TIMEOUT_MS);
+      if (message.type === MessageType.FfaSnapshot) {
+        seen.isBack ||= seen.isDown && message.self.state === 'alive';
+        seen.isDown ||= message.self.state !== 'alive';
+      }
+      if (message.type === MessageType.FfaRoster && !message.players.some((player) => player.id === bot1Id)) {
+        seen.bot1LeftWhileDown ||= seen.isDown && !seen.isBack;
+      }
+      if (message.type === MessageType.FfaState && message.phase === FfaPhase.Results) {
+        seen.endedWhileDown = !seen.isBack;
+        break;
+      }
+    }
+    expect(seen).toEqual({ isDown: true, isBack: true, bot1LeftWhileDown: true, endedWhileDown: false });
+  }, 30_000);
 });
 
 describe('вход посреди матча', () => {
@@ -483,7 +660,11 @@ describe('вход посреди матча', () => {
       const me = tankOf(snapshot, a.welcome.playerId);
       const enemy = tankOf(snapshot, b.welcome.playerId);
       if (me !== undefined && enemy !== undefined) {
-        a.client.input(aimAt(me, { x: 2 * me.x - enemy.x, y: 2 * me.y - enemy.y }));
+        // Под нагрузкой башня по запаздывающим снимкам качается вокруг точной наводки: стреляет, как только смотрит
+        // примерно от соперника, — снаряду нужно только лететь, а не попасть.
+        const away = normalizeAngle(Math.atan2(me.y - enemy.y, me.x - enemy.x) - me.turret);
+        const aim = aimAt(me, { x: 2 * me.x - enemy.x, y: 2 * me.y - enemy.y });
+        a.client.input({ ...aim, isFiring: Math.abs(away) < AWAY_TOLERANCE });
         a.client.takeQueued();
       }
       return snapshot.births.length > 0;
@@ -612,6 +793,82 @@ describe('обрыв и возврат', () => {
     } finally {
       clearInterval(keepAlive);
     }
+  });
+
+  it('выход кнопкой: танк стоит, команды после Leave не применяются; убран через окно выхода, а не обрыва', async () => {
+    await startApp({ reconnectTicks: 1_000_000, quitTicks: 300 });
+    const [a, b] = await fightPair();
+    const id = a.welcome.playerId;
+    for (let i = 0; i < 20; i++) {
+      a.client.input({ throttle: 1 });
+    }
+    await waitFor(b.client, MessageType.FfaSnapshot, (snapshot) => (tankOf(snapshot, id)?.speed ?? 0) > 50);
+    a.client.send({ type: MessageType.Leave });
+    await sleep(30);
+    await drain(b.client);
+    const before = tankOf(await b.client.nextOfType(MessageType.FfaSnapshot), id);
+    for (let i = 0; i < 40; i++) {
+      a.client.input({ turn: 1, turretTurn: 1 });
+      await sleep(2);
+    }
+    await drain(b.client);
+    const after = tankOf(await b.client.nextOfType(MessageType.FfaSnapshot), id);
+    expect(after).toMatchObject({ heading: before?.heading, turret: before?.turret });
+    a.client.close();
+    const roster = await waitFor(b.client, MessageType.FfaRoster, (message) => message.players.length === 1, 10_000);
+    expect(roster.players[0]?.id).toBe(b.welcome.playerId);
+  });
+
+  it('выход кнопкой и возврат в окне — то же место; следующий обрыв держит место полное окно', async () => {
+    await startApp({ reconnectTicks: 1_000_000, quitTicks: 400 });
+    const [a, b] = await fightPair();
+    a.client.send({ type: MessageType.Leave });
+    a.client.close();
+    const back = await enter('ffa10', { token: a.welcome.token });
+    expect(back.welcome).toMatchObject({ playerId: a.welcome.playerId, gameId: a.welcome.gameId });
+    await drain(b.client);
+    back.client.close();
+    await sleep(800);
+    const snapshot = await b.client.nextOfType(MessageType.FfaSnapshot);
+    expect(tankOf(snapshot, a.welcome.playerId)).toBeDefined();
+  });
+
+  it('выход кнопкой в лобби — место отпущено сразу: игрок не держит минимум, старт снят', async () => {
+    await startApp({ minimum: { 10: 2, 30: 2, 50: 2 }, lobbyWaitTicks: 1_000_000, quitTicks: 1_000_000 });
+    const a = await enter();
+    const b = await enter();
+    const ready = await waitFor(a.client, MessageType.FfaState, (state) => state.players === 2);
+    expect(ready.ticksLeft).not.toBeNull();
+    b.client.send({ type: MessageType.Leave });
+    const alone = await waitFor(a.client, MessageType.FfaState, (state) => state.players === 1, 2000);
+    expect(alone).toMatchObject({ phase: FfaPhase.Lobby, ticksLeft: null });
+  });
+
+  it('выход кнопкой на итогах — место отпущено сразу: следующий матч без ушедшего', async () => {
+    await startApp({ matchSeconds: 1, resultsTicks: 300, quitTicks: 1_000_000 });
+    const [a, b] = await fightPair();
+    await waitFor(a.client, MessageType.FfaState, (state) => state.phase === FfaPhase.Results, 10_000);
+    b.client.send({ type: MessageType.Leave });
+    const roster = await waitFor(a.client, MessageType.FfaRoster, (message) => message.players.length === 1, 2000);
+    expect(roster.players[0]?.id).toBe(a.welcome.playerId);
+    const lobby = await waitFor(a.client, MessageType.FfaState, (state) => state.phase === FfaPhase.Lobby, 5000);
+    expect(lobby.players).toBe(1);
+  });
+
+  it('Leave до входа и повторный Leave — без последствий', async () => {
+    await startApp();
+    const stranger = await TestClient.connect(port);
+    clients.push(stranger);
+    stranger.send({ type: MessageType.Leave });
+    expect(await stranger.closed(200)).toBe(false);
+    const [a, b] = await fightPair();
+    a.client.send({ type: MessageType.Leave });
+    a.client.send({ type: MessageType.Leave });
+    a.client.send({ type: MessageType.Ping, clientTime: 1 });
+    await expect(a.client.nextOfType(MessageType.Pong, 300)).rejects.toThrow();
+    await drain(b.client);
+    const snapshot = await b.client.nextOfType(MessageType.FfaSnapshot);
+    expect(tankOf(snapshot, a.welcome.playerId)).toBeDefined();
   });
 
   it('чужой пропуск — новый игрок', async () => {
@@ -827,16 +1084,26 @@ describe('журнал боя толпы', () => {
     expect(brokenReplay?.mismatches.length).toBeGreaterThan(0);
   }, 30_000);
 
-  it('выход за бездействие и по обрыву дольше окна: прогон совпадает на всех сверках', async () => {
+  it('выход за бездействие, по обрыву дольше окна и кнопкой: прогон совпадает на всех сверках', async () => {
     await startApp(
-      { matchSeconds: 10, idleWarnTicks: 20, idleKickTicks: 40, reconnectTicks: 30, lobbyQuietTicks: 30 },
+      {
+        matchSeconds: 10,
+        idleWarnTicks: 20,
+        idleKickTicks: 40,
+        reconnectTicks: 30,
+        quitTicks: 20,
+        lobbyWaitTicks: 30,
+      },
       { logDir, tickMs: 5 },
     );
     const busy = await enter('ffa10', { nickname: 'Занят' });
     const idle = await enter('ffa10', { nickname: 'Спит' });
     const gone = await enter('ffa10', { nickname: 'Ушёл' });
+    const quitter = await enter('ffa10', { nickname: 'Вышел' });
     await waitFor(busy.client, MessageType.FfaState, (state) => state.phase === FfaPhase.Fight);
     gone.client.close();
+    quitter.client.send({ type: MessageType.Leave });
+    quitter.client.close();
     let isOver = false;
     const deadline = Date.now() + SCRIPT_TIMEOUT_MS;
     while (!isOver && Date.now() < deadline) {
@@ -851,6 +1118,10 @@ describe('журнал боя толпы', () => {
     expect(journal.some((line) => line.endsWith(`leave id=${String(gone.welcome.playerId)} reason=offline`))).toBe(
       true,
     );
+    const quitterId = String(quitter.welcome.playerId);
+    expect(journal.some((line) => line.endsWith(` quit id=${quitterId}`))).toBe(true);
+    expect(journal.some((line) => line.endsWith(` offline id=${quitterId}`))).toBe(false);
+    expect(journal.some((line) => line.endsWith(`leave id=${quitterId} reason=offline`))).toBe(true);
     const [replayed] = replayFfaJournal(journal, { mapFor: () => TEST_MAP }).matches;
     expect(replayed?.isComplete).toBe(true);
     expect(replayed?.mismatches).toEqual([]);

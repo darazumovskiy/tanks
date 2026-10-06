@@ -29,7 +29,7 @@ function model(overrides: Partial<FfaResultsModel> = {}): FfaResultsModel {
       resultRow(7, { isMe: true, name: 'Дима', efficiency: 2.06 }),
       resultRow(8),
     ],
-    nextMatchInS: 12,
+    nextMatchInS: 4,
     ...overrides,
   };
 }
@@ -47,7 +47,7 @@ describe('итоги', () => {
     view.update(model());
     expect(view.element.classList.contains('is-shown')).toBe(true);
     expect(shownText(view.element.querySelector('.ffa-results-side') ?? document.body)).toBe(
-      'КРЕПКО 7-й из 20 Следующий матч через 12 Выйти',
+      'КРЕПКО 7-й из 20 Следующий матч через 4 Выйти',
     );
     const rows = [...view.element.querySelectorAll('tbody tr')];
     expect(rows.map((row) => shownText(row))).toEqual([

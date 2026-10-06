@@ -10,7 +10,7 @@ export interface HitRecord {
   isPickup: boolean;
 }
 
-// Что двойник знает о матче, как Дима: уровень соперника, номер раунда, проигрыши подряд в этой игре.
+// Что двойник знает о матче, как игрок: уровень соперника, номер раунда, проигрыши подряд в этой игре.
 export interface MatchState {
   level: BotLevel;
   roundIndex: number;

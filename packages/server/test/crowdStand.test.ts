@@ -137,7 +137,7 @@ function runStand(count: number): StandResult {
     ...DEFAULT_FFA_OPTIONS,
     countdownTicks: 3,
     resultsTicks: 5,
-    lobbyQuietTicks: 1,
+    lobbyWaitTicks: 1,
     maxInputsPerSecond: 1000,
     matchSeed: () => MATCH_SEEDS[seedIndex++ % MATCH_SEEDS.length] ?? 0,
   };

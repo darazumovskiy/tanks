@@ -52,6 +52,7 @@ export type FfaScreen =
 export interface FfaDebugState {
   screen: FfaScreen;
   playerId: number | null;
+  gameId: string | null;
   phase: number | null;
   matchIndex: number;
   players: number;
@@ -64,6 +65,7 @@ export interface FfaDebugState {
   bullets: number;
   camera: { x: number; y: number; width: number; height: number } | null;
   viewCenter: Point | null;
+  mouseWorld: Point | null;
   score: { place: number; total: number; kills: number; deaths: number } | null;
   feed: string[];
   spectating: number | null;
@@ -104,6 +106,7 @@ const POLL_MS = 50;
 const HULL_TURN_TOLERANCE = 0.12;
 const HULL_DRIVE_TOLERANCE = 0.3;
 const TURRET_TOLERANCE = 0.05;
+const EXACT_AIM_SETTLE_MS = 150;
 const KEY_FORWARD = 'KeyW';
 const KEY_LEFT = 'KeyA';
 const KEY_RIGHT = 'KeyD';
@@ -162,6 +165,11 @@ export class Player {
     options: PlayerOptions = {},
   ): Promise<Player> {
     return Player.openPage(browser, `${baseUrl}/ffa/${String(size)}${options.query ?? ''}`, name, stats, options);
+  }
+
+  // Страница по готовой ссылке — например, по приглашению из буфера обмена.
+  static openLink(browser: Browser, url: string, name: string, stats: string): Promise<Player> {
+    return Player.openPage(browser, url, name, stats);
   }
 
   // Главная с розданными очками танка: кнопки входа в бой доступны.
@@ -277,6 +285,41 @@ export class Player {
       timeoutMs,
       `башня не довернулась на ${angle.toFixed(2)}`,
     );
+  }
+
+  // Наводит башню точнее, чем позволяет курсор, поставленный от центра экрана: камера сдвинута вслед за курсором,
+  // поэтому курсор двигается по шагам, пока его точка на поле не встанет на луч из танка под углом angle.
+  // Башня поворачивается не сразу и проходит через нужный угол по пути к курсору — готово, когда на луче и курсор.
+  async aimFfaAngleExactly(angle: number, precision: number, timeoutMs = 5_000): Promise<FfaDebugState> {
+    const viewport = this.page.viewportSize() ?? { width: 0, height: 0 };
+    const reach = Math.min(viewport.width, viewport.height) / 3;
+    let cursor = { x: viewport.width / 2 + reach * Math.cos(angle), y: viewport.height / 2 + reach * Math.sin(angle) };
+    const deadline = Date.now() + timeoutMs;
+    let turret: number | null = null;
+    while (Date.now() < deadline) {
+      await this.page.mouse.move(cursor.x, cursor.y);
+      await sleep(EXACT_AIM_SETTLE_MS);
+      const state = await this.ffaState();
+      const me = state?.me ?? null;
+      const mouse = state?.mouseWorld ?? null;
+      const camera = state?.camera ?? null;
+      if (state === null || me === null || mouse === null || camera === null) {
+        continue;
+      }
+      turret = me.turret;
+      const cursorAngle = Math.atan2(mouse.y - me.y, mouse.x - me.x);
+      const isCursorOnRay = Math.abs(normalizeAngle(angle - cursorAngle)) < precision;
+      if (isCursorOnRay && Math.abs(normalizeAngle(angle - me.turret)) < precision) {
+        return state;
+      }
+      const distance = Math.hypot(mouse.x - me.x, mouse.y - me.y);
+      const pixelsPerUnit = viewport.width / camera.width;
+      cursor = {
+        x: cursor.x + (me.x + distance * Math.cos(angle) - mouse.x) * pixelsPerUnit,
+        y: cursor.y + (me.y + distance * Math.sin(angle) - mouse.y) * pixelsPerUnit,
+      };
+    }
+    throw new Error(`башня не довернулась на ${angle.toFixed(3)} с точностью ${String(precision)}: ${String(turret)}`);
   }
 
   // Держит клавишу заданное время — как человек.

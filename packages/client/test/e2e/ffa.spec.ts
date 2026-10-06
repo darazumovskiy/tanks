@@ -11,6 +11,8 @@ const DEFAULT_STATS = '3322';
 // Броня 0 и орудие 5: три своих рикошета по 43 снимают все 100 здоровья.
 const GLASS_CANNON = { armor: 0, engine: 0, gun: 5, reload: 5 };
 const GLASS_CANNON_STATS = STAT_KEYS.map((key) => String(GLASS_CANNON[key])).join('');
+const TOUGH = { armor: 5, engine: 3, gun: 2, reload: 0 };
+const TOUGH_STATS = STAT_KEYS.map((key) => String(TOUGH[key])).join('');
 const TOKEN_KEY = `tanks.ffaToken.${String(SIZE)}`;
 const KEY_FORWARD = 'KeyW';
 const DRIVE_MS = 800;
@@ -19,12 +21,14 @@ const MIN_DRIVE_DISTANCE = 20;
 const FIGHT_TIMEOUT_MS = 20_000;
 const SCREEN_TIMEOUT_MS = 10_000;
 const BOT_COUNT = SIZE - 2;
-// Разведчик, опоздавший и зритель входят в ту же игру — роевых ботов на три меньше мест.
+// Разведчик, опоздавший и финалист входят в ту же игру — роевых ботов на три меньше мест.
 const MATCH_BOT_COUNT = SIZE - 3;
 // Снаряд от выстрела до отскока и обратно в танк — меньше секунды на короткой дистанции.
 const SHOT_RETURN_TIMEOUT_MS = 3_000;
 const MAX_SELF_SHOTS = 5;
 const MIN_WALL_DISTANCE = 45;
+// Стена может быть в сотнях единиц: ошибка башни удваивается на обратном пути и не должна увести снаряд с танка.
+const RICOCHET_AIM_PRECISION = 0.005;
 // Возрождение через 4 с после гибели: обломки 2 с и ожидание 2 с.
 const RESPAWN_MS = 4_000;
 const RESPAWN_SLACK_MS = 1_500;
@@ -37,6 +41,7 @@ const IDLE_KICK_SECONDS = 4;
 const SHORT_MATCH_SECONDS = 20;
 const SHORT_RESULTS_SECONDS = 3;
 const MATCH_END_TIMEOUT_MS = 30_000;
+const FINAL_NOTICE_MS = 2_000;
 const TARGET_CLICK_ATTEMPTS = 3;
 const TARGET_SWITCH_TIMEOUT_MS = 2_000;
 // Левый стик телефона 844 × 390: касание и точка на кольце радиуса 40 вправо; правая половина — башня вправо.
@@ -48,6 +53,9 @@ const TURRET_TOLERANCE = 0.05;
 // Сдвиг камеры по башне вправо — 240 единиц поля; на половине пути он уже больше 150.
 const CAMERA_SHIFT_MIN = 150;
 const AXIS_ANGLES = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+// После выхода кнопкой танк стоит 10 с, после обрыва — 15: пропал раньше 13,5 с — значит, сервер получил Leave.
+const QUIT_SEEN_MS = 2_000;
+const QUIT_GONE_LIMIT_MS = 13_500;
 
 const servers: GameServer[] = [];
 const swarms: SwarmProcess[] = [];
@@ -76,8 +84,9 @@ test.afterEach(async () => {
   }
 });
 
+// Игру заполняют сами браузеры и рой; серверных ботов включают только их сценарии.
 async function startServer(env: Record<string, string> = {}): Promise<GameServer> {
-  const server = new GameServer({ FFA_LOBBY_QUIET_SECONDS: '1', ...env });
+  const server = new GameServer({ FFA_LOBBY_WAIT_SECONDS: '1', FFA_SERVER_BOTS: '0', ...env });
   servers.push(server);
   await server.start();
   return server;
@@ -179,18 +188,54 @@ function ricochetAngle(me: Point): number {
   return best.angle;
 }
 
-test('главная → «В общий бой»: адрес /ffa, лобби «1 / 30»; «Выйти» — на главную', async ({ browser }) => {
+test('главная → «В общий бой»: адрес /ffa/30, лобби «1 / 30»; «Выйти» — на главную', async ({ browser }) => {
   const server = await startServer();
   const player = await Player.openHome(browser, server.baseUrl, 'Новичок', DEFAULT_STATS);
   players.push(player);
   await player.page.locator('#ffa-start').click();
-  await expect(player.page).toHaveURL(/\/ffa$/);
+  await expect(player.page).toHaveURL(/\/ffa\/30$/);
   const lobby = await player.waitForScreen('lobby', SCREEN_TIMEOUT_MS);
   expect(lobby).toMatchObject({ players: 1, capacity: 30 });
   await expect(player.ffaLayer('ffa-lobby').locator('.ffa-lobby-count')).toHaveText('1 / 30');
   await player.ffaButton('Выйти').click();
   await expect(player.page).toHaveURL(/\/$/);
   await expect(player.page.locator('#ffa-start')).toBeVisible();
+});
+
+test('главная → выбор «10 танков» → «В общий бой»: адрес /ffa/10, лобби «1 / 10»', async ({ browser }) => {
+  const server = await startServer();
+  const player = await Player.openHome(browser, server.baseUrl, 'Малыш', DEFAULT_STATS);
+  players.push(player);
+  await player.page.locator('#ffa-size-toggle').click();
+  await player.page.locator('#ffa-sizes [data-size="10"]').click();
+  await expect(player.page.locator('#ffa-size-toggle')).toContainText('10');
+  await player.page.locator('#ffa-start').click();
+  await expect(player.page).toHaveURL(/\/ffa\/10$/);
+  const lobby = await player.waitForScreen('lobby', SCREEN_TIMEOUT_MS);
+  expect(lobby).toMatchObject({ players: 1, capacity: 10 });
+});
+
+test('«⌂» в бою: на главную; второй видит стоящий танк ушедшего, через окно выхода он пропал — раньше окна обрыва', async ({
+  browser,
+}) => {
+  const server = await startServer({ FFA_MINIMUM: '2' });
+  const leaver = await openFfa(browser, server.baseUrl, 'Ушёл');
+  const witness = await openFfa(browser, server.baseUrl, 'Видел');
+  const leaverId = (await leaver.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой ушедшего')).playerId;
+  await witness.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой второго');
+  await leaver.page.locator('#menu').click();
+  const leftAt = Date.now();
+  await expect(leaver.page).toHaveURL(/\/$/);
+  await expect(leaver.page.locator('#ffa-start')).toBeVisible();
+  await sleep(QUIT_SEEN_MS);
+  const standing = await witness.waitForFfa(() => true, SCREEN_TIMEOUT_MS, 'состояние второго');
+  expect(standing.others.some((tank) => tank.id === leaverId)).toBe(true);
+  await witness.waitForFfa(
+    (state) => state.others.every((tank) => tank.id !== leaverId),
+    QUIT_GONE_LIMIT_MS,
+    'танк ушедшего не пропал',
+  );
+  expect(Date.now() - leftAt).toBeLessThan(QUIT_GONE_LIMIT_MS);
 });
 
 test('компьютер и телефон в лобби, затем рой из 8 ботов: отсчёт, бой на 10 танков, движение видно второму', async ({
@@ -246,11 +291,13 @@ test('свой рикошет: три выстрела в стену — «са�
     settings: { hasRicochetGuard: false },
   });
   const me = ownTank(await player.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой'));
-  await player.aimFfaAngle(ricochetAngle(me));
+  const angle = ricochetAngle(me);
 
   let shots = 0;
   for (; shots < MAX_SELF_SHOTS && (await player.ffaState())?.screen === 'fight'; shots++) {
     const hpBefore = ownTank(await player.waitForFfa(isFighting, SCREEN_TIMEOUT_MS, 'бой')).hp;
+    // Камера после выстрела сдвигается, и курсор на поле уезжает с луча: прицел доводится перед каждым выстрелом.
+    await player.aimFfaAngleExactly(angle, RICOCHET_AIM_PRECISION);
     await player.page.mouse.down();
     await player.waitForFfa((state) => state.bullets > 0, SCREEN_TIMEOUT_MS, 'выстрел');
     await player.page.mouse.up();
@@ -356,7 +403,7 @@ test('бездействие: стоит — «Ты тут?», клавиша с
   expect(freshToken).not.toBe(token);
 });
 
-test('короткий матч с роем: вход посреди боя, вход в финал зрителем, итоги со своей строкой, следующий матч', async ({
+test('короткий матч с роем: вход посреди боя, вход в финал при ботах — в бой, за него выбыл бот, итоги со своей строкой, следующий матч', async ({
   browser,
 }) => {
   const server = await startServer({
@@ -392,17 +439,17 @@ test('короткий матч с роем: вход посреди боя, в�
     MATCH_END_TIMEOUT_MS,
     'финал',
   );
-  const watcher = await openFfa(browser, server.baseUrl, 'Зритель');
-  const spectating = await watcher.waitForFfa(
-    (state) =>
-      state.screen === 'spectator' &&
-      state.spectating !== null &&
-      state.others.filter((tank) => tank.isAlive).length >= 2,
+  const finalist = await openFfa(browser, server.baseUrl, 'Финалист');
+  const landed = await finalist.waitForFfa(isFighting, SCREEN_TIMEOUT_MS, 'вошедший в финал при ботах — в бою');
+  expect(landed.isFinal).toBe(true);
+  await fighter.waitForFfa(
+    (state) => {
+      noteFeed(state);
+      return state.feed.some((line) => line.endsWith('⊘ выбыл'));
+    },
     SCREEN_TIMEOUT_MS,
-    'зритель в финале',
+    'за вошедшего в финал выбыл бот',
   );
-  expect(spectating.score).toBeNull();
-  expect(await switchesTargetByClick(watcher)).toBe(true);
 
   await fighter.waitForFfa(
     (state) => {
@@ -414,14 +461,41 @@ test('короткий матч с роем: вход посреди боя, в�
   );
   expect(feedSeen.size).toBeGreaterThan(0);
   await expect(fighter.ffaLayer('ffa-results').locator('.ffa-results-row.is-me')).toHaveCount(1);
-  await watcher.waitForScreen('results', SCREEN_TIMEOUT_MS);
-  await expect(watcher.ffaLayer('ffa-results')).toContainText('СЛЕДУЮЩИЙ МАТЧ — ТВОЙ');
+  await finalist.waitForScreen('results', SCREEN_TIMEOUT_MS);
+  await expect(finalist.ffaLayer('ffa-results').locator('.ffa-results-row.is-me')).toHaveCount(1);
   await fighter.waitForFfa(
     (state) => state.screen === 'countdown' && state.matchIndex === 2,
     SCREEN_TIMEOUT_MS,
     'отсчёт второго матча',
   );
   expect(await driveForward(fighter)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
+});
+
+test('вход в финал без ботов в матче — зритель: клик меняет цель, на итогах «СЛЕДУЮЩИЙ МАТЧ — ТВОЙ»', async ({
+  browser,
+}) => {
+  const server = await startServer({
+    FFA_MINIMUM: '2',
+    FFA_MATCH_SECONDS: String(SHORT_MATCH_SECONDS),
+    FFA_RESULTS_SECONDS: String(SHORT_RESULTS_SECONDS),
+  });
+  // Обоим стоять в зоне до конца финала: броня 5 и по умолчанию держат урон зоны дольше, чем идёт сценарий.
+  const tough = await openFfa(browser, server.baseUrl, 'Броня', { stats: TOUGH_STATS });
+  await openFfa(browser, server.baseUrl, 'Второй');
+  await tough.waitForFfa((state) => state.isFinal, MATCH_END_TIMEOUT_MS, 'финал');
+  const watcher = await openFfa(browser, server.baseUrl, 'Зритель');
+  const spectating = await watcher.waitForFfa(
+    (state) =>
+      state.screen === 'spectator' &&
+      state.spectating !== null &&
+      state.others.filter((tank) => tank.isAlive).length >= 2,
+    SCREEN_TIMEOUT_MS,
+    'зритель в финале',
+  );
+  expect(spectating.score).toBeNull();
+  expect(await switchesTargetByClick(watcher)).toBe(true);
+  await watcher.waitForScreen('results', MATCH_END_TIMEOUT_MS);
+  await expect(watcher.ffaLayer('ffa-results')).toContainText('СЛЕДУЮЩИЙ МАТЧ — ТВОЙ');
 });
 
 test('телефон: левый стик ведёт танк, башня вправо — центр камеры правее танка, «АВТО» стреляет', async ({
@@ -465,4 +539,119 @@ test('телефон: левый стик ведёт танк, башня впр
   expect(
     (await phone.waitForFfa((state) => !state.isAutoFiring, SCREEN_TIMEOUT_MS, '«АВТО» не выключилась')).isAutoFiring,
   ).toBe(false);
+});
+
+// Сколько людей и серверных ботов в играх на 10 — по /metrics сервера.
+async function ffa10Players(server: GameServer): Promise<{ humans: number; bots: number }> {
+  const text = await (await fetch(`${server.baseUrl}/metrics`)).text();
+  const valueOf = (kind: string): number =>
+    Number(new RegExp(`^tanks_players\\{mode="ffa10",kind="${kind}"\\} (\\d+)$`, 'm').exec(text)?.[1] ?? NaN);
+  return { humans: valueOf('human'), bots: valueOf('bot') };
+}
+
+test('серверные боты: человек в лобби — боты с никами «Сержант [4]», «7 / 10», бой без роя, рядом танки ботов', async ({
+  browser,
+}) => {
+  const server = await startServer({ FFA_SERVER_BOTS: '1', FFA_LOBBY_WAIT_SECONDS: '5' });
+  const player = await openFfa(browser, server.baseUrl, 'Одиночка');
+  await player.waitForScreen('lobby', SCREEN_TIMEOUT_MS);
+  const lobby = player.ffaLayer('ffa-lobby');
+  await expect(lobby.locator('.ffa-lobby-count')).toHaveText(`7 / ${String(SIZE)}`);
+  await expect(lobby.locator('.ffa-nick', { hasText: 'Сержант [4]' })).toHaveCount(1);
+  await expect(lobby.locator('.ffa-nick', { hasText: 'Призрак [7]' })).toHaveCount(1);
+  expect(await ffa10Players(server)).toEqual({ humans: 1, bots: 6 });
+  const fight = await player.waitForFfa(
+    (state) => isFighting(state) && state.others.filter((tank) => tank.isAlive).length >= 5,
+    FIGHT_TIMEOUT_MS,
+    'бой с ботами',
+  );
+  expect(fight.players).toBe(7);
+  expect(await driveForward(player)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
+});
+
+test('серверные боты: второй браузер входит в полную игру с ботами — та же игра, бот ушёл, оба в бою', async ({
+  browser,
+}) => {
+  const server = await startServer({ FFA_SERVER_BOTS: '1', FFA_MINIMUM: String(SIZE) });
+  const first = await openFfa(browser, server.baseUrl, 'Первый');
+  const firstFight = await first.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой первого');
+  expect(firstFight.players).toBe(SIZE);
+  expect(await ffa10Players(server)).toEqual({ humans: 1, bots: SIZE - 1 });
+
+  const second = await openFfa(browser, server.baseUrl, 'Второй', { isTouch: true });
+  const secondFight = await second.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой второго');
+  expect(secondFight.gameId).toBe(firstFight.gameId);
+  await second.waitForFfa(
+    (state) => state.others.some((tank) => tank.id === firstFight.playerId),
+    SCREEN_TIMEOUT_MS,
+    'второй не видит первого',
+  );
+  expect(await ffa10Players(server)).toEqual({ humans: 2, bots: SIZE - 2 });
+  expect((await first.ffaState())?.players).toBe(SIZE);
+});
+
+test('приглашение: первый в лобби жмёт «Позвать друга», второй по ссылке из буфера — в той же игре, без плашки', async ({
+  browser,
+}) => {
+  const server = await startServer();
+  const host = await openFfa(browser, server.baseUrl, 'Хозяин');
+  const hostLobby = await host.waitForScreen('lobby', SCREEN_TIMEOUT_MS);
+  await host.ffaButton('Позвать друга').click();
+  await expect(host.ffaLayer('ffa-lobby').locator('.ffa-lobby-copied')).toBeVisible();
+  const link = await host.clipboardText();
+  expect(link).toBe(`${server.baseUrl}/ffa/${String(SIZE)}/${String(hostLobby.gameId)}`);
+
+  const friend = await Player.openLink(browser, link, 'Друг', DEFAULT_STATS);
+  players.push(friend);
+  const friendLobby = await friend.waitForScreen('lobby', SCREEN_TIMEOUT_MS);
+  expect(friendLobby.gameId).toBe(hostLobby.gameId);
+  await host.waitForFfa((state) => state.players === 2, SCREEN_TIMEOUT_MS, 'друг в лобби хозяина');
+  await expect(friend.ffaLayer('ffa-invite')).toHaveCount(0);
+});
+
+test('приглашение в игру, которой нет: лобби новой игры и плашка «ТОЙ ИГРЫ УЖЕ НЕТ»', async ({ browser }) => {
+  const server = await startServer();
+  const friend = await Player.openLink(browser, `${server.baseUrl}/ffa/${String(SIZE)}/ZZZZ`, 'Друг', DEFAULT_STATS);
+  players.push(friend);
+  const lobby = await friend.waitForScreen('lobby', SCREEN_TIMEOUT_MS);
+  expect(lobby.gameId).not.toBe('ZZZZ');
+  await expect(friend.ffaLayer('ffa-invite')).toHaveText('ТОЙ ИГРЫ УЖЕ НЕТВсе разошлись — вот новая');
+});
+
+test('серверные боты, короткий матч: второй входит в финал — сразу в бою, у обоих «выбыл» с ником бота, «ФИНАЛ!» про ботов, справка главной про финал', async ({
+  browser,
+}) => {
+  const server = await startServer({
+    FFA_SERVER_BOTS: '1',
+    FFA_MATCH_SECONDS: String(SHORT_MATCH_SECONDS),
+    FFA_RESULTS_SECONDS: String(SHORT_RESULTS_SECONDS),
+  });
+  const first = await openFfa(browser, server.baseUrl, 'Первый', { stats: TOUGH_STATS });
+  await first.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой первого');
+  await expect(first.ffaLayer('ffa-final')).toContainText('Потом первыми выбывают боты', {
+    timeout: MATCH_END_TIMEOUT_MS,
+  });
+  const atFinal = await first.waitForFfa((state) => state.isFinal, MATCH_END_TIMEOUT_MS, 'финал');
+  // «ФИНАЛ!» видит только тот, чей танк на поле.
+  if (isFighting(atFinal)) {
+    await expect(first.ffaLayer('ffa-final')).toContainText(/ФИНАЛ!.*Подбили — вернёшься, пока живы боты/, {
+      timeout: FINAL_NOTICE_MS,
+    });
+  }
+
+  const second = await openFfa(browser, server.baseUrl, 'Второй');
+  const landed = await second.waitForFfa(isFighting, SCREEN_TIMEOUT_MS, 'вошедший в финал при ботах — в бою');
+  expect(landed.isFinal).toBe(true);
+  const isBotOut = (line: string): boolean => /\[\d\] ⊘ выбыл$/.test(line);
+  for (const player of [first, second]) {
+    await player.waitForFfa((state) => state.feed.some(isBotOut), SCREEN_TIMEOUT_MS, 'строка «выбыл» с ником бота');
+  }
+
+  const home = await browser.newPage();
+  try {
+    await home.goto(`${server.baseUrl}/`);
+    await expect(home.locator('#ffa-help')).toContainText('подбитые вылетают насовсем, но первыми — боты');
+  } finally {
+    await home.close();
+  }
 });

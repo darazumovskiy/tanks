@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe('раскладка стенда', () => {
-  it('на уровне — пары игр длиной в игры Димы этого уровня по кругу, пока не наберётся; условия — в долях раундов', () => {
+  it('на уровне — пары игр длиной в игры игрока этого уровня по кругу, пока не наберётся; условия — в долях раундов', () => {
     const rounds = 47 * 16;
     const lengths = PHONE.main.conditions['8']?.gameRounds ?? [];
     const games = standPlan(PHONE, { levels: [8], roundsOf: () => rounds, mixOf: () => 0, seed: 1 });
@@ -65,7 +65,7 @@ describe('раскладка стенда', () => {
     }
   });
 
-  it('уровень без игр Димы — длины и условия всей выборки; смесь — первые раунды пар, сиды раундов разные', () => {
+  it('уровень без игр игрока — длины и условия всей выборки; смесь — первые раунды пар, сиды раундов разные', () => {
     const lengths = Object.values(PHONE.main.conditions).flatMap((conditions) => conditions.gameRounds);
     const games = standPlan(PHONE, { levels: [3], roundsOf: () => 70, mixOf: () => 20, seed: 1 });
     const guarded = games.filter((game) => game.condition.hasRicochetGuard).length;

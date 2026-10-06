@@ -529,6 +529,22 @@ test('браузер Android видит плашку «Открыть в при�
   await desktop.close();
 });
 
+test('общий бой в браузере Android: плашка ведёт в приложение, касание поля разворачивает на весь экран', async ({
+  browser,
+}) => {
+  const android = await Player.openFfa(browser, server.baseUrl, 10, 'Телефон', DEFAULT_STATS, {
+    userAgent: ANDROID_USER_AGENT,
+  });
+  await expect(android.openAppBanner()).toBeVisible();
+  expect(await android.openAppHref()).toContain(`${new URL(server.baseUrl).host}/ffa/10`);
+  const isFullscreen = (): Promise<boolean> => android.page.evaluate(() => document.fullscreenElement !== null);
+  await android.openAppBanner().locator('.open-app-note').click();
+  expect(await isFullscreen()).toBe(false);
+  await android.page.mouse.click(200, 300);
+  await expect.poll(isFullscreen).toBe(true);
+  await android.close();
+});
+
 test('анализатор журналов разбирает партию стенда: игра, устройство, выстрелы, отчёт', async ({ browser }) => {
   // Стрелок бьёт со старта в стену перпендикулярно — без предохранителя, иначе выстрелов не будет.
   const code = roomCode();

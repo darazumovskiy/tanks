@@ -23,13 +23,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Ссылка на дуэль открывается приложением, а не браузером; домен подтверждается
+            <!-- Ссылки на дуэль и общий бой открываются приложением, а не браузером; домен подтверждается
                  файлом /.well-known/assetlinks.json на сервере игры. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="${appLinkHost}" android:pathPrefix="/d/" />
+                <data android:scheme="https" android:host="${appLinkHost}" android:pathPrefix="/ffa" />
             </intent-filter>
 
         </activity>

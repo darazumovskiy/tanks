@@ -1,11 +1,12 @@
 import type { Action, EndReason, FfaPlayerState, FfaSize, RoundRules, Side, Stats, ZonePlan } from '../engine/index.js';
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 8;
 
 export const MessageType = {
   Join: 1,
   Input: 2,
   Ping: 3,
+  Leave: 4,
   Welcome: 10,
   RoomState: 11,
   RoundStart: 12,
@@ -26,7 +27,8 @@ export const MESSAGE_TYPE_NAMES: Readonly<Record<MessageType, string>> = Object.
   Object.entries(MessageType).map(([name, value]) => [value, name]),
 ) as Record<MessageType, string>;
 
-// token — пропуск для возврата в общую игру после обрыва, пусто у нового игрока; isBot — честный бот.
+// token — пропуск для возврата в общую игру после обрыва, пусто у нового игрока; isBot — честный бот;
+// gameId — номер общей игры из приглашения друга, пусто — любая игра этого размера.
 export interface JoinMessage {
   type: typeof MessageType.Join;
   protocolVersion: number;
@@ -35,6 +37,7 @@ export interface JoinMessage {
   stats: Stats;
   token: string;
   isBot: boolean;
+  gameId: string;
 }
 
 export interface InputMessage {
@@ -46,6 +49,11 @@ export interface InputMessage {
 export interface PingMessage {
   type: typeof MessageType.Ping;
   clientTime: number;
+}
+
+// Игрок уходит сам: общая игра держит его место короче, чем после обрыва.
+export interface LeaveMessage {
+  type: typeof MessageType.Leave;
 }
 
 export interface WelcomeMessage {
@@ -130,6 +138,8 @@ export const EventFlag = {
   Ricochet: 2,
   Zone: 4,
   ByTime: 8,
+  // Смерть в общей игре: бот выбыл в финале за человека.
+  Out: 16,
 } as const;
 
 // value: угол выстрела, урон, лечение; dx, dy: направление снаряда при попадании или нормаль стены при рикошете.
@@ -145,11 +155,13 @@ export interface SnapshotEvent {
 }
 
 // tick — тик раунда (с нуля каждый раунд); gameTick — тиков с создания дуэли, таймкод журнала.
+// hasSpareInput — сервер держит запас команд, который секунду не понадобился: клиент пропускает шаг ввода.
 export interface SnapshotMessage {
   type: typeof MessageType.Snapshot;
   tick: number;
   gameTick: number;
   ackSeq: number;
+  hasSpareInput: boolean;
   isOver: boolean;
   winner: Side | null;
   endReason: EndReason | null;
@@ -189,6 +201,14 @@ export const FfaPhase = {
 } as const;
 export type FfaPhase = (typeof FfaPhase)[keyof typeof FfaPhase];
 
+// Почему вошедший по приглашению не в игре друга: Full — там все места у участников, Gone — игры с этим номером нет.
+export const FfaInviteMiss = {
+  None: 0,
+  Full: 1,
+  Gone: 2,
+} as const;
+export type FfaInviteMiss = (typeof FfaInviteMiss)[keyof typeof FfaInviteMiss];
+
 export interface FfaWelcomeMessage {
   type: typeof MessageType.FfaWelcome;
   playerId: number;
@@ -196,6 +216,7 @@ export interface FfaWelcomeMessage {
   gameId: string;
   size: FfaSize;
   rules: RoundRules;
+  inviteMiss: FfaInviteMiss;
 }
 
 // ticksLeft — тиков до конца фазы; в лобби — до старта, null — старт ещё не назначен.
@@ -230,12 +251,13 @@ export interface FfaMatchStartMessage {
 }
 
 // Своё состояние игрока: ticksLeft — до перехода (подбит → ждёт → на поле), idleTicksLeft — до выхода
-// по бездействию, null — отсчёта нет.
+// по бездействию, null — отсчёта нет; isOut — подбит в финале без возврата.
 export interface FfaSelf {
   state: FfaPlayerState;
   ticksLeft: number;
   killerId: number | null;
   idleTicksLeft: number | null;
+  isOut: boolean;
 }
 
 export interface FfaTankSnapshot extends TankSnapshot {
@@ -294,12 +316,13 @@ export interface FfaSnapshotEvent {
 }
 
 // tick — тик матча; gameTick — тиков с создания игры, таймкод журнала. births, bounces, deaths — снаряды
-// всего поля: родились, отскочили, погибли на этом тике.
+// всего поля: родились, отскочили, погибли на этом тике. hasSpareInput — как у снимка дуэли.
 export interface FfaSnapshotMessage {
   type: typeof MessageType.FfaSnapshot;
   tick: number;
   gameTick: number;
   ackSeq: number;
+  hasSpareInput: boolean;
   self: FfaSelf;
   tanks: FfaTankSnapshot[];
   kits: KitSnapshot[];
@@ -327,7 +350,7 @@ export interface FfaBulletsMessage {
   bullets: FfaBulletSnapshot[];
 }
 
-export type ClientMessage = JoinMessage | InputMessage | PingMessage;
+export type ClientMessage = JoinMessage | InputMessage | PingMessage | LeaveMessage;
 export type ServerMessage =
   | WelcomeMessage
   | RoomStateMessage

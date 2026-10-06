@@ -4,6 +4,7 @@ import {
   encode,
   ErrorCode,
   FfaPhase,
+  gameTimecode,
   MessageType,
   type ClientMessage,
   type ErrorMessage,
@@ -11,7 +12,7 @@ import {
 } from '@tanks/shared/protocol';
 import { WebSocket } from 'ws';
 import { CrowdBot } from '../crowd/bot.js';
-import { CROWD_PROFILES, crowdPyramid } from '../crowd/profile.js';
+import { crowdNickname, crowdPyramid } from '../crowd/profile.js';
 import { TargetBook } from '../crowd/targets.js';
 
 const DEFAULT_JOIN_INTERVAL_MS = 200;
@@ -60,11 +61,18 @@ interface Percentiles {
   high: number | null;
 }
 
+// Тик — последний снимок у ботов этой игры; до первого снимка (лобби) — null.
+export interface SwarmGame {
+  id: string;
+  gameTick: number | null;
+}
+
 // Отчёт за время с прошлого отчёта: трафик и снимки — на бота в игре в секунду, высокий процентиль — 95-й у
 // пинга и 99-й у мозга; доля процессора — от одного ядра; тик сервера — максимум за время отчёта.
 export interface SwarmReport {
   online: number;
   total: number;
+  games: SwarmGame[];
   phase: FfaPhase | null;
   matchTick: number;
   bytesPerSecond: { average: number; max: number };
@@ -83,6 +91,20 @@ export function healthUrlOf(url: string): string {
   parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
   parsed.pathname = HEALTH_PATH;
   return parsed.toString();
+}
+
+function gamesOf(bots: readonly CrowdBot[]): SwarmGame[] {
+  const ticks = new Map<string, number | null>();
+  for (const bot of bots) {
+    const known = ticks.get(bot.gameId) ?? null;
+    const tick = bot.gameTick;
+    if (tick === null) {
+      ticks.set(bot.gameId, known);
+      continue;
+    }
+    ticks.set(bot.gameId, known === null ? tick : Math.max(known, tick));
+  }
+  return [...ticks].map(([id, gameTick]) => ({ id, gameTick }));
 }
 
 // Ближайший ранг: на двух значениях 95-й процентиль — большее из них.
@@ -275,7 +297,7 @@ export class Swarm {
     this.members = crowdPyramid(options.count).map((level, index) => {
       const bot = new CrowdBot({
         level,
-        nickname: `${CROWD_PROFILES[level].name} ${String(index + 1)}`,
+        nickname: crowdNickname(level),
         size: options.size,
         random: options.random,
         book,
@@ -362,6 +384,7 @@ export class Swarm {
     return {
       online: online.length,
       total: this.members.length,
+      games: gamesOf(online.map((member) => member.bot)),
       phase: lead?.phase ?? null,
       matchTick: lead?.matchTick ?? 0,
       bytesPerSecond: { average: rates.reduce((sum, rate) => sum + rate, 0) / perBot, max: Math.max(...rates) },
@@ -412,11 +435,21 @@ function phaseText(report: SwarmReport): string {
   }
 }
 
+// Игра — как в строке внизу экрана игрока: номер и таймкод; по ним ищется журнал игры на сервере.
+function gamesText(games: readonly SwarmGame[]): string[] {
+  if (games.length === 0) {
+    return [];
+  }
+  const parts = games.map((game) => (game.gameTick === null ? game.id : `${game.id} ${gameTimecode(game.gameTick)}`));
+  return [parts.join(', ')];
+}
+
 export function formatReport(report: SwarmReport): string {
   const percent = (share: number | null): string => optional(share === null ? null : share * PERCENT, 0);
   const bytes = report.bytesPerSecond;
   return [
     `${String(report.online)}/${String(report.total)} в игре`,
+    ...gamesText(report.games),
     phaseText(report),
     `вход на бота ${decimal(bytes.average / BYTES_IN_KIB, 0)} КиБ/с (макс ${decimal(bytes.max / BYTES_IN_KIB, 0)})`,
     `снимков ${decimal(report.snapshotsPerSecond, 0)}/с, пропусков ${String(report.gaps)}`,

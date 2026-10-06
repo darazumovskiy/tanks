@@ -2,7 +2,7 @@ import { PLAIN_AIM_LINE_STYLE, type AimLineStyle } from '../render/aimLineStyle.
 import { AIM_LINE_STYLES, type AimLineStyleEntry } from '../render/aimLineStyles.js';
 
 // Раунды вариантов стиля линии выстрела. В каждом раунде два якоря: «безопасный» — ориентир, с которым
-// сравнивают, и «плохой» — заведомо мимо. `picks` — выбор Димы. Стили, вошедшие в выбор, живут в боевом
+// сравнивают, и «плохой» — заведомо мимо. `picks` — выбор оператора. Стили, вошедшие в выбор, живут в боевом
 // реестре `render/aimLineStyles.ts`; здесь — только якоря и история.
 
 export type AnchorKind = 'safe' | 'bad' | null;

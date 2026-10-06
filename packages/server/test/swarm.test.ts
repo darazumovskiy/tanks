@@ -19,13 +19,15 @@ import { formatReport, healthUrlOf, Swarm, type SwarmOptions, type SwarmReport }
 import { TestClient } from './client.js';
 import { seededRandom, sleep } from './support.js';
 
-// Тик 10 мс — игра втрое быстрее настоящей; боты успевают ответить на каждый снимок.
+// Тик 10 мс — игра втрое быстрее настоящей; боты успевают ответить на каждый снимок. Наблюдатель входит человеком,
+// а игру заполняет только рой.
 const TICK_MS = 10;
 const QUICK: FfaOptions = {
   ...DEFAULT_FFA_OPTIONS,
+  hasServerBots: false,
   countdownTicks: 3,
   resultsTicks: 5,
-  lobbyQuietTicks: 5,
+  lobbyWaitTicks: 5,
   matchSeconds: 20,
 };
 // Запас окна обзора вокруг точки обзора стрелка на задержку реакции: за 12 тиков танк проезжает меньше 80, а
@@ -96,7 +98,7 @@ async function until(isDone: () => boolean, what: string, timeoutMs = 10_000): P
 function namesOf(players: readonly FfaRosterEntry[]): string[] {
   return players
     .filter((player) => player.isBot)
-    .map((player) => player.nickname.replace(/ \d+$/, ''))
+    .map((player) => player.nickname)
     .sort();
 }
 
@@ -247,7 +249,16 @@ describe('рой ботов через сокет', () => {
       'восемь ботов в составе, у каждого свой номер',
     );
     expect(namesOf(roster)).toEqual(
-      ['Ветеран', 'Манекен', 'Манекен', 'Новобранец', 'Призрак', 'Прогульщик', 'Прогульщик', 'Сержант'].sort(),
+      [
+        'Ветеран [5]',
+        'Манекен [1]',
+        'Манекен [1]',
+        'Новобранец [3]',
+        'Призрак [7]',
+        'Прогульщик [2]',
+        'Прогульщик [2]',
+        'Сержант [4]',
+      ].sort(),
     );
     const ids = swarm.bots().map((bot) => bot.playerId);
 
@@ -276,7 +287,11 @@ describe('рой ботов через сокет', () => {
     expect(report.brainMs.median).not.toBeNull();
     expect(report.serverTickMaxMs).not.toBeNull();
     expect(report.visibleBullets.average).not.toBeNull();
-    expect(formatReport(report)).toContain('8/8 в игре · бой');
+    expect(report.games).toHaveLength(1);
+    const game = report.games[0];
+    expect(game?.id).toMatch(/^[A-Z0-9]{4}$/);
+    expect(game?.gameTick).toBeGreaterThan(0);
+    expect(formatReport(report)).toContain(`8/8 в игре · ${game?.id ?? ''} `);
   }, 60_000);
 
   it('28 ботов в ffa30 — одна игра, уровни пирамидой; в лобби тишина дольше порога соединения не рвёт', async () => {
@@ -285,6 +300,10 @@ describe('рой ботов через сокет', () => {
     await until(() => swarm.bots().every((bot) => bot.isOnline), 'все 28 в игре');
     await sleep(600);
     expect(swarm.bots().every((bot) => bot.isOnline)).toBe(true);
+    const lobby = swarm.report();
+    expect(lobby.games).toHaveLength(1);
+    expect(lobby.games[0]?.gameTick).toBeNull();
+    expect(formatReport(lobby)).toContain(`28/28 в игре · ${lobby.games[0]?.id ?? ''} · лобби`);
     const watcher = await observer(port, 'ffa30');
     const roster = await watcher.nextOfType(MessageType.FfaRoster);
     const counts = new Map<string, number>();
@@ -292,13 +311,13 @@ describe('рой ботов через сокет', () => {
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
     expect(Object.fromEntries(counts)).toEqual({
-      Манекен: 7,
-      Прогульщик: 6,
-      Новобранец: 5,
-      Сержант: 4,
-      Ветеран: 3,
-      Снайпер: 2,
-      Призрак: 1,
+      'Манекен [1]': 7,
+      'Прогульщик [2]': 6,
+      'Новобранец [3]': 5,
+      'Сержант [4]': 4,
+      'Ветеран [5]': 3,
+      'Снайпер [6]': 2,
+      'Призрак [7]': 1,
     });
   }, 30_000);
 
@@ -368,7 +387,7 @@ describe('рой ботов через сокет', () => {
     await until(() => swarm.isDone, 'бот остановлен');
     await sleep(200);
     expect(swarm.bots()[0]).toMatchObject({ isStopped: true, isOnline: false });
-    expect(lines.join('\n')).toContain('Манекен 1 остановлен');
+    expect(lines.join('\n')).toContain('Манекен [1] остановлен');
   }, 20_000);
 
   it('выкинутый за бездействие бот входит заново новым игроком', async () => {
@@ -387,7 +406,7 @@ describe('рой ботов через сокет', () => {
     await probe.close();
     const swarm = startSwarm(port, { count: 2 });
     const empty = swarm.report();
-    expect(empty).toMatchObject({ online: 0, phase: null, serverTickMaxMs: null, offscreenShare: null });
+    expect(empty).toMatchObject({ online: 0, games: [], phase: null, serverTickMaxMs: null, offscreenShare: null });
     expect(empty.pingMs.median).toBeNull();
     expect(formatReport(empty)).toContain('нет игры');
     await sleep(150);
@@ -444,10 +463,11 @@ describe('рой ботов через сокет', () => {
 });
 
 describe('отчёт роя', () => {
-  function reportOf(phase: FfaPhase | null, matchTick = 0): SwarmReport {
+  function reportOf(phase: FfaPhase | null, matchTick = 0, games: SwarmReport['games'] = []): SwarmReport {
     return {
       online: 3,
       total: 4,
+      games,
       phase,
       matchTick,
       bytesPerSecond: { average: 81_920, max: 90_000 },
@@ -470,6 +490,19 @@ describe('отчёт роя', () => {
     expect(formatReport(reportOf(FfaPhase.Lobby))).toContain('· лобби ·');
     expect(formatReport(reportOf(FfaPhase.Countdown))).toContain('· отсчёт ·');
     expect(formatReport(reportOf(FfaPhase.Results))).toContain('· итоги ·');
+  });
+
+  it('игра — номером и таймкодом, как внизу экрана игрока; до первого снимка — только номер; несколько игр — через запятую', () => {
+    const fight = reportOf(FfaPhase.Fight, 72 * 30, [{ id: 'BNRS', gameTick: 99 * 30 + 12 }]);
+    expect(formatReport(fight)).toMatch(/^3\/4 в игре · BNRS 01:39 · бой 1:12 · /);
+    expect(formatReport(reportOf(FfaPhase.Lobby, 0, [{ id: 'BNRS', gameTick: null }]))).toMatch(
+      /^3\/4 в игре · BNRS · лобби · /,
+    );
+    const two = [
+      { id: 'BNRS', gameTick: 30 },
+      { id: 'K7MF', gameTick: null },
+    ];
+    expect(formatReport(reportOf(FfaPhase.Fight, 30, two))).toMatch(/^3\/4 в игре · BNRS 00:01, K7MF · бой/);
   });
 
   it('адрес здоровья сервера — из адреса сокета; ответ без длительности тика — прочерк', async () => {

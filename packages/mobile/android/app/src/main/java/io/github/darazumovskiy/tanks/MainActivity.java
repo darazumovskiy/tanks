@@ -10,7 +10,7 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 
 // Игра занимает весь экран: системные панели скрыты и возвращаются свайпом от края; экран не гаснет во время боя.
-// Ссылка на дуэль, открывшая приложение, грузится в WebView вместо главной.
+// Ссылка на бой, открывшая приложение, грузится в WebView вместо главной.
 public class MainActivity extends BridgeActivity {
   @Override
   public void onCreate(Bundle savedInstanceState) {

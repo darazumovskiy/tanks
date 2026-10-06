@@ -6,6 +6,7 @@ import { element, layer, setShown } from './dom.js';
 import { FatalScreenView, type FatalActions } from './fatalScreen.js';
 import { FinalWarningView } from './finalWarning.js';
 import { IdleWarningView } from './idleWarning.js';
+import { InviteBannerView } from './inviteBanner.js';
 import { KillFeedView } from './killFeed.js';
 import { LobbyView, type LobbyActions } from './lobby.js';
 import { ResultsView } from './results.js';
@@ -20,7 +21,8 @@ const TOUCH_LAYOUT: FfaHudLayout = { feedRows: 3, resultsTop: 5 };
 const DESKTOP_LAYOUT: FfaHudLayout = { feedRows: 4, resultsTop: 10 };
 
 // Интерфейс матча поверх холста: корень и карточки нажатия пропускают к полю, ловят только кнопки. Показ — по
-// модели сессии; под таймером одно место на баннер связи, «Ты тут?» и финал — в этом порядке важности.
+// модели сессии; под таймером одно место на баннер связи, «Ты тут?», финал и приглашение мимо — в этом порядке
+// важности.
 export class FfaHud {
   readonly layout: FfaHudLayout;
   private readonly connecting: HTMLDivElement;
@@ -32,6 +34,7 @@ export class FfaHud {
   private readonly final = new FinalWarningView();
   private readonly idle = new IdleWarningView();
   private readonly connection = new ConnectionBannerView();
+  private readonly invite = new InviteBannerView();
   private readonly results: ResultsView;
   private readonly lobby: LobbyView;
   private readonly fatal: FatalScreenView;
@@ -63,6 +66,7 @@ export class FfaHud {
       this.results.element,
       this.lobby.element,
       this.fatal.element,
+      this.invite.element,
       this.connection.element,
     );
     root.hidden = false;
@@ -81,7 +85,9 @@ export class FfaHud {
     this.connection.update(model.connection);
     const idleInS = model.connection === null ? model.idleInS : null;
     this.idle.update(idleInS);
-    this.final.update(model.connection === null && idleInS === null ? model.final : null);
+    const final = model.connection === null && idleInS === null ? model.final : null;
+    this.final.update(final);
+    this.invite.update(model.connection === null && idleInS === null && final === null ? model.invite : null);
     this.results.update(model.results);
     this.lobby.update(model.lobby, now);
     this.fatal.update(model.screen);

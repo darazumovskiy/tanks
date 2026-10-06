@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
+import { stopChild } from './server.js';
 
 const ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
 const SWARM_ENTRY = `${ROOT}/packages/server/dist/swarm/main.js`;
@@ -37,12 +37,7 @@ export class SwarmProcess {
     return this.lines.join('\n');
   }
 
-  async stop(): Promise<void> {
-    const hasExited = this.child.exitCode !== null || this.child.signalCode !== null;
-    if (hasExited) {
-      return;
-    }
-    this.child.kill('SIGINT');
-    await once(this.child, 'exit');
+  stop(): Promise<void> {
+    return stopChild(this.child, 'SIGINT');
   }
 }

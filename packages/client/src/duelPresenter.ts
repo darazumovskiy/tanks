@@ -1,7 +1,8 @@
 import { DT, type Side } from '@tanks/shared/engine';
 import type { RoundStartMessage, SnapshotEvent, TankSnapshot } from '@tanks/shared/protocol';
 import { computeAimLine, type AimLine } from './aimLine.js';
-import type { InterpolatedTank, WorldView } from './prediction.js';
+import { EventSchedule, eventPlace } from './pictureTime.js';
+import type { InterpolatedTank, PictureView, WorldView } from './prediction.js';
 import { isInView } from './render/camera.js';
 import type { Effects } from './render/effects.js';
 import { DuelFxPolicy, duelFxEvent } from './render/fxEvent.js';
@@ -69,10 +70,11 @@ function enemyOf(side: Side): Side {
   return side === 0 ? 1 : 0;
 }
 
-// Проводка кадра дуэли — одна для игры и стенда кадров: события снимка в эффекты по правилам дуэли (сначала
-// снимок, затем его события), линия выстрела с её условиями, интерфейс для рисования и отсчёт.
+// Проводка кадра дуэли — одна для игры и стенда кадров: снимок в эффекты, его события — когда до них дошла картинка,
+// по правилам дуэли; линия выстрела с её условиями, интерфейс для рисования и отсчёт.
 export class DuelPresenter {
   private readonly fxPolicy = new DuelFxPolicy();
+  private readonly schedule = new EventSchedule<SnapshotEvent>();
 
   constructor(
     private readonly renderer: DuelRenderer,
@@ -84,13 +86,38 @@ export class DuelPresenter {
     this.effects.reset();
     this.renderer.resetCamera();
     this.fxPolicy.reset();
+    this.schedule.clear();
   }
 
-  applySnapshot(tick: number, tanks: readonly TankSnapshot[], events: readonly SnapshotEvent[]): void {
+  // События ждут, пока картинка в их месте дойдёт до тика снимка; событие о танке — от его места в снимке, о своём —
+  // сразу.
+  applySnapshot(
+    tick: number,
+    tanks: readonly TankSnapshot[],
+    events: readonly SnapshotEvent[],
+    now = 0,
+    mySide: Side | null = null,
+  ): void {
     this.effects.onSnapshot(tick, tanks);
     for (const event of events) {
+      const tank = event.side === null ? undefined : tanks[event.side];
+      const anchor = event.side === null || tank === undefined ? null : { id: event.side, x: tank.x, y: tank.y };
+      this.schedule.add(event, tick, eventPlace(event.kind, anchor, mySide), now);
+    }
+  }
+
+  // Вкладка вернулась из фона: накопленные события не играются.
+  clearEvents(): void {
+    this.schedule.clear();
+  }
+
+  // События, до которых дошла картинка, — в эффекты; их же отдаёт для звука.
+  releaseEvents(view: PictureView, now: number): SnapshotEvent[] {
+    const due = this.schedule.release(view.clock, (id) => view.tanks[id === 0 ? 0 : 1], now).map(({ event }) => event);
+    for (const event of due) {
       this.applyEvent(event);
     }
+    return due;
   }
 
   applyEvent(event: SnapshotEvent): void {

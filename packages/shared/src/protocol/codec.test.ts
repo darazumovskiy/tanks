@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_STATS } from '../engine/index.js';
-import { decode, encode, NO_ID, quantizeAction, rulesFromByte, rulesToByte } from './codec.js';
+import { decode, encode, isClientMessage, NO_ID, quantizeAction, rulesFromByte, rulesToByte } from './codec.js';
 import { ffaRoomCode, ffaSizeOf, isFfaRoomCode } from './ffaRoom.js';
 import {
   ErrorCode,
+  FfaInviteMiss,
   FfaPhase,
   MESSAGE_TYPE_NAMES,
   MessageType,
@@ -18,6 +19,7 @@ const snapshot: SnapshotMessage = {
   tick: 123456,
   gameTick: 654321,
   ackSeq: 77,
+  hasSpareInput: true,
   isOver: true,
   winner: 1,
   endReason: 'time',
@@ -62,7 +64,8 @@ const ffaSnapshot: FfaSnapshotMessage = {
   tick: 3599,
   gameTick: 99999,
   ackSeq: 4242,
-  self: { state: 'wreck', ticksLeft: 45, killerId: 17, idleTicksLeft: null },
+  hasSpareInput: false,
+  self: { state: 'wreck', ticksLeft: 45, killerId: 17, idleTicksLeft: null, isOut: false },
   tanks: [
     {
       id: 17,
@@ -100,6 +103,7 @@ const samples: Message[] = [
     stats: { armor: 0, engine: 0, gun: 5, reload: 5 },
     token: '',
     isBot: false,
+    gameId: '',
   },
   {
     type: MessageType.Join,
@@ -109,6 +113,7 @@ const samples: Message[] = [
     stats: DEFAULT_STATS,
     token: 'Xy7-_q',
     isBot: true,
+    gameId: 'K7MF',
   },
   {
     type: MessageType.FfaWelcome,
@@ -117,6 +122,7 @@ const samples: Message[] = [
     gameId: 'K7MF',
     size: 30,
     rules: { wallSlidePercent: 30 },
+    inviteMiss: FfaInviteMiss.Gone,
   },
   {
     type: MessageType.FfaState,
@@ -151,7 +157,7 @@ const samples: Message[] = [
     suddenDeathAt: 85.4321,
   },
   ffaSnapshot,
-  { ...ffaSnapshot, self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: 300 } },
+  { ...ffaSnapshot, self: { state: 'wreck', ticksLeft: 0, killerId: null, idleTicksLeft: 300, isOut: true } },
   {
     type: MessageType.FfaScore,
     rows: [
@@ -165,6 +171,7 @@ const samples: Message[] = [
   { type: MessageType.Error, code: ErrorCode.Replaced, text: 'место занято с другого устройства' },
   { type: MessageType.Input, seq: 4294967295, action: { throttle: 1, turn: -1, turretTurn: 0, isFiring: true } },
   { type: MessageType.Ping, clientTime: 1790899403123.456 },
+  { type: MessageType.Leave },
   { type: MessageType.Welcome, side: 1, roomCode: 'xyz' },
   {
     type: MessageType.RoomState,
@@ -208,6 +215,13 @@ describe('кодек протокола', () => {
       expect(decoded).toEqual(message);
     },
   );
+
+  it('сообщения клиента — вход, команда, пинг, выход; ответы сервера — нет', () => {
+    const fromClient = samples.filter(isClientMessage).map((message) => message.type);
+    expect(new Set(fromClient)).toEqual(
+      new Set([MessageType.Join, MessageType.Input, MessageType.Ping, MessageType.Leave]),
+    );
+  });
 
   it('правила раунда — байт процента скольжения, лишнее срезается до 100', () => {
     expect(rulesToByte({ wallSlidePercent: 0 })).toBe(0);
@@ -256,14 +270,14 @@ describe('кодек протокола', () => {
     expect(() => decode(error)).toThrow(RangeError);
 
     const badWinner = encode(snapshot);
-    badWinner[14] = 7;
+    badWinner[15] = 7;
     expect(() => decode(badWinner)).toThrow(RangeError);
 
     const badReason = encode(snapshot);
-    badReason[15] = 9;
+    badReason[16] = 9;
     expect(() => decode(badReason)).toThrow(RangeError);
 
-    const headerBytes = 1 + 4 + 4 + 4 + 1 + 1 + 1 + 8 + 2 * 57;
+    const headerBytes = 1 + 4 + 4 + 4 + 1 + 1 + 1 + 1 + 8 + 2 * 57;
     const badBulletOwner = encode({ ...snapshot, kits: [], events: [] });
     badBulletOwner[headerBytes + 2 + 4] = 5;
     expect(() => decode(badBulletOwner)).toThrow(RangeError);
@@ -297,11 +311,15 @@ describe('кодек протокола', () => {
       gameId: '',
       size: 10,
       rules: { wallSlidePercent: 0 },
+      inviteMiss: FfaInviteMiss.None,
     });
+    const badMiss = welcome.slice();
     welcome[1 + 2 + 1 + 1] = 11;
     expect(() => decode(welcome)).toThrow(RangeError);
+    badMiss[1 + 2 + 1 + 1 + 1 + 1] = 3;
+    expect(() => decode(badMiss)).toThrow(RangeError);
 
-    const selfOffset = 1 + 4 + 4 + 4;
+    const selfOffset = 1 + 4 + 4 + 4 + 1;
     const badState = encode(ffaSnapshot);
     badState[selfOffset] = 9;
     expect(() => decode(badState)).toThrow(RangeError);
@@ -342,6 +360,7 @@ describe('кодек протокола', () => {
         stats: DEFAULT_STATS,
         token: '',
         isBot: false,
+        gameId: '',
       }),
     );
     expect(decoded.type).toBe(MessageType.Join);

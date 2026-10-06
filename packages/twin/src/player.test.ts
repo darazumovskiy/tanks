@@ -112,6 +112,7 @@ function snapshot(tick: number, enemyX: number, extra: Partial<SnapshotMessage> 
     tick,
     gameTick: tick + 2,
     ackSeq: 0,
+    hasSpareInput: false,
     isOver: false,
     winner: null,
     endReason: null,

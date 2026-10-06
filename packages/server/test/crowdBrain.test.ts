@@ -15,6 +15,7 @@ import {
   type ZonePlan,
 } from '@tanks/shared/engine';
 import {
+  FfaInviteMiss,
   FfaPhase,
   MessageType,
   type FfaSnapshotEvent,
@@ -23,8 +24,14 @@ import {
   type ServerMessage,
 } from '@tanks/shared/protocol';
 import { CrowdBot } from '../src/crowd/bot.js';
-import { CrowdBrain } from '../src/crowd/brain.js';
-import { CROWD_PROFILES, crowdPyramid, type CrowdLevel, type CrowdProfile } from '../src/crowd/profile.js';
+import { CrowdBrain, PathQuota, type PathAllowance } from '../src/crowd/brain.js';
+import {
+  CROWD_PROFILES,
+  crowdNickname,
+  crowdPyramid,
+  type CrowdLevel,
+  type CrowdProfile,
+} from '../src/crowd/profile.js';
 import { chooseTarget, TargetBook, Targeting } from '../src/crowd/targets.js';
 import { crowdView, type CrowdBullet, type CrowdTank, type CrowdView, type Frame } from '../src/crowd/view.js';
 import { seededRandom } from './support.js';
@@ -294,6 +301,52 @@ describe('мозг толпы на крафтовых видах', () => {
     expect(Math.abs(action.turn)).toBeGreaterThan(0.3);
   });
 
+  it('первый путь — только на своём тике по фазе: десять ботов на одном тике ищут путь по одному', () => {
+    const walled: BattleMap = { ...OPEN, walls: [{ x: 900, y: 250, w: 40, h: 400 }] };
+    const me = crowdTank(ME, 700, 450, { heading: 0 });
+    const target = crowdTank(2, 1100, 450);
+    const isDetouring = (phase: number, tick: number): boolean => {
+      const brain = new CrowdBrain(profileOf(5), seededRandom(1), phase);
+      brain.init();
+      return Math.abs(brain.tick(viewOf(me, { map: walled, tick }), target).turn) > 0.3;
+    };
+    const phases = Array.from({ length: 10 }, (_, phase) => phase);
+    expect(phases.filter((phase) => isDetouring(phase, 1))).toEqual([9]);
+    expect(phases.filter((phase) => isDetouring(phase, 4))).toEqual([6]);
+  });
+
+  describe('поиск пути при ходе не на каждом тике', () => {
+    const walled: BattleMap = { ...OPEN, walls: [{ x: 900, y: 250, w: 40, h: 400 }] };
+    const me = crowdTank(ME, 700, 450, { heading: 0 });
+    const target = crowdTank(2, 1100, 450);
+    const isDetour = (action: Action): boolean => Math.abs(action.turn) > 0.3;
+    const denied: PathAllowance = { take: () => false };
+
+    it('тик расписания между ходами засчитывается: ходил на 5 и 12 — ищет путь на 12; на 11 и 12 — нет', () => {
+      const skipped = brainOf(profileOf(5));
+      skipped.tick(viewOf(me, { map: walled, tick: 5 }), target);
+      const steady = brainOf(profileOf(5));
+      steady.tick(viewOf(me, { map: walled, tick: 11 }), target);
+      expect(isDetour(skipped.tick(viewOf(me, { map: walled, tick: 12 }), target))).toBe(true);
+      expect(isDetour(steady.tick(viewOf(me, { map: walled, tick: 12 }), target))).toBe(false);
+    });
+
+    it('без разрешения едет прямо к цели пути; на следующем ходу с разрешением — в обход, хотя тик не расписания', () => {
+      const brain = brainOf(profileOf(5));
+      expect(isDetour(brain.tick(viewOf(me, { map: walled, tick: 10 }), target, denied))).toBe(false);
+      expect(isDetour(brain.tick(viewOf(me, { map: walled, tick: 11 }), target))).toBe(true);
+    });
+
+    it('разрешение прохода: из десяти ботов, которым пора, путь ищут двое; бюджет прохода вышел — один', () => {
+      const detoursWith = (quota: PathQuota): number =>
+        Array.from({ length: 10 }, () =>
+          brainOf(profileOf(5)).tick(viewOf(me, { map: walled, tick: 10 }), target, quota),
+        ).filter(isDetour).length;
+      expect(detoursWith(new PathQuota(() => false))).toBe(2);
+      expect(detoursWith(new PathQuota(() => true))).toBe(1);
+    });
+  });
+
   it('цель внутри сплошной стены недостижима: пути нет, едет прямо на цель', () => {
     const block: BattleMap = { ...OPEN, walls: [{ x: 900, y: 100, w: 600, h: 700 }] };
     const me = crowdTank(ME, 400, 450, { heading: 0 });
@@ -339,6 +392,87 @@ describe('мозг толпы на крафтовых видах', () => {
     const leading = brainOf(profileOf(5, { aimNoiseRad: 0, leadChance: 1, leadQuality: 1 }));
     const plain = brainOf(profileOf(5, { aimNoiseRad: 0, leadChance: 0 }));
     expect(leading.tick(viewOf(me), moving).turretTurn).toBeGreaterThan(plain.tick(viewOf(me), moving).turretTurn);
+  });
+
+  describe('таймеры в тиках: при решении раз в 3 тика держатся столько же тиков, сколько при решении каждый тик', () => {
+    const SPARSE_STEP = 3;
+
+    // Между решениями — прошлая команда, как у серверного бота, пропустившего ход.
+    function decideEvery(step: number, count: number, decide: (tick: number) => Action): Action[] {
+      const actions: Action[] = [];
+      let last = IDLE_ACTION;
+      for (let tick = 0; tick < count; tick++) {
+        if (tick % step === 0) {
+          last = decide(tick);
+        }
+        actions.push(last);
+      }
+      return actions;
+    }
+
+    // Отрезки подряд идущих тиков с условием: тик начала и длина.
+    function runsOf(
+      actions: readonly Action[],
+      isOn: (action: Action) => boolean,
+    ): { start: number; length: number }[] {
+      const runs: { start: number; length: number }[] = [];
+      actions.forEach((action, tick) => {
+        const last = runs.at(-1);
+        if (!isOn(action)) {
+          return;
+        }
+        if (last !== undefined && last.start + last.length === tick) {
+          last.length++;
+          return;
+        }
+        runs.push({ start: tick, length: 1 });
+      });
+      return runs;
+    }
+
+    function expectSameTiming(play: (step: number) => { start: number; length: number }[]): void {
+      const everyTick = play(1);
+      const sparse = play(SPARSE_STEP);
+      expect(everyTick.length).toBeGreaterThan(0);
+      expect(sparse).toHaveLength(everyTick.length);
+      everyTick.forEach((run, index) => {
+        expect(Math.abs((sparse[index]?.start ?? Infinity) - run.start)).toBeLessThanOrEqual(SPARSE_STEP);
+        expect(Math.abs((sparse[index]?.length ?? Infinity) - run.length)).toBeLessThanOrEqual(SPARSE_STEP);
+      });
+    }
+
+    it('пауза патруля', () => {
+      const me = crowdTank(ME, 800, 450);
+      expectSameTiming((step) => {
+        const brain = brainOf(profileOf(1, { pauseEverySec: 2 }));
+        const actions = decideEvery(step, 200, (tick) => brain.tick(viewOf(me, { tick }), null));
+        return runsOf(actions, (action) => action.throttle === 0 && action.turn === 0);
+      });
+    });
+
+    it('застревание в танке: секунда газа без движения, затем задний ход', () => {
+      const me = crowdTank(ME, 400, 450);
+      const enemy = crowdTank(2, 1200, 450);
+      expectSameTiming((step) => {
+        const brain = brainOf(profileOf(4));
+        const actions = decideEvery(step, 100, (tick) => brain.tick(viewOf(me, { tick, enemies: [enemy] }), enemy));
+        return runsOf(actions, (action) => action.throttle < 0);
+      });
+    });
+
+    it('уклонение: уход держится, хотя снаряд уже летит прочь', () => {
+      const me = crowdTank(ME, 600, 450, { heading: FACING_NORTH });
+      const enemy = crowdTank(2, 1300, 450);
+      const away = { ...FROM_WEST, vx: -FROM_WEST.vx };
+      expectSameTiming((step) => {
+        const brain = brainOf(DODGER);
+        const actions = decideEvery(step, 30, (tick) =>
+          brain.tick(viewOf(me, { tick, bullets: [tick === 0 ? FROM_WEST : away], enemies: [enemy] }), enemy),
+        );
+        const dodge = actions[0];
+        return runsOf(actions, (action) => action.throttle === dodge?.throttle && action.turn === dodge.turn);
+      });
+    });
   });
 
   it('монетка упреждения бросается заново на каждый выстрел: за много перезарядок выпадают оба исхода', () => {
@@ -498,6 +632,18 @@ describe('пирамида уровней', () => {
     expect(crowdPyramid(0)).toEqual([]);
     expect(crowdPyramid(48)).toHaveLength(48);
   });
+
+  it('6 ботов — по одному уровней 1–5 и 7; ник — имя уровня и уровень в скобках', () => {
+    expect(crowdPyramid(6)).toEqual([1, 2, 3, 4, 5, 7]);
+    expect(crowdPyramid(6).map(crowdNickname)).toEqual([
+      'Манекен [1]',
+      'Прогульщик [2]',
+      'Новобранец [3]',
+      'Сержант [4]',
+      'Ветеран [5]',
+      'Призрак [7]',
+    ]);
+  });
 });
 
 const TEST_MAP: FfaMap = {
@@ -545,7 +691,8 @@ function snapshot(gameTick: number, overrides: Partial<FfaSnapshotMessage> = {})
     tick: gameTick,
     gameTick,
     ackSeq: 0,
-    self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: null },
+    hasSpareInput: false,
+    self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: null, isOut: false },
     tanks: [tankSnapshot(ME, 400, 450), tankSnapshot(2, 900, 450), tankSnapshot(3, 1500, 450)],
     kits: [{ isActive: true, respawnIn: 0 }],
     events: [],
@@ -562,7 +709,15 @@ function hit(by: number | null, value: number, tank = ME): FfaSnapshotEvent {
 
 function enter(bot: CrowdBot, phase: FfaPhase = FfaPhase.Fight): void {
   const messages: ServerMessage[] = [
-    { type: MessageType.FfaWelcome, playerId: ME, token: 'пропуск', gameId: 'игра', size: 10, rules: DEFAULT_RULES },
+    {
+      type: MessageType.FfaWelcome,
+      playerId: ME,
+      token: 'пропуск',
+      gameId: 'игра',
+      size: 10,
+      rules: DEFAULT_RULES,
+      inviteMiss: FfaInviteMiss.None,
+    },
     {
       type: MessageType.FfaRoster,
       players: [
@@ -595,6 +750,7 @@ describe('бот толпы на сообщениях сервера', () => {
       gameId: 'и',
       size: 10,
       rules: DEFAULT_RULES,
+      inviteMiss: FfaInviteMiss.None,
     });
     expect(bot.receive(snapshot(2))).toBeNull();
   });
@@ -620,10 +776,58 @@ describe('бот толпы на сообщениях сервера', () => {
     const fallen = botOf();
     enter(fallen);
     for (const state of ['wreck', 'waiting', 'spectator'] as const) {
-      const self = { state, ticksLeft: 30, killerId: 2, idleTicksLeft: null };
+      const self = { state, ticksLeft: 30, killerId: 2, idleTicksLeft: null, isOut: false };
       expect(fallen.receive(snapshot(1, { self }))).toBeNull();
     }
     expect(fallen.receive(snapshot(2))?.seq).toBe(1);
+  });
+
+  it('пропущенный ход: повтор прошлой команды без выстрела', () => {
+    const bot = botOf(7);
+    enter(bot);
+    let shot: Action | null = null;
+    for (let tick = 1; tick <= 60 && shot === null; tick++) {
+      const action = bot.receive(snapshot(tick))?.action;
+      shot = action?.isFiring === true ? action : null;
+    }
+    expect(shot).not.toBeNull();
+    expect(bot.repeat()?.action).toEqual({ ...shot, isFiring: false });
+  });
+
+  it('уход с поля сбрасывает прошлую команду: подбит, танк пропал из состава, новый матч, новое соединение — повтора нет', () => {
+    const wreck = { state: 'wreck' as const, ticksLeft: 30, killerId: 2, idleTicksLeft: null, isOut: false };
+    const fallen = botOf();
+    enter(fallen);
+    fallen.receive(snapshot(1));
+    fallen.receive(snapshot(2, { self: wreck }));
+    expect(fallen.repeat()).toBeNull();
+    const vanished = botOf();
+    enter(vanished);
+    vanished.receive(snapshot(1));
+    expect(vanished.receive(snapshot(2, { tanks: [tankSnapshot(2, 900, 450)] }))).toBeNull();
+    expect(vanished.repeat()).toBeNull();
+    const restarted = botOf();
+    enter(restarted);
+    restarted.receive(snapshot(1));
+    enter(restarted);
+    expect(restarted.repeat()).toBeNull();
+    const rejoined = botOf();
+    enter(rejoined);
+    rejoined.receive(snapshot(1));
+    rejoined.joinMessage();
+    expect(rejoined.repeat()).toBeNull();
+  });
+
+  it('снимок живого ждёт решения; следом снимок, на котором бот подбит, — решать нечего', () => {
+    const bot = botOf();
+    enter(bot);
+    const frame = { tick: 1, tanks: [crowdTank(ME, 400, 450), crowdTank(2, 900, 450)], bullets: [] };
+    const wreck = { state: 'wreck' as const, ticksLeft: 30, killerId: 2, idleTicksLeft: null, isOut: false };
+    bot.absorb(snapshot(1), frame);
+    expect(bot.hasUndecided).toBe(true);
+    bot.absorb(snapshot(2, { self: wreck }), { ...frame, tick: 2 });
+    expect(bot.hasUndecided).toBe(false);
+    expect(bot.decide()).toBeNull();
   });
 
   it('башня с учётом неподтверждённых команд: пока сервер их не применил, бот не проскакивает цель', () => {

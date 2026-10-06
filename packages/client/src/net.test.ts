@@ -1,5 +1,13 @@
 import { DEFAULT_RULES, DEFAULT_STATS } from '@tanks/shared/engine';
-import { decode, encode, ErrorCode, FfaPhase, MessageType, type ClientMessage } from '@tanks/shared/protocol';
+import {
+  decode,
+  encode,
+  ErrorCode,
+  FfaInviteMiss,
+  FfaPhase,
+  MessageType,
+  type ClientMessage,
+} from '@tanks/shared/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { NetClient, RECONNECT_BASE_MS, RECONNECT_MAX_MS, type NetHandlers, type SocketLike } from './net.js';
 
@@ -72,7 +80,7 @@ describe('NetClient', () => {
     client = new NetClient(
       'ws://test/ws',
       handlers,
-      { roomCode: 'abc', nickname: 'Дима', stats: { ...DEFAULT_STATS }, token: '' },
+      { roomCode: 'abc', nickname: 'Дима', stats: { ...DEFAULT_STATS }, token: '', gameId: '' },
       {
         createSocket: (): SocketLike => {
           const socket = new FakeSocket();
@@ -249,7 +257,7 @@ describe('NetClient', () => {
       const other = new NetClient(
         'ws://test/ws',
         handlers,
-        { roomCode: 'abc', nickname: 'Дима', stats: { ...DEFAULT_STATS }, token: '' },
+        { roomCode: 'abc', nickname: 'Дима', stats: { ...DEFAULT_STATS }, token: '', gameId: '' },
         { createSocket: (): SocketLike => new FakeSocket() },
       );
       const listener = added.mock.calls.find(([type]) => type === 'visibilitychange')?.[1];
@@ -284,7 +292,15 @@ describe('NetClient в общем бою', () => {
   };
 
   const welcome = (token: string): Uint8Array =>
-    encode({ type: MessageType.FfaWelcome, playerId: 3, token, gameId: 'K7QX', size: 10, rules: DEFAULT_RULES });
+    encode({
+      type: MessageType.FfaWelcome,
+      playerId: 3,
+      token,
+      gameId: 'K7QX',
+      size: 10,
+      rules: DEFAULT_RULES,
+      inviteMiss: FfaInviteMiss.None,
+    });
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -296,7 +312,7 @@ describe('NetClient в общем бою', () => {
     client = new NetClient(
       'ws://test/ws',
       handlers,
-      { roomCode: 'ffa10', nickname: 'Дима', stats: { ...DEFAULT_STATS }, token: 'из-хранилища' },
+      { roomCode: 'ffa10', nickname: 'Дима', stats: { ...DEFAULT_STATS }, token: 'из-хранилища', gameId: 'ZZ9Q' },
       {
         createSocket: (): SocketLike => {
           const socket = new FakeSocket();
@@ -313,14 +329,24 @@ describe('NetClient в общем бою', () => {
     vi.useRealTimers();
   });
 
-  it('первый вход несёт пропуск из хранилища; после обрыва — пропуск из последнего приветствия', () => {
+  it('первый вход несёт пропуск из хранилища и номер игры приглашения; после обрыва — пропуск из последнего приветствия и тот же номер', () => {
     latest().open();
-    expect(latest().sent[0]).toMatchObject({ type: MessageType.Join, roomCode: 'ffa10', token: 'из-хранилища' });
+    expect(latest().sent[0]).toMatchObject({
+      type: MessageType.Join,
+      roomCode: 'ffa10',
+      token: 'из-хранилища',
+      gameId: 'ZZ9Q',
+    });
     latest().receive(welcome('новый-пропуск'));
     latest().drop();
     vi.advanceTimersByTime(RECONNECT_BASE_MS);
     latest().open();
-    expect(latest().sent[0]).toMatchObject({ type: MessageType.Join, token: 'новый-пропуск', isBot: false });
+    expect(latest().sent[0]).toMatchObject({
+      type: MessageType.Join,
+      token: 'новый-пропуск',
+      isBot: false,
+      gameId: 'ZZ9Q',
+    });
   });
 
   it.each([ErrorCode.Idle, ErrorCode.Replaced])('ошибка %i — без переподключения', (code) => {
@@ -365,7 +391,8 @@ describe('NetClient в общем бою', () => {
         tick: 4,
         gameTick: 90,
         ackSeq: 0,
-        self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: null },
+        hasSpareInput: false,
+        self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: null, isOut: false },
         tanks: [],
         kits: [],
         events: [],

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_STATS } from '@tanks/shared/engine';
-import { MessageType } from '@tanks/shared/protocol';
+import { MessageType, PROTOCOL_VERSION } from '@tanks/shared/protocol';
 import { createApp, type App } from '../src/app.js';
 import { Room } from '../src/room.js';
 import { TestClient } from './client.js';
@@ -16,10 +16,20 @@ const EXPECTED_SERIES = [
   'tanks_event_loop_delay_ms{quantile="0.5"}',
   'tanks_event_loop_delay_ms{quantile="0.99"}',
   'tanks_event_loop_delay_ms{quantile="max"}',
+  'tanks_bot_think_ms{quantile="0.5"}',
+  'tanks_bot_think_ms{quantile="0.99"}',
+  'tanks_bot_think_ms{quantile="max"}',
+  'tanks_bot_wait_ticks{quantile="0.5"}',
+  'tanks_bot_wait_ticks{quantile="0.99"}',
+  'tanks_bot_wait_ticks{quantile="max"}',
+  'tanks_bot_skipped_total',
   'tanks_ticks_total',
   'tanks_ticks_late_total',
   'tanks_rooms',
   'tanks_connections',
+  ...['duel', 'ffa10', 'ffa30', 'ffa50'].flatMap((mode) =>
+    ['human', 'bot', 'swarm'].map((kind) => `tanks_players{mode="${mode}",kind="${kind}"}`),
+  ),
   'tanks_messages_total{direction="in"}',
   'tanks_messages_total{direction="out"}',
   'tanks_bytes_total{direction="in"}',
@@ -88,6 +98,8 @@ describe('GET /metrics', () => {
     expect([...series.keys()]).toEqual(EXPECTED_SERIES);
     expect(valueOf(series, 'tanks_rooms')).toBe(0);
     expect(valueOf(series, 'tanks_connections')).toBe(0);
+    expect(valueOf(series, 'tanks_bot_skipped_total')).toBe(0);
+    expect([...series].filter(([key, value]) => key.startsWith('tanks_players') && value !== 0)).toEqual([]);
     expect(valueOf(series, 'tanks_inputs_dropped_total{reason="stale"}')).toBe(0);
     expect(valueOf(series, 'process_resident_memory_bytes')).toBeGreaterThan(0);
     expect(valueOf(series, 'process_cpu_seconds_total')).toBeGreaterThan(0);
@@ -124,6 +136,31 @@ describe('GET /metrics', () => {
     expect(valueOf(series, 'tanks_tick_duration_ms{quantile="0.5"}')).toBeLessThanOrEqual(
       valueOf(series, 'tanks_tick_duration_ms{quantile="max"}'),
     );
+  });
+
+  it('игроки по видам: люди и серверные боты общей игры, бот роя, человек и бот лестницы в дуэли; ход ботов', async () => {
+    const human = await connect();
+    human.join('ffa10', 'Дима');
+    const swarmBot = await connect();
+    swarmBot.join('ffa30', 'Рой', DEFAULT_STATS, PROTOCOL_VERSION, '', true);
+    const duelist = await connect();
+    duelist.join('bot04x', 'Дуэлянт');
+    await duelist.nextOfType(MessageType.RoundStart);
+    let series = await scrape();
+    const deadline = Date.now() + SCRAPE_WAIT_MS;
+    while (valueOf(series, 'tanks_bot_think_ms{quantile="max"}') === 0 && Date.now() < deadline) {
+      await sleep(5 * TICK_MS);
+      series = await scrape();
+    }
+    const players = [...series].filter(([key, value]) => key.startsWith('tanks_players') && value !== 0);
+    expect(Object.fromEntries(players)).toEqual({
+      'tanks_players{mode="duel",kind="human"}': 1,
+      'tanks_players{mode="duel",kind="bot"}': 1,
+      'tanks_players{mode="ffa10",kind="human"}': 1,
+      'tanks_players{mode="ffa10",kind="bot"}': 6,
+      'tanks_players{mode="ffa30",kind="swarm"}': 1,
+    });
+    expect(valueOf(series, 'tanks_bot_think_ms{quantile="max"}')).toBeGreaterThan(0);
   });
 
   it('отброшенные команды считаются по причине ровно по числу отброшенных', async () => {

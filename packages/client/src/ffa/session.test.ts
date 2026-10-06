@@ -3,6 +3,7 @@ import { DEFAULT_RULES, DEFAULT_STATS, FFA_RESPAWN_WAIT_TICKS } from '@tanks/sha
 import {
   ErrorCode,
   EventFlag,
+  FfaInviteMiss,
   FfaPhase,
   MessageType,
   type FfaMatchStartMessage,
@@ -11,6 +12,7 @@ import {
   type FfaSnapshotEvent,
   type FfaSnapshotMessage,
   type FfaStateMessage,
+  type FfaTankSnapshot,
   type FfaWelcomeMessage,
 } from '@tanks/shared/protocol';
 import { feedText, FfaSession, type FfaHudModel } from './session.js';
@@ -22,8 +24,16 @@ const SUDDEN_DEATH_AT = 85;
 // Зритель с момента 0: вводная карточка гаснет к 4 с, дальше видна плашка «Смотришь за».
 const SPECTATOR_INTRO_END = 4000;
 
-function welcome(playerId = ME, gameId = 'K7QX'): FfaWelcomeMessage {
-  return { type: MessageType.FfaWelcome, playerId, token: 'пропуск', gameId, size: 10, rules: DEFAULT_RULES };
+function welcome(playerId = ME, gameId = 'K7QX', inviteMiss: FfaInviteMiss = FfaInviteMiss.None): FfaWelcomeMessage {
+  return {
+    type: MessageType.FfaWelcome,
+    playerId,
+    token: 'пропуск',
+    gameId,
+    size: 10,
+    rules: DEFAULT_RULES,
+    inviteMiss,
+  };
 }
 
 function state(
@@ -50,8 +60,9 @@ function self(
   killerId: number | null = null,
   ticksLeft = 30,
   idleTicksLeft: number | null = null,
+  isOut = false,
 ): FfaSelf {
-  return { state: stateName, ticksLeft, killerId, idleTicksLeft };
+  return { state: stateName, ticksLeft, killerId, idleTicksLeft, isOut };
 }
 
 function death(tank: number, by: number | null, flags = 0): FfaSnapshotEvent {
@@ -68,6 +79,7 @@ function snapshot(tick: number, own: FfaSelf = self('alive'), events: FfaSnapsho
     tick,
     gameTick: tick,
     ackSeq: 0,
+    hasSpareInput: false,
     self: own,
     tanks: [],
     kits: [],
@@ -76,6 +88,14 @@ function snapshot(tick: number, own: FfaSelf = self('alive'), events: FfaSnapsho
     bounces: [],
     deaths: [],
   };
+}
+
+function tank(id: number, isAlive = true): FfaTankSnapshot {
+  return { id, x: 100, y: 100, heading: 0, turret: 0, speed: 0, hp: 100, reloadLeft: 0, isAlive, shieldLeft: 0 };
+}
+
+function withTanks(message: FfaSnapshotMessage, tanks: FfaTankSnapshot[]): FfaSnapshotMessage {
+  return { ...message, tanks };
 }
 
 function roster(...players: [number, string, boolean][]): Parameters<FfaSession['onRoster']>[0] {
@@ -93,10 +113,16 @@ function score(session: FfaSession, ...rows: FfaScoreRow[]): void {
   session.onScore({ type: MessageType.FfaScore, rows });
 }
 
-function inFight(): FfaSession {
+const WITH_BOT: [number, string, boolean][] = [
+  [ME, 'Дима', false],
+  [5, 'Вася', false],
+  [6, 'Робот', true],
+];
+
+function inFight(players: [number, string, boolean][] = WITH_BOT): FfaSession {
   const session = new FfaSession(10);
   session.onWelcome(welcome(), 0);
-  session.onRoster(roster([ME, 'Дима', false], [5, 'Вася', false], [6, 'Робот', true]));
+  session.onRoster(roster(...players));
   session.onState(state(FfaPhase.Fight, 3600), 0);
   session.onMatchStart(matchStart());
   return session;
@@ -199,6 +225,21 @@ describe('возврат, повторы и устаревшие сообщен�
     expect(hud(session, 6000).connection).toBe('late');
     expect(hud(session, 7000).connection).toBeNull();
     expect(session.onWelcome(welcome(9, 'ZZZZ'), 8000)).toBe('lost');
+  });
+
+  it('приглашение мимо: причина из приветствия видна 8 с; без промаха — ничего; окончательный экран её гасит', () => {
+    const session = new FfaSession(10);
+    session.onWelcome(welcome(ME, 'K7QX', FfaInviteMiss.Full), 1000);
+    expect(hud(session, 1000).invite).toBe('full');
+    expect(hud(session, 8999).invite).toBe('full');
+    expect(hud(session, 9000).invite).toBeNull();
+    session.onWelcome(welcome(9, 'ZZZZ', FfaInviteMiss.Gone), 10_000);
+    expect(hud(session, 10_000).invite).toBe('gone');
+    session.onError(ErrorCode.Idle);
+    expect(hud(session, 10_000).invite).toBeNull();
+    const fresh = new FfaSession(10);
+    fresh.onWelcome(welcome(), 0);
+    expect(hud(fresh, 0).invite).toBeNull();
   });
 
   it('повторный старт того же матча ничего не сбрасывает; снимок с меньшим тиком пропускается', () => {
@@ -410,11 +451,11 @@ describe('подбит и возрождение', () => {
     expect(hud(session).death).toBeNull();
   });
 
-  it('финал наступил, пока подбит — «ты выбыл» без отсчёта, после обломков зритель с той же карточкой; ждал — сразу', () => {
+  it('финал наступил, пока подбит, сервер прислал «выбыл» — «ты выбыл» без отсчёта, после обломков зритель с той же карточкой; ждал — сразу', () => {
     const session = inFight();
     session.acceptSnapshot(snapshot(SUDDEN_DEATH_AT * 30 - 10, self('wreck', 5, 60), [death(ME, 5)]), 0);
     expect(hud(session).death?.kind).toBe('killed');
-    session.acceptSnapshot(snapshot(SUDDEN_DEATH_AT * 30, self('wreck', 5, 50), [suddenDeath()]), 100);
+    session.acceptSnapshot(snapshot(SUDDEN_DEATH_AT * 30, self('wreck', 5, 50, null, true), [suddenDeath()]), 100);
     expect(hud(session, 100).death).toEqual({ kind: 'out' });
     session.acceptSnapshot(snapshot(SUDDEN_DEATH_AT * 30 + 50, self('spectator', 5, 0)), 2000);
     expect(session.screen()).toBe('spectator');
@@ -429,17 +470,82 @@ describe('подбит и возрождение', () => {
 
 describe('финал', () => {
   it('с начала финала минус 5 с — «ФИНАЛ ЧЕРЕЗ 5…1» по времени матча; событие — «ФИНАЛ!» на 2 с', () => {
-    const session = inFight();
+    const session = inFight([
+      [ME, 'Дима', false],
+      [5, 'Вася', false],
+    ]);
     session.acceptSnapshot(snapshot((SUDDEN_DEATH_AT - 5) * 30 - 1), 0);
     expect(hud(session).final).toBeNull();
     session.acceptSnapshot(snapshot((SUDDEN_DEATH_AT - 5) * 30), 0);
-    expect(hud(session).final).toEqual({ kind: 'soon', secondsLeft: 5 });
+    expect(hud(session).final).toEqual({ kind: 'soon', secondsLeft: 5, hasBots: false });
     session.acceptSnapshot(snapshot((SUDDEN_DEATH_AT - 1) * 30 + 1), 0);
-    expect(hud(session).final).toEqual({ kind: 'soon', secondsLeft: 1 });
+    expect(hud(session).final).toEqual({ kind: 'soon', secondsLeft: 1, hasBots: false });
     session.acceptSnapshot(snapshot(SUDDEN_DEATH_AT * 30, self('alive'), [suddenDeath()]), 1000);
-    expect(hud(session, 2999).final).toEqual({ kind: 'started' });
+    expect(hud(session, 2999).final).toEqual({ kind: 'started', hasBots: false });
     expect(hud(session, 3000).final).toBeNull();
     expect(session.isFinal).toBe(true);
+  });
+
+  it('бот в матче: тексты про ботов не мигают, пока он ждёт возрождения; выбывшие и чужие боты не считаются', () => {
+    const session = inFight();
+    session.acceptSnapshot(snapshot((SUDDEN_DEATH_AT - 5) * 30), 0);
+    expect(hud(session).final).toEqual({ kind: 'soon', secondsLeft: 5, hasBots: true });
+    session.acceptSnapshot(withTanks(snapshot(SUDDEN_DEATH_AT * 30, self('alive'), [suddenDeath()]), [tank(6)]), 1000);
+    expect(hud(session, 1000).final).toEqual({ kind: 'started', hasBots: true });
+    session.acceptSnapshot(withTanks(snapshot(SUDDEN_DEATH_AT * 30 + 1, self('alive'), [death(6, 5)]), []), 1100);
+    expect(hud(session, 1100).final).toEqual({ kind: 'started', hasBots: false });
+
+    const outAtStart = inFight();
+    outAtStart.acceptSnapshot(
+      withTanks(snapshot(SUDDEN_DEATH_AT * 30, self('alive'), [suddenDeath()]), [tank(6, false)]),
+      1000,
+    );
+    expect(hud(outAtStart, 1000).final).toEqual({ kind: 'started', hasBots: false });
+
+    const knockedOut = inFight();
+    knockedOut.acceptSnapshot(withTanks(snapshot(SUDDEN_DEATH_AT * 30, self('alive'), [suddenDeath()]), [tank(6)]), 0);
+    knockedOut.acceptSnapshot(
+      withTanks(snapshot(SUDDEN_DEATH_AT * 30 + 1, self('alive'), [death(6, null, EventFlag.Out)]), [tank(6, false)]),
+      100,
+    );
+    expect(hud(knockedOut, 100).final).toEqual({ kind: 'started', hasBots: false });
+
+    const stranger = inFight([
+      [ME, 'Дима', false],
+      [5, 'Вася', false],
+    ]);
+    stranger.acceptSnapshot(withTanks(snapshot(SUDDEN_DEATH_AT * 30, self('alive'), [suddenDeath()]), [tank(9)]), 0);
+    expect(hud(stranger).final).toEqual({ kind: 'started', hasBots: false });
+  });
+
+  it('подбит в финале: судьбу решает сервер — без «выбыл» карточка с отсчётом, с «выбыл» — «ты выбыл», даже при живом боте', () => {
+    const session = inFight();
+    session.acceptSnapshot(withTanks(snapshot(SUDDEN_DEATH_AT * 30, self('alive'), [suddenDeath()]), [tank(6)]), 0);
+    const killed = withTanks(snapshot(SUDDEN_DEATH_AT * 30 + 10, self('wreck', 6, 50), [death(ME, 6)]), [tank(6)]);
+    session.acceptSnapshot(killed, 1500);
+    expect(hud(session, 1500).death).toMatchObject({
+      kind: 'killed',
+      killerName: 'Робот',
+      isKillerBot: true,
+      respawnInS: 4,
+    });
+    session.acceptSnapshot(withTanks(snapshot(SUDDEN_DEATH_AT * 30 + 70, self('waiting', 6, 40)), []), 3500);
+    expect(hud(session, 3500).death).toMatchObject({ kind: 'killed', respawnInS: 2 });
+
+    const out = inFight();
+    out.acceptSnapshot(
+      withTanks(snapshot(SUDDEN_DEATH_AT * 30 + 10, self('wreck', 5, 50, null, true), [death(ME, 5)]), [tank(6)]),
+      0,
+    );
+    expect(hud(out).death).toEqual({ kind: 'out' });
+  });
+
+  it('бот выбыл за человека — строка ленты «выбыл»', () => {
+    const session = inFight();
+    session.acceptSnapshot(snapshot(SUDDEN_DEATH_AT * 30 + 1, self('alive'), [death(6, null, EventFlag.Out)]), 0);
+    const rows = hud(session).feed;
+    expect(rows).toMatchObject([{ victim: 'Робот', cause: 'out', isMyDeath: false, isMyKill: false }]);
+    expect(rows.map(feedText)).toEqual(['Робот ⊘ выбыл']);
   });
 
   it('вернулся в финал — финал по тику без надписи «ФИНАЛ!»; вошёл в финал зрителем — «финал уже идёт»', () => {

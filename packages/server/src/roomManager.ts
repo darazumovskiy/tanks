@@ -1,12 +1,20 @@
 import { DEFAULT_RULES, type FfaSize, type RoundRules, type Stats } from '@tanks/shared/engine';
-import { botLevelOf, isBotRoomCode } from '@tanks/shared/protocol';
+import { botLevelOf, FfaInviteMiss, isBotRoomCode } from '@tanks/shared/protocol';
 import { createBot } from './bots/ladder.js';
-import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaConnection, type FfaOptions } from './ffaGame.js';
+import { BotTurns, type BotTurnReport } from './crowd/botTurns.js';
+import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaConnection, type FfaOptions, type FfaSeat } from './ffaGame.js';
 import { NO_LOG, type GameLog } from './gameLog.js';
-import { NO_DROP_COUNTER, type InputDropCounter } from './metrics.js';
+import {
+  emptyPlayerCounts,
+  NO_DROP_COUNTER,
+  type InputDropCounter,
+  type PlayerCounts,
+  type PlayerMode,
+} from './metrics.js';
 import { DEFAULT_ROOM_OPTIONS, Room, type Connection, type RoomOptions, type Seat } from './room.js';
 
 const CODE_PATTERN = /^[a-z0-9]{3,16}$/;
+const FFA_MODES: Readonly<Record<FfaSize, PlayerMode>> = { 10: 'ffa10', 30: 'ffa30', 50: 'ffa50' };
 
 // Код с префиксом бота обязан нести заполненный уровень.
 export function isValidRoomCode(code: string): boolean {
@@ -16,17 +24,27 @@ export function isValidRoomCode(code: string): boolean {
   return !isBotRoomCode(code) || botLevelOf(code) !== null;
 }
 
+// gameId — номер игры из приглашения друга, пусто — любая игра этого размера.
 export interface FfaJoinRequest {
   nickname: string;
   stats: Stats;
   token: string;
   isBot: boolean;
+  gameId: string;
 }
 
-// release — что сделать с местом после ухода соединения.
+// quit — уход по кнопке «Выйти»; release — что сделать с комнатой после ухода соединения.
 interface Membership {
   seat: Seat;
+  quit: () => void;
   release: () => void;
+}
+
+function inviteMissOf(gameId: string, isGameFound: boolean): FfaInviteMiss {
+  if (gameId === '') {
+    return FfaInviteMiss.None;
+  }
+  return isGameFound ? FfaInviteMiss.Full : FfaInviteMiss.Gone;
 }
 
 // Держит все комнаты дуэлей и общие игры процесса и крутит общий тик; пустые удаляются.
@@ -35,6 +53,7 @@ export class RoomManager {
   private games: FfaGame[] = [];
   private readonly memberships = new Map<Connection, Membership>();
   private readonly botSeats = new Map<Room, Seat>();
+  private readonly botTurns = new BotTurns();
 
   constructor(
     private readonly options: RoomOptions = DEFAULT_ROOM_OPTIONS,
@@ -71,9 +90,13 @@ export class RoomManager {
     return this.memberships.get(connection)?.seat;
   }
 
+  // В дуэли выход кнопкой — то же, что закрытие соединения.
   attach(connection: Connection, room: Room, seat: Seat): void {
     this.memberships.set(connection, {
       seat,
+      quit: () => {
+        seat.leave();
+      },
       release: () => {
         this.releaseRoom(room);
       },
@@ -81,7 +104,8 @@ export class RoomManager {
   }
 
   // Пропуск живого игрока возвращает его место; прежнее соединение отвязывается и закрывается.
-  // Иначе — игра этого размера со свободным местом и наибольшим числом игроков или новая.
+  // Иначе — игра из приглашения, если в ней есть место для участника; нет — игра этого размера с местом и наибольшим
+  // числом участников или новая, а вошедший узнаёт, почему он не у друга.
   joinFfa(size: FfaSize, connection: FfaConnection, request: FfaJoinRequest): void {
     for (const game of request.token === '' ? [] : this.games) {
       const result = game.rejoin(request.token, connection);
@@ -95,19 +119,28 @@ export class RoomManager {
       this.attachFfa(connection, result.seat);
       return;
     }
+    const invited = this.games.find((game) => game.id === request.gameId && game.size === size);
+    if (invited?.hasFreeSeat === true) {
+      this.attachFfa(connection, invited.join(connection, request.nickname, request.stats, request.isBot));
+      return;
+    }
+    const miss = inviteMissOf(request.gameId, invited !== undefined);
     const game = this.pickGame(size);
-    this.attachFfa(connection, game.join(connection, request.nickname, request.stats, request.isBot));
+    this.attachFfa(connection, game.join(connection, request.nickname, request.stats, request.isBot, miss));
   }
 
   // Ушло соединение: место освобождается; общая игра держит игрока сама и удаляется в тике, когда опустеет.
   detach(connection: Connection): void {
-    const membership = this.memberships.get(connection);
-    if (membership === undefined) {
-      return;
-    }
-    this.memberships.delete(connection);
-    membership.seat.leave();
-    membership.release();
+    this.endMembership(connection, (membership) => {
+      membership.seat.leave();
+    });
+  }
+
+  // Игрок ушёл кнопкой: соединение отвязано от места, его команды и закрытие место больше не трогают.
+  quit(connection: Connection): void {
+    this.endMembership(connection, (membership) => {
+      membership.quit();
+    });
   }
 
   step(lateMs: number): void {
@@ -120,14 +153,59 @@ export class RoomManager {
     this.games = this.games.filter((game) => !game.isEmpty);
   }
 
-  private attachFfa(connection: FfaConnection, seat: Seat): void {
-    this.memberships.set(connection, { seat, release: () => undefined });
+  // Проход хода серверных ботов всех игр: все разбирают ящики, решают по очереди в бюджете.
+  thinkBots(isOverBudget: () => boolean): BotTurnReport {
+    for (const game of this.games) {
+      game.absorbBots();
+    }
+    return this.botTurns.take(
+      this.games.flatMap((game) => game.serverBots),
+      isOverBudget,
+    );
+  }
+
+  // Бот лестницы в дуэли — серверный бот, как в общей игре.
+  playerCounts(): PlayerCounts {
+    const counts = emptyPlayerCounts();
+    for (const room of this.rooms.values()) {
+      const bots = Number(this.botSeats.has(room));
+      counts.duel.human += room.playerCount - bots;
+      counts.duel.bot += bots;
+    }
+    for (const game of this.games) {
+      const kinds = game.playerKinds;
+      const entry = counts[FFA_MODES[game.size]];
+      entry.human += kinds.humans;
+      entry.bot += kinds.serverBots;
+      entry.swarm += kinds.swarmBots;
+    }
+    return counts;
+  }
+
+  private attachFfa(connection: FfaConnection, seat: FfaSeat): void {
+    this.memberships.set(connection, {
+      seat,
+      quit: () => {
+        seat.quit();
+      },
+      release: () => undefined,
+    });
+  }
+
+  private endMembership(connection: Connection, leave: (membership: Membership) => void): void {
+    const membership = this.memberships.get(connection);
+    if (membership === undefined) {
+      return;
+    }
+    this.memberships.delete(connection);
+    leave(membership);
+    membership.release();
   }
 
   private pickGame(size: FfaSize): FfaGame {
     const open = this.games.filter((game) => game.size === size && game.hasFreeSeat);
     const fullest = open.reduce<FfaGame | null>(
-      (best, game) => (best === null || game.playerCount > best.playerCount ? game : best),
+      (best, game) => (best === null || game.participantCount > best.participantCount ? game : best),
       null,
     );
     if (fullest !== null) {

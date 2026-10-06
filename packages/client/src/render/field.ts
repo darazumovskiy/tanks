@@ -102,6 +102,8 @@ export interface SceneTank {
   isAlive: boolean;
   color: string;
   alpha: number;
+  // Прозрачность только рисунка танка поверх alpha: плашка над ним её не берёт.
+  bodyAlpha: number;
   label: string;
   isBot: boolean;
 }
@@ -333,7 +335,7 @@ export class FieldRenderer {
     const { ctx } = this;
     const fx = this.effects.tankFx(tank.id);
     ctx.save();
-    ctx.globalAlpha = tank.alpha;
+    ctx.globalAlpha = tank.alpha * tank.bodyAlpha;
     drawTankSprite(ctx, this.artOf(tank.color), tank.x, tank.y, tank.heading, tank.turret, TANK_SPRITE_SIZE, {
       flash: fx.flash,
       recoil: fx.recoil,

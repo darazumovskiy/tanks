@@ -2,6 +2,7 @@ import { DEFAULT_RULES, DEFAULT_STATS, TICK_RATE, type FfaSize } from '@tanks/sh
 import {
   ErrorCode,
   EventFlag,
+  FfaInviteMiss,
   FfaPhase,
   MessageType,
   type FfaRosterEntry,
@@ -36,7 +37,7 @@ const BOTH: readonly FrameScreenId[] = ['phone', 'desktop'];
 const NOW = 100_000;
 const MATCH_SECONDS = 120;
 const SUDDEN_DEATH_AT = 85;
-const RESULTS_TICKS = 15 * TICK_RATE;
+const RESULTS_TICKS = 5 * TICK_RATE;
 const VASYA = 2;
 const SHARIK = 7;
 const DEFAULT_SIZE: FfaSize = 30;
@@ -122,11 +123,24 @@ function crowdRoster(): FfaRosterEntry[] {
   return CROWD.map((tank) => ({ id: tank.id, nickname: tank.name, stats: DEFAULT_STATS, isBot: tank.isBot === true }));
 }
 
-function joined(size: FfaSize, roster: FfaRosterEntry[]): FfaSession {
+function joined(
+  size: FfaSize,
+  roster: FfaRosterEntry[],
+  inviteMiss: FfaInviteMiss = FfaInviteMiss.None,
+  welcomedAt = 0,
+): FfaSession {
   const session = new FfaSession(size);
   session.onWelcome(
-    { type: MessageType.FfaWelcome, playerId: STAND_ME, token: 'стенд', gameId: 'K7QX', size, rules: DEFAULT_RULES },
-    0,
+    {
+      type: MessageType.FfaWelcome,
+      playerId: STAND_ME,
+      token: 'стенд',
+      gameId: 'K7QX',
+      size,
+      rules: DEFAULT_RULES,
+      inviteMiss,
+    },
+    welcomedAt,
   );
   session.onRoster({ type: MessageType.FfaRoster, players: roster });
   return session;
@@ -165,7 +179,7 @@ function startMatch(session: FfaSession): void {
 }
 
 function self(state: FfaSelf['state'], overrides: Partial<FfaSelf> = {}): FfaSelf {
-  return { state, ticksLeft: 0, killerId: null, idleTicksLeft: null, ...overrides };
+  return { state, ticksLeft: 0, killerId: null, idleTicksLeft: null, isOut: false, ...overrides };
 }
 
 function snapshot(session: FfaSession, tick: number, own: FfaSelf, events: FfaSnapshotEvent[], at: number): void {
@@ -175,6 +189,7 @@ function snapshot(session: FfaSession, tick: number, own: FfaSelf, events: FfaSn
       tick,
       gameTick: tick,
       ackSeq: 0,
+      hasSpareInput: false,
       self: own,
       tanks: [],
       kits: [],
@@ -283,6 +298,18 @@ export const FFA_HUD_FRAMES: readonly FfaHudFrame[] = [
     build: () => lobby(DEFAULT_SIZE, 4, null),
   },
   {
+    id: 'hud-lobby-invite',
+    title: 'лобби: пришёл по приглашению, а игра друга полна',
+    screens: PHONE,
+    scene: FLOOR_SCENE,
+    hasFieldControls: false,
+    build: () => {
+      const session = joined(DEFAULT_SIZE, lobbyRoster(4), FfaInviteMiss.Full, NOW);
+      setState(session, FfaPhase.Lobby, null, 4, NOW);
+      return { session, now: NOW };
+    },
+  },
+  {
     id: 'hud-lobby-start',
     title: 'лобби: минимум набран, старт назначен',
     screens: BOTH,
@@ -358,7 +385,7 @@ export const FFA_HUD_FRAMES: readonly FfaHudFrame[] = [
       snapshot(
         session,
         tick + 1,
-        self('wreck', { killerId: SHARIK, ticksLeft: 40 }),
+        self('wreck', { killerId: SHARIK, ticksLeft: 40, isOut: true }),
         [death(STAND_ME, SHARIK)],
         NOW - 8,
       );

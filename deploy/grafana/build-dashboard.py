@@ -13,7 +13,9 @@ LOKI = {"type": "loki", "uid": "grafanacloud-logs"}
 WIDTH = 24
 HALF = 12
 THIRD = 8
+QUARTER = 6
 HEIGHT = 8
+STAT_HEIGHT = 5
 LOGS_HEIGHT = 10
 
 # Секундные сводки клиентов с фильтрами дашборда по платформе и оболочке.
@@ -67,7 +69,67 @@ def row(title):
     return {"type": "row", "title": title, "collapsed": False, "gridPos": {"w": WIDTH, "h": 1}}
 
 
+GREEN = "green"
+YELLOW = "yellow"
+RED = "red"
+# Здоровье сервера — это отклик: паузы в сотни миллисекунд ломают игру, но в минутном среднем процессора их не видно.
+HEALTH_WINDOW = "5m"
+
+
+def stat(title, expr, description, unit="short", steps=None):
+    thresholds = [{"color": GREEN, "value": None}] + [{"color": color, "value": value} for value, color in steps or []]
+    return {
+        "type": "stat",
+        "title": title,
+        "description": description,
+        "datasource": PROM,
+        "gridPos": {"w": QUARTER, "h": STAT_HEIGHT},
+        "fieldConfig": {
+            "defaults": {
+                "unit": unit,
+                "decimals": 0,
+                "color": {"mode": "thresholds"},
+                "thresholds": {"mode": "absolute", "steps": thresholds},
+            },
+            "overrides": [],
+        },
+        "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
+            "textMode": "value",
+        },
+        "targets": [{"datasource": PROM, "expr": expr, "refId": "A", "instant": False}],
+    }
+
+
 PANELS = [
+    row("Сервер: ОК?"),
+    stat(
+        "Опоздавших тиков за 5 мин",
+        f"sum(increase(tanks_ticks_late_total[{HEALTH_WINDOW}])) or vector(0)",
+        "Тик начался позже расписания больше чем на тик. Зелёный — игра идёт ровно, красный — игроки видят рывки.",
+        steps=[(10, YELLOW), (30, RED)],
+    ),
+    stat(
+        "Самая длинная пауза сервера за 5 мин",
+        f'max(max_over_time(tanks_event_loop_delay_ms{{quantile="max"}}[{HEALTH_WINDOW}]))',
+        "Сколько сервер не успевал ни на что отвечать. Тик — 33 мс: пауза длиннее — тики опаздывают.",
+        unit="ms",
+        steps=[(33, YELLOW), (100, RED)],
+    ),
+    stat(
+        "Худший ход ботов за 5 мин",
+        f'max(max_over_time(tanks_bot_think_ms{{quantile="max"}}[{HEALTH_WINDOW}])) or vector(0)',
+        "Сколько ботам понадобилось после тика в худший момент. Бюджет — 6 мс; больше тика (33 мс) — тики опаздывают.",
+        unit="ms",
+        steps=[(15, YELLOW), (33, RED)],
+    ),
+    stat(
+        "Людей в игре",
+        'sum(tanks_players{kind="human"}) or vector(0)',
+        "Людей в играх сейчас по данным сервера; ботов — на панели «Онлайн: люди и боты».",
+    ),
     row("Игра"),
     timeseries(
         "Тик, мс",
@@ -95,6 +157,32 @@ PANELS = [
         PROM,
         [prom("increase(tanks_ticks_late_total[1m])", "опоздавших")],
         width=THIRD,
+    ),
+    timeseries(
+        "Ход серверных ботов после тика, мс",
+        PROM,
+        [
+            prom('tanks_bot_think_ms{quantile="0.5"}', "медиана"),
+            prom('tanks_bot_think_ms{quantile="0.99"}', "p99"),
+            prom('tanks_bot_think_ms{quantile="max"}', "максимум"),
+        ],
+        unit="ms",
+        width=THIRD,
+    ),
+    timeseries(
+        "Боты: пропуски из-за бюджета и ожидание решения",
+        PROM,
+        [
+            prom("increase(tanks_bot_skipped_total[1m])", "пропусков за минуту"),
+            prom('tanks_bot_wait_ticks{quantile="max"}', "дольше всех ждал, тиков"),
+        ],
+        width=THIRD,
+        overrides=[
+            {
+                "matcher": {"id": "byName", "options": "дольше всех ждал, тиков"},
+                "properties": [{"id": "custom.axisPlacement", "value": "right"}],
+            },
+        ],
     ),
     timeseries(
         "Комнаты и сокеты",
@@ -139,6 +227,20 @@ PANELS = [
         ],
     ),
     row("Игроки"),
+    timeseries(
+        "Онлайн: люди и боты",
+        PROM,
+        [
+            prom('sum(tanks_players{kind="human"})', "люди"),
+            prom('sum(tanks_players{kind="bot"})', "серверные боты"),
+            prom('sum(tanks_players{kind="swarm"})', "рой"),
+        ],
+    ),
+    timeseries(
+        "Люди по играм",
+        PROM,
+        [prom('sum by (mode) (tanks_players{kind="human"})', "{{mode}}")],
+    ),
     timeseries("Задержка до игроков, мс", LOKI, [loki_metric(unwrap("rtt"), "{{game}} {{side}} {{platform}}")], unit="ms"),
     timeseries("Кадров в секунду у игроков", LOKI, [loki_metric(unwrap("fps"), "{{game}} {{side}} {{platform}}")]),
     timeseries(
@@ -149,7 +251,7 @@ PANELS = [
         width=THIRD,
     ),
     timeseries(
-        "Игроков онлайн по платформам",
+        "Устройства людей по платформам",
         LOKI,
         [loki_metric(f"count by (platform) (sum by (game, side, platform) (count_over_time({CLIENT_SECONDS} [1m])))", "{{platform}}")],
         width=THIRD,

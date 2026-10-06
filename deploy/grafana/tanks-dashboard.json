@@ -66,7 +66,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "Игра",
+      "title": "Сервер: ОК?",
       "collapsed": false,
       "gridPos": {
         "w": 24,
@@ -75,6 +75,274 @@
         "y": 0
       },
       "id": 1
+    },
+    {
+      "type": "stat",
+      "title": "Опоздавших тиков за 5 мин",
+      "description": "Тик начался позже расписания больше чем на тик. Зелёный — игра идёт ровно, красный — игроки видят рывки.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 6,
+        "h": 5,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum(increase(tanks_ticks_late_total[5m])) or vector(0)",
+          "refId": "A",
+          "instant": false
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "stat",
+      "title": "Самая длинная пауза сервера за 5 мин",
+      "description": "Сколько сервер не успевал ни на что отвечать. Тик — 33 мс: пауза длиннее — тики опаздывают.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 6,
+        "h": 5,
+        "x": 6,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 33
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max(max_over_time(tanks_event_loop_delay_ms{quantile=\"max\"}[5m]))",
+          "refId": "A",
+          "instant": false
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "stat",
+      "title": "Худший ход ботов за 5 мин",
+      "description": "Сколько ботам понадобилось после тика в худший момент. Бюджет — 6 мс; больше тика (33 мс) — тики опаздывают.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 6,
+        "h": 5,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 15
+              },
+              {
+                "color": "red",
+                "value": 33
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max(max_over_time(tanks_bot_think_ms{quantile=\"max\"}[5m])) or vector(0)",
+          "refId": "A",
+          "instant": false
+        }
+      ],
+      "id": 4
+    },
+    {
+      "type": "stat",
+      "title": "Людей в игре",
+      "description": "Людей в играх сейчас по данным сервера; ботов — на панели «Онлайн: люди и боты».",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 6,
+        "h": 5,
+        "x": 18,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum(tanks_players{kind=\"human\"}) or vector(0)",
+          "refId": "A",
+          "instant": false
+        }
+      ],
+      "id": 5
+    },
+    {
+      "type": "row",
+      "title": "Игра",
+      "collapsed": false,
+      "gridPos": {
+        "w": 24,
+        "h": 1,
+        "x": 0,
+        "y": 6
+      },
+      "id": 6
     },
     {
       "type": "timeseries",
@@ -87,7 +355,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 1
+        "y": 7
       },
       "fieldConfig": {
         "defaults": {
@@ -138,7 +406,7 @@
           "refId": "максимум"
         }
       ],
-      "id": 2
+      "id": 7
     },
     {
       "type": "timeseries",
@@ -151,7 +419,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 1
+        "y": 7
       },
       "fieldConfig": {
         "defaults": {
@@ -193,7 +461,7 @@
           "refId": "максимум"
         }
       ],
-      "id": 3
+      "id": 8
     },
     {
       "type": "timeseries",
@@ -206,7 +474,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 1
+        "y": 7
       },
       "fieldConfig": {
         "defaults": {
@@ -239,7 +507,139 @@
           "refId": "опоздавших"
         }
       ],
-      "id": 4
+      "id": 9
+    },
+    {
+      "type": "timeseries",
+      "title": "Ход серверных ботов после тика, мс",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 0,
+        "y": 15
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "tanks_bot_think_ms{quantile=\"0.5\"}",
+          "legendFormat": "медиана",
+          "refId": "медиана"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "tanks_bot_think_ms{quantile=\"0.99\"}",
+          "legendFormat": "p99",
+          "refId": "p99"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "tanks_bot_think_ms{quantile=\"max\"}",
+          "legendFormat": "максимум",
+          "refId": "максимум"
+        }
+      ],
+      "id": 10
+    },
+    {
+      "type": "timeseries",
+      "title": "Боты: пропуски из-за бюджета и ожидание решения",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 8,
+        "y": 15
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "дольше всех ждал, тиков"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(tanks_bot_skipped_total[1m])",
+          "legendFormat": "пропусков за минуту",
+          "refId": "пропусков за минуту"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "tanks_bot_wait_ticks{quantile=\"max\"}",
+          "legendFormat": "дольше всех ждал, тиков",
+          "refId": "дольше всех ждал, тиков"
+        }
+      ],
+      "id": 11
     },
     {
       "type": "timeseries",
@@ -251,8 +651,8 @@
       "gridPos": {
         "w": 8,
         "h": 8,
-        "x": 0,
-        "y": 9
+        "x": 16,
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {
@@ -294,7 +694,7 @@
           "refId": "сокетов"
         }
       ],
-      "id": 5
+      "id": 12
     },
     {
       "type": "timeseries",
@@ -306,8 +706,8 @@
       "gridPos": {
         "w": 8,
         "h": 8,
-        "x": 8,
-        "y": 9
+        "x": 0,
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -340,7 +740,7 @@
           "refId": "{{direction}}"
         }
       ],
-      "id": 6
+      "id": 13
     },
     {
       "type": "timeseries",
@@ -352,8 +752,8 @@
       "gridPos": {
         "w": 8,
         "h": 8,
-        "x": 16,
-        "y": 9
+        "x": 8,
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -386,7 +786,7 @@
           "refId": "{{direction}}"
         }
       ],
-      "id": 7
+      "id": 14
     },
     {
       "type": "timeseries",
@@ -399,7 +799,7 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 17
+        "y": 31
       },
       "fieldConfig": {
         "defaults": {
@@ -432,7 +832,7 @@
           "refId": "{{reason}}"
         }
       ],
-      "id": 8
+      "id": 15
     },
     {
       "type": "timeseries",
@@ -445,7 +845,7 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 17
+        "y": 31
       },
       "fieldConfig": {
         "defaults": {
@@ -516,7 +916,7 @@
           "refId": "процессор, %"
         }
       ],
-      "id": 9
+      "id": 16
     },
     {
       "type": "row",
@@ -526,9 +926,119 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 25
+        "y": 39
       },
-      "id": 10
+      "id": 17
+    },
+    {
+      "type": "timeseries",
+      "title": "Онлайн: люди и боты",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum(tanks_players{kind=\"human\"})",
+          "legendFormat": "люди",
+          "refId": "люди"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum(tanks_players{kind=\"bot\"})",
+          "legendFormat": "серверные боты",
+          "refId": "серверные боты"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum(tanks_players{kind=\"swarm\"})",
+          "legendFormat": "рой",
+          "refId": "рой"
+        }
+      ],
+      "id": 18
+    },
+    {
+      "type": "timeseries",
+      "title": "Люди по играм",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 12,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum by (mode) (tanks_players{kind=\"human\"})",
+          "legendFormat": "{{mode}}",
+          "refId": "{{mode}}"
+        }
+      ],
+      "id": 19
     },
     {
       "type": "timeseries",
@@ -541,7 +1051,7 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 26
+        "y": 48
       },
       "fieldConfig": {
         "defaults": {
@@ -575,7 +1085,7 @@
           "queryType": "range"
         }
       ],
-      "id": 11
+      "id": 20
     },
     {
       "type": "timeseries",
@@ -588,7 +1098,7 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 26
+        "y": 48
       },
       "fieldConfig": {
         "defaults": {
@@ -622,7 +1132,7 @@
           "queryType": "range"
         }
       ],
-      "id": 12
+      "id": 21
     },
     {
       "type": "timeseries",
@@ -635,7 +1145,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 34
+        "y": 56
       },
       "fieldConfig": {
         "defaults": {
@@ -669,11 +1179,11 @@
           "queryType": "range"
         }
       ],
-      "id": 13
+      "id": 22
     },
     {
       "type": "timeseries",
-      "title": "Игроков онлайн по платформам",
+      "title": "Устройства людей по платформам",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -682,7 +1192,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 34
+        "y": 56
       },
       "fieldConfig": {
         "defaults": {
@@ -716,7 +1226,7 @@
           "queryType": "range"
         }
       ],
-      "id": 14
+      "id": 23
     },
     {
       "type": "timeseries",
@@ -729,7 +1239,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 34
+        "y": 56
       },
       "fieldConfig": {
         "defaults": {
@@ -763,7 +1273,7 @@
           "queryType": "range"
         }
       ],
-      "id": 15
+      "id": 24
     },
     {
       "type": "logs",
@@ -776,7 +1286,7 @@
         "w": 12,
         "h": 10,
         "x": 0,
-        "y": 42
+        "y": 64
       },
       "options": {
         "showTime": true,
@@ -794,7 +1304,7 @@
           "refId": "A"
         }
       ],
-      "id": 16
+      "id": 25
     },
     {
       "type": "logs",
@@ -807,7 +1317,7 @@
         "w": 12,
         "h": 10,
         "x": 12,
-        "y": 42
+        "y": 64
       },
       "options": {
         "showTime": true,
@@ -825,7 +1335,7 @@
           "refId": "A"
         }
       ],
-      "id": 17
+      "id": 26
     },
     {
       "type": "row",
@@ -835,9 +1345,9 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 52
+        "y": 74
       },
-      "id": 18
+      "id": 27
     },
     {
       "type": "timeseries",
@@ -850,7 +1360,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 53
+        "y": 75
       },
       "fieldConfig": {
         "defaults": {
@@ -892,7 +1402,7 @@
           "refId": "ожидание диска"
         }
       ],
-      "id": 19
+      "id": 28
     },
     {
       "type": "timeseries",
@@ -905,7 +1415,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 53
+        "y": 75
       },
       "fieldConfig": {
         "defaults": {
@@ -956,7 +1466,7 @@
           "refId": "своп"
         }
       ],
-      "id": 20
+      "id": 29
     },
     {
       "type": "timeseries",
@@ -969,7 +1479,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 53
+        "y": 75
       },
       "fieldConfig": {
         "defaults": {
@@ -1011,7 +1521,7 @@
           "refId": "5 мин"
         }
       ],
-      "id": 21
+      "id": 30
     },
     {
       "type": "timeseries",
@@ -1024,7 +1534,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 61
+        "y": 83
       },
       "fieldConfig": {
         "defaults": {
@@ -1066,7 +1576,7 @@
           "refId": "отдача"
         }
       ],
-      "id": 22
+      "id": 31
     },
     {
       "type": "timeseries",
@@ -1079,7 +1589,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 61
+        "y": 83
       },
       "fieldConfig": {
         "defaults": {
@@ -1112,7 +1622,7 @@
           "refId": "/"
         }
       ],
-      "id": 23
+      "id": 32
     },
     {
       "type": "logs",
@@ -1125,7 +1635,7 @@
         "w": 8,
         "h": 10,
         "x": 16,
-        "y": 61
+        "y": 83
       },
       "options": {
         "showTime": true,
@@ -1143,7 +1653,7 @@
           "refId": "A"
         }
       ],
-      "id": 24
+      "id": 33
     }
   ]
 }
