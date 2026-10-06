@@ -12,7 +12,7 @@ F=../tanks-logs/prod/K7MF.log
 
 ```bash
 ssh -i $KEY -o BatchMode=yes $HOST 'ls -lt /opt/tanks-logs | head -15'
-ssh -i $KEY -o BatchMode=yes $HOST 'cd /opt/tanks-logs && grep -lE "(nick|p0|p1)=Mob( |$)" $(ls -t *.log | head -30)'
+ssh -i $KEY -o BatchMode=yes $HOST 'cd /opt/tanks-logs && grep -lE "(nick|p0|p1)=<ник>( |$)" $(ls -t *.log | head -30)'
 rsync -az -e "ssh -i $KEY" $HOST:/opt/tanks-logs/ ../tanks-logs/prod/
 ssh -i $KEY -o BatchMode=yes $HOST 'journalctl -u tanks --since "-2h" --no-pager | tail -30; git -c safe.directory=/opt/tanks -C /opt/tanks log -1 --format="%h %ad" --date=iso'
 ```

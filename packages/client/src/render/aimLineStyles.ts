@@ -17,7 +17,7 @@ export const DEFAULT_AIM_LINE_STYLE_ID: AimLineStyleId = 'dots';
 
 const STATE_COLORS = { onTarget: '#e8825a', lead: '#5dffa0', danger: '#ff5a6a' };
 const COLD = '#9fb4c8';
-// Пульс и бег штрихов — медленные: быстрая динамика на 120 к/с рябит в глазах (проба Димы 2026-10-04).
+// Пульс и бег штрихов — медленные: быстрая динамика на 120 к/с рябит в глазах (проба 2026-10-04).
 const THIN_PULSE: AimLineStyle['pulse'] = {
   none: { hz: 0, depth: 0 },
   onTarget: { hz: 0.4, depth: 0.2 },
