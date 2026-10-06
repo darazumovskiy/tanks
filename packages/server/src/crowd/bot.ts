@@ -119,6 +119,7 @@ export class CrowdBot {
       stats: this.profile.stats,
       token: this.token,
       isBot: true,
+      gameId: '',
     };
   }
 

@@ -2003,7 +2003,7 @@ body.ffa .menu-toggle {
   color: var(--ffa-muted);
 }
 
-/* Под таймером одно место: связь, «Ты тут?», финал — в одну строку внутри верхней полосы, над своим танком. */
+/* Под таймером одно место: связь, «Ты тут?», финал, приглашение — в одну строку внутри верхней полосы, над своим танком. */
 .ffa-pill {
   position: absolute;
   top: calc(var(--ffa-top) + 37px);
@@ -2068,6 +2068,14 @@ body.ffa .menu-toggle {
 }
 
 .ffa-connection.is-returned .ffa-pill-title {
+  color: var(--ffa-accent);
+}
+
+.ffa-invite {
+  border-color: rgba(232, 130, 90, 0.6);
+}
+
+.ffa-invite .ffa-pill-title {
   color: var(--ffa-accent);
 }
 

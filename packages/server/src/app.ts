@@ -67,7 +67,10 @@ const FFA_ENV = {
   resultsSeconds: 'FFA_RESULTS_SECONDS',
   idleWarnSeconds: 'FFA_IDLE_WARN_SECONDS',
   idleKickSeconds: 'FFA_IDLE_KICK_SECONDS',
+  serverBots: 'FFA_SERVER_BOTS',
 } as const;
+const SWITCH_ON = '1';
+const SWITCH_OFF = '0';
 // Минимум один на все размеры, поэтому не больше самой маленькой игры.
 const FFA_MINIMUM_LIMIT = Math.min(...FFA_SIZES);
 // ticksLeft и idleTicksLeft уходят двумя байтами, а 0xFFFF там значит «нет»: длительность в тиках меньше него.
@@ -85,6 +88,17 @@ function envInteger(env: FfaEnv, name: string, limit: number): number | null {
     throw new Error(`${name} должен быть целым от 1 до ${String(limit)}, получено «${raw}»`);
   }
   return value;
+}
+
+function envSwitch(env: FfaEnv, name: string): boolean | null {
+  const raw = env[name];
+  if (raw === undefined || raw === '') {
+    return null;
+  }
+  if (raw !== SWITCH_ON && raw !== SWITCH_OFF) {
+    throw new Error(`${name} должен быть ${SWITCH_OFF} или ${SWITCH_ON}, получено «${raw}»`);
+  }
+  return raw === SWITCH_ON;
 }
 
 function ticksOr(seconds: number | null, fallback: number): number {
@@ -108,6 +122,7 @@ function ffaOptionsFromEnv(base: FfaOptions, env: FfaEnv): FfaOptions {
     minimum === null ? base.minimum : { 10: minimum, 30: minimum, 50: minimum };
   return {
     ...base,
+    hasServerBots: envSwitch(env, FFA_ENV.serverBots) ?? base.hasServerBots,
     minimum: minimums,
     matchSeconds: matchSeconds ?? base.matchSeconds,
     lobbyQuietTicks: ticksOr(lobbyQuietSeconds, base.lobbyQuietTicks),
@@ -165,7 +180,9 @@ export function createApp(options: AppOptions = {}): App {
     }
     if (path === METRICS_PATH) {
       response.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
-      response.end(metrics.render({ rooms: rooms.roomCount, connections: connections.size }));
+      response.end(
+        metrics.render({ rooms: rooms.roomCount, connections: connections.size, players: rooms.playerCounts() }),
+      );
       return;
     }
     if (path === LOG_ROUTE && request.method === 'POST' && fileLog !== null) {
@@ -188,6 +205,7 @@ export function createApp(options: AppOptions = {}): App {
   let tick = 0;
   let tickDurationMaxMs = 0;
   let timer: NodeJS.Timeout | undefined;
+  let thinkTimer: NodeJS.Immediate | undefined;
   let silenceTimer: NodeJS.Timeout | undefined;
 
   function stats(): AppStats {
@@ -289,7 +307,14 @@ export function createApp(options: AppOptions = {}): App {
     }
   }
 
+  function thinkBots(): void {
+    const started = performance.now();
+    rooms.thinkBots();
+    metrics.recordBotThink(performance.now() - started);
+  }
+
   // Тик с компенсацией дрейфа таймера: следующий срок считается от расписания, а не от фактического времени.
+  // Мозг серверных ботов ходит отдельной задачей после тика: тик он не удлиняет.
   function startLoop(): void {
     let next = performance.now() + tickMs;
     let windowStart = performance.now();
@@ -305,6 +330,7 @@ export function createApp(options: AppOptions = {}): App {
       }
       tickDurationMaxMs = Math.max(tickDurationMaxMs, duration);
       metrics.recordTick(duration, lateMs > tickMs);
+      thinkTimer = setImmediate(thinkBots);
       next += tickMs;
       const delay = next - performance.now();
       if (delay < -CATCH_UP_LIMIT_TICKS * tickMs) {
@@ -331,6 +357,7 @@ export function createApp(options: AppOptions = {}): App {
     },
     close(): Promise<void> {
       clearTimeout(timer);
+      clearImmediate(thinkTimer);
       clearInterval(silenceTimer);
       metrics.close();
       fileLog?.close();

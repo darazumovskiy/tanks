@@ -45,6 +45,13 @@ function setups(count: number, firstId = 0): FfaSetup[] {
   }));
 }
 
+type Kind = 'человек' | 'бот';
+
+// Состав по видам игроков; номера по порядку с нуля.
+function mixedSetups(kinds: readonly Kind[]): FfaSetup[] {
+  return kinds.map((kind, id) => ({ id, name: `${kind} ${String(id)}`, stats: DEFAULT_STATS, isBot: kind === 'бот' }));
+}
+
 function tankOf(match: FfaMatch, id: number): Tank {
   const tank = match.world.tanks.find((candidate) => candidate.id === id);
   if (tank === undefined) {
@@ -374,6 +381,212 @@ describe('финал и конец', () => {
   });
 });
 
+// Добивает танк victim снарядом стрелка by на ближайшем тике.
+function kill(match: FfaMatch, victim: number, by: number): FfaEvent[] {
+  const tank = tankOf(match, victim);
+  tank.hp = 1;
+  tank.shieldLeft = 0;
+  shoot(match, by, tank.x, tank.y - 40, 0, BULLET_SPEED);
+  return run(match, 1);
+}
+
+function finalMatch(kinds: readonly Kind[]): FfaMatch {
+  const match = createFfaMatch(testMap(), mixedSetups(kinds), 1, DEFAULT_RULES);
+  match.suddenDeathAt = 1;
+  run(match, TICK_RATE + 1);
+  return match;
+}
+
+function hasTank(match: FfaMatch, id: number): boolean {
+  return match.world.tanks.some((tank) => tank.id === id);
+}
+
+function outEvents(events: readonly FfaEvent[]): FfaEvent[] {
+  return events.filter((event) => event.type === 'out');
+}
+
+describe('финал и боты', () => {
+  it('подбит человек, на поле два бота: на тике гибели взрывается бот с самым низким местом, без счёта; человек возвращается', () => {
+    const match = finalMatch(['человек', 'бот', 'бот', 'человек']);
+    expect(match.isSuddenDeath).toBe(true);
+    playerOf(match, 2).kills = 1;
+    const botTank = tankOf(match, 1);
+    const events = kill(match, 0, 3);
+    expect(outEvents(events)).toEqual([{ type: 'out', tank: 1, x: botTank.x, y: botTank.y }]);
+    expect(playerOf(match, 0)).toMatchObject({ state: 'wreck', isOut: false });
+    expect(playerOf(match, 1)).toMatchObject({ state: 'wreck', isOut: true, kills: 0, deaths: 0 });
+    expect(tankOf(match, 1)).toMatchObject({ isAlive: false, hp: 0 });
+    expect(playerOf(match, 3)).toMatchObject({ kills: 1 });
+    run(match, WRECK_TICKS);
+    expect(playerOf(match, 0).state).toBe('waiting');
+    expect(playerOf(match, 1)).toMatchObject({ state: 'spectator', ticksLeft: 0 });
+    expect(hasTank(match, 1)).toBe(false);
+    expect(playerOf(match, 2).state).toBe('alive');
+    const back = run(match, FFA_RESPAWN_WAIT_TICKS + 1);
+    expect(back.some((event) => event.type === 'spawn' && event.tank === 0)).toBe(true);
+    expect(playerOf(match, 0).state).toBe('alive');
+    expect(match.isOver).toBe(false);
+  });
+
+  it('подбит бот — выбывает на тике гибели, после обломков зритель; люди не тронуты, взрывов за людей нет', () => {
+    const match = finalMatch(['человек', 'бот', 'человек', 'человек']);
+    const events = kill(match, 1, 0);
+    expect(outEvents(events)).toEqual([]);
+    expect(playerOf(match, 1)).toMatchObject({ state: 'wreck', isOut: true, deaths: 1 });
+    run(match, WRECK_TICKS);
+    expect(playerOf(match, 1).state).toBe('spectator');
+    expect([0, 2, 3].map((id) => playerOf(match, id).state)).toEqual(['alive', 'alive', 'alive']);
+  });
+
+  it('человек, бот 1, бот 2: бот подбил человека — выбывает другой бот; пока человек в обломках, матч идёт с одним живым', () => {
+    const match = finalMatch(['человек', 'бот', 'бот']);
+    const events = kill(match, 0, 1);
+    expect(outEvents(events).map((event) => (event.type === 'out' ? event.tank : null))).toEqual([2]);
+    expect(match.world.tanks.filter((tank) => tank.isAlive).map((tank) => tank.id)).toEqual([1]);
+    run(match, WRECK_TICKS);
+    expect(match.isOver).toBe(false);
+    expect(playerOf(match, 0).state).toBe('waiting');
+    run(match, FFA_RESPAWN_WAIT_TICKS + 1);
+    expect(playerOf(match, 0).state).toBe('alive');
+    expect(match.isOver).toBe(false);
+    const end = kill(match, 1, 0);
+    expect(end.some((event) => event.type === 'matchOver')).toBe(true);
+  });
+
+  it('человек, бот 1, бот 2: бот 1 подбил человека, снаряд бота 2 добил бота 1, пока человек в обломках, — матч ждёт человека', () => {
+    const match = finalMatch(['человек', 'бот', 'бот']);
+    const bot1 = tankOf(match, 1);
+    bot1.hp = 1;
+    bot1.shieldLeft = 0;
+    shoot(match, 2, bot1.x, bot1.y - 40 - (3 * BULLET_SPEED) / TICK_RATE, 0, BULLET_SPEED);
+    const humanDown = kill(match, 0, 1);
+    expect(outEvents(humanDown).map((event) => (event.type === 'out' ? event.tank : null))).toEqual([2]);
+    const bot1Down = run(match, 4);
+    expect(deaths(bot1Down).map((event) => [event.tank, event.by])).toEqual([[1, 2]]);
+    expect(playerOf(match, 1)).toMatchObject({ state: 'wreck', isOut: true });
+    expect(playerOf(match, 0)).toMatchObject({ state: 'wreck', isOut: false });
+    expect(match.world.tanks.filter((tank) => tank.isAlive)).toEqual([]);
+    expect(match.isOver).toBe(false);
+    run(match, WRECK_TICKS);
+    expect(playerOf(match, 0).state).toBe('waiting');
+    expect(match.isOver).toBe(false);
+    const back = run(match, FFA_RESPAWN_WAIT_TICKS + 1);
+    expect(back.some((event) => event.type === 'spawn' && event.tank === 0)).toBe(true);
+    expect(back.filter((event) => event.type === 'matchOver')).toHaveLength(1);
+    expect(match.world.time).toBeLessThan(FFA.matchSeconds);
+  });
+
+  it('человек, бот 1, бот 2: человек и бот 1 подбиты в одном тике — бот 2 выбывает, матч ждёт возвращения человека', () => {
+    const match = finalMatch(['человек', 'бот', 'бот']);
+    for (const [victim, by] of [
+      [0, 1],
+      [1, 2],
+    ] as const) {
+      const tank = tankOf(match, victim);
+      tank.hp = 1;
+      tank.shieldLeft = 0;
+      shoot(match, by, tank.x, tank.y - 40, 0, BULLET_SPEED);
+    }
+    const events = run(match, 1);
+    expect(deaths(events).map((event) => event.tank)).toEqual([0, 1]);
+    expect(outEvents(events).map((event) => (event.type === 'out' ? event.tank : null))).toEqual([2]);
+    expect(match.isOver).toBe(false);
+    run(match, WRECK_TICKS + FFA_RESPAWN_WAIT_TICKS - 1);
+    expect(match.isOver).toBe(false);
+    expect(playerOf(match, 0).state).toBe('waiting');
+    const back = run(match, 2);
+    expect(playerOf(match, 0).state).toBe('alive');
+    expect(back.some((event) => event.type === 'matchOver')).toBe(true);
+  });
+
+  it('в одном тике подбиты человек и единственный живой бот: бот не выбывает дважды, человек выбывает', () => {
+    const match = finalMatch(['человек', 'бот', 'человек', 'человек']);
+    for (const id of [0, 1]) {
+      const tank = tankOf(match, id);
+      tank.hp = 1;
+      tank.shieldLeft = 0;
+      shoot(match, 2, tank.x, tank.y - 40, 0, BULLET_SPEED);
+    }
+    const events = run(match, 1);
+    expect(outEvents(events)).toEqual([]);
+    expect(playerOf(match, 0)).toMatchObject({ state: 'wreck', isOut: true });
+    expect(playerOf(match, 1)).toMatchObject({ state: 'wreck', isOut: true, deaths: 1 });
+    run(match, WRECK_TICKS);
+    expect(playerOf(match, 0).state).toBe('spectator');
+    expect(playerOf(match, 1).state).toBe('spectator');
+  });
+
+  it('подбитый и ждущий в момент начала финала: за каждого взрывается свой бот; подбитый и ждущий боты выбывают', () => {
+    const kinds: Kind[] = ['человек', 'бот', 'бот', 'человек', 'бот', 'бот', 'человек'];
+    const match = createFfaMatch(testMap(), mixedSetups(kinds), 1, DEFAULT_RULES);
+    run(match, 5);
+    for (const id of [0, 2]) {
+      const tank = tankOf(match, id);
+      tank.hp = 1;
+      tank.shieldLeft = 0;
+      shoot(match, 6, tank.x, tank.y - 40, 0, BULLET_SPEED);
+    }
+    run(match, 1 + WRECK_TICKS);
+    expect([playerOf(match, 0).state, playerOf(match, 2).state]).toEqual(['waiting', 'waiting']);
+    for (const id of [3, 4]) {
+      const tank = tankOf(match, id);
+      tank.hp = 1;
+      tank.shieldLeft = 0;
+      shoot(match, 6, tank.x, tank.y - 40, 0, BULLET_SPEED);
+    }
+    run(match, 1);
+    expect([playerOf(match, 3).state, playerOf(match, 4).state]).toEqual(['wreck', 'wreck']);
+    match.suddenDeathAt = match.world.time;
+    const events = run(match, 1);
+    expect(match.isSuddenDeath).toBe(true);
+    expect(outEvents(events).map((event) => (event.type === 'out' ? event.tank : null))).toEqual([5, 1]);
+    expect(playerOf(match, 0)).toMatchObject({ state: 'waiting', isOut: false });
+    expect(playerOf(match, 3)).toMatchObject({ state: 'wreck', isOut: false });
+    expect(playerOf(match, 2).state).toBe('spectator');
+    expect(playerOf(match, 4)).toMatchObject({ state: 'wreck', isOut: true });
+    run(match, FFA_RESPAWN_WAIT_TICKS + WRECK_TICKS);
+    expect([0, 3].map((id) => playerOf(match, id).state)).toEqual(['alive', 'alive']);
+    expect([1, 2, 4, 5].map((id) => playerOf(match, id).state)).toEqual([
+      'spectator',
+      'spectator',
+      'spectator',
+      'spectator',
+    ]);
+  });
+
+  it('вход в финал: человек при боте на поле играет, бот взрывается на ближайшем тике; без ботов — зритель; бот — зритель', () => {
+    const match = finalMatch(['человек', 'бот', 'человек']);
+    joinFfaMatch(match, { id: 10, name: 'Новичок', stats: DEFAULT_STATS });
+    expect(playerOf(match, 10)).toMatchObject({ state: 'waiting', ticksLeft: 0 });
+    expect(playerOf(match, 1)).toMatchObject({ state: 'wreck', isOut: true });
+    expect(tankOf(match, 1).isAlive).toBe(false);
+    const events = run(match, 1);
+    expect(outEvents(events).map((event) => (event.type === 'out' ? event.tank : null))).toEqual([1]);
+    expect(events.some((event) => event.type === 'spawn' && event.tank === 10)).toBe(true);
+    expect(outEvents(run(match, 1))).toEqual([]);
+
+    joinFfaMatch(match, { id: 11, name: 'Опоздавший', stats: DEFAULT_STATS });
+    joinFfaMatch(match, { id: 12, name: 'Бот', stats: DEFAULT_STATS, isBot: true });
+    run(match, 1);
+    expect(playerOf(match, 11)).toMatchObject({ state: 'spectator', hasPlayed: false });
+    expect(playerOf(match, 12)).toMatchObject({ state: 'spectator', isBot: true });
+  });
+
+  it('пока подбитый человек ждёт возрождения, матч идёт с одним живым; подбит без ботов — конец', () => {
+    const match = finalMatch(['человек', 'бот', 'бот']);
+    kill(match, 0, 1);
+    run(match, WRECK_TICKS);
+    expect(playerOf(match, 0).state).toBe('waiting');
+    expect(playerOf(match, 2).state).toBe('spectator');
+    expect(match.world.tanks.filter((tank) => tank.isAlive)).toHaveLength(1);
+    expect(match.isOver).toBe(false);
+    run(match, FFA_RESPAWN_WAIT_TICKS + 1);
+    expect(playerOf(match, 0).state).toBe('alive');
+    const end = kill(match, 1, 0);
+    expect(end.some((event) => event.type === 'matchOver')).toBe(true);
+  });
+});
+
 describe('вход и выход посреди матча', () => {
   it('до финала — на поле на ближайшем тике с неуязвимостью; в финале — зритель; повторный номер — ошибка', () => {
     const match = openMatch(2);
@@ -447,6 +660,7 @@ describe('таблица и эффективность', () => {
       id,
       name: String(id),
       stats: DEFAULT_STATS,
+      isBot: false,
       state: 'alive',
       ticksLeft: 0,
       kills,
@@ -455,6 +669,7 @@ describe('таблица и эффективность', () => {
       damageTaken,
       killerId: null,
       hasPlayed: true,
+      isOut: false,
     };
   }
 
@@ -516,18 +731,32 @@ function digestMatch(match: FfaMatch): string {
   return fnv1a(JSON.stringify([match.world.tick, tanks, players, bullets, match.isSuddenDeath, match.isOver]));
 }
 
+interface PlayOptions {
+  maxTicks?: number;
+  // Нечётные номера — боты; с началом финала входят человек и бот.
+  hasBots?: boolean;
+  onTick?: (match: FfaMatch) => void;
+}
+
 // Случайные команды всех игроков: каждые 10 тиков новая; вход и выход на заданных тиках.
-function playMatch(size: 30 | 50, matchSeed: number, actionSeed: number, maxTicks = Infinity): string[] {
-  const match = createFfaMatch(ffaMap(size), setups(size), matchSeed, DEFAULT_RULES);
+function playMatch(size: 30 | 50, matchSeed: number, actionSeed: number, options: PlayOptions = {}): string[] {
+  const players = setups(size).map((setup) => ({ ...setup, isBot: options.hasBots === true && setup.id % 2 === 1 }));
+  const match = createFfaMatch(ffaMap(size), players, matchSeed, DEFAULT_RULES);
   const random = createRandom(actionSeed);
   const actions = new Map<number, Action>();
   const digests: string[] = [];
-  for (let tick = 0; !match.isOver && tick < maxTicks; tick++) {
+  let hasFinalJoins = false;
+  for (let tick = 0; !match.isOver && tick < (options.maxTicks ?? Infinity); tick++) {
     if (tick === 300) {
       leaveFfaMatch(match, 3);
     }
     if (tick === 400) {
       joinFfaMatch(match, { id: 1000, name: 'Новичок', stats: DEFAULT_STATS });
+    }
+    if (options.hasBots === true && match.isSuddenDeath && !hasFinalJoins) {
+      joinFfaMatch(match, { id: 1001, name: 'В финал', stats: DEFAULT_STATS });
+      joinFfaMatch(match, { id: 1002, name: 'Бот в финал', stats: DEFAULT_STATS, isBot: true });
+      hasFinalJoins = true;
     }
     if (tick % 10 === 0) {
       for (const player of match.players) {
@@ -540,6 +769,7 @@ function playMatch(size: 30 | 50, matchSeed: number, actionSeed: number, maxTick
       }
     }
     stepFfaMatch(match, actions);
+    options.onTick?.(match);
     digests.push(digestMatch(match));
   }
   return digests;
@@ -556,7 +786,32 @@ describe('детерминизм матча', () => {
       const second = playMatch(size, 11, 5);
       expect(second).toEqual(first);
       expect(first.length).toBeGreaterThan(TICK_RATE * 10);
-      expect(playMatch(size, 12, 5, TICK_RATE)).not.toEqual(first.slice(0, TICK_RATE));
+      expect(playMatch(size, 12, 5, { maxTicks: TICK_RATE })).not.toEqual(first.slice(0, TICK_RATE));
+    },
+    FULL_MATCH_TIMEOUT_MS,
+  );
+
+  it(
+    'матч на 30 с ботами и входом в финал: прогоны совпадают; человек выбывает, только когда живых ботов нет',
+    () => {
+      let botsOut = 0;
+      let humansOutWithBotsAlive = 0;
+      const first = playMatch(30, 21, 8, {
+        hasBots: true,
+        onTick: (match) => {
+          if (!match.isSuddenDeath) {
+            return;
+          }
+          const isBotAlive = match.players.some((player) => player.isBot && player.state === 'alive');
+          const humansOut = match.players.filter((player) => !player.isBot && player.state === 'spectator');
+          botsOut = match.players.filter((player) => player.isBot && player.state === 'spectator').length;
+          humansOutWithBotsAlive = Math.max(humansOutWithBotsAlive, isBotAlive ? humansOut.length : 0);
+        },
+      });
+      expect(playMatch(30, 21, 8, { hasBots: true })).toEqual(first);
+      expect(playMatch(30, 21, 8)).not.toEqual(first);
+      expect(botsOut).toBeGreaterThan(1);
+      expect(humansOutWithBotsAlive).toBe(0);
     },
     FULL_MATCH_TIMEOUT_MS,
   );

@@ -13,14 +13,29 @@ export const NO_DROP_COUNTER: InputDropCounter = {
   },
 };
 
+const PLAYER_MODES = ['duel', 'ffa10', 'ffa30', 'ffa50'] as const;
+// bot — серверный бот (в дуэли — бот лестницы), swarm — бот роя.
+const PLAYER_KINDS = ['human', 'bot', 'swarm'] as const;
+
+export type PlayerMode = (typeof PLAYER_MODES)[number];
+type PlayerKind = (typeof PLAYER_KINDS)[number];
+export type PlayerCounts = Record<PlayerMode, Record<PlayerKind, number>>;
+
+export function emptyPlayerCounts(): PlayerCounts {
+  const counts = PLAYER_MODES.map((mode) => [mode, { human: 0, bot: 0, swarm: 0 }]);
+  return Object.fromEntries(counts) as PlayerCounts;
+}
+
 export interface MetricsGauges {
   rooms: number;
   connections: number;
+  players: PlayerCounts;
 }
 
 // Счётчики процесса для ручки /metrics. В тике — только инкременты и запись в гистограмму; текст собирается по запросу.
 export interface Metrics extends InputDropCounter {
   recordTick(durationMs: number, isLate: boolean): void;
+  recordBotThink(durationMs: number): void;
   countMessage(direction: Direction, bytes: number): void;
   render(gauges: MetricsGauges): string;
   close(): void;
@@ -68,6 +83,7 @@ class MetricsLines {
 
 export function createMetrics(): Metrics {
   const tickDuration = createHistogram();
+  const botThink = createHistogram();
   const eventLoopDelay = createHistogram();
   let probeExpectedAt = performance.now() + EVENT_LOOP_PROBE_MS;
   const probe = setInterval(() => {
@@ -91,6 +107,9 @@ export function createMetrics(): Metrics {
       }
       recordMs(tickDuration, durationMs);
     },
+    recordBotThink(durationMs): void {
+      recordMs(botThink, durationMs);
+    },
     countMessage(direction, size): void {
       messages[direction]++;
       bytes[direction] += size;
@@ -108,8 +127,13 @@ export function createMetrics(): Metrics {
       for (const [quantile, value] of quantilesOf(eventLoopDelay)) {
         out.value('tanks_event_loop_delay_ms', value, { quantile });
       }
+      out.header('tanks_bot_think_ms', 'gauge', 'ход мозга серверных ботов после тика за окно с прошлого запроса');
+      for (const [quantile, value] of quantilesOf(botThink)) {
+        out.value('tanks_bot_think_ms', value, { quantile });
+      }
       tickDuration.reset();
       eventLoopDelay.reset();
+      botThink.reset();
       out.header('tanks_ticks_total', 'counter', 'тиков с запуска');
       out.value('tanks_ticks_total', ticks);
       out.header('tanks_ticks_late_total', 'counter', 'тиков, начавшихся позже расписания больше чем на тик');
@@ -118,6 +142,12 @@ export function createMetrics(): Metrics {
       out.value('tanks_rooms', gauges.rooms);
       out.header('tanks_connections', 'gauge', 'сокетов сейчас');
       out.value('tanks_connections', gauges.connections);
+      out.header('tanks_players', 'gauge', 'игроков в играх сейчас: люди, серверные боты, боты роя');
+      for (const mode of PLAYER_MODES) {
+        for (const kind of PLAYER_KINDS) {
+          out.value('tanks_players', gauges.players[mode][kind], { mode, kind });
+        }
+      }
       out.header('tanks_messages_total', 'counter', 'сообщений по сокетам');
       for (const direction of ['in', 'out'] as const) {
         out.value('tanks_messages_total', messages[direction], { direction });

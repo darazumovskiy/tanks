@@ -151,6 +151,11 @@ export const CROWD_PROFILES: Readonly<Record<CrowdLevel, CrowdProfile>> = {
   },
 };
 
+// Ник бота — имя уровня и уровень: «Сержант [4]»; других цифр в нике нет.
+export function crowdNickname(level: CrowdLevel): string {
+  return `${CROWD_PROFILES[level].name} [${String(level)}]`;
+}
+
 const TOP_LEVEL: CrowdLevel = 7;
 // Чем ниже уровень, тем ботов больше; уровень 7 — один на весь состав.
 const PYRAMID_WEIGHTS: readonly (readonly [CrowdLevel, number])[] = [

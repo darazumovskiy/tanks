@@ -33,23 +33,39 @@ export const FFA_JOURNAL = {
   matchOver: 'match over',
 } as const;
 
+// Выход idle пишется после шага движка, остальные — до шага.
 export const FFA_LEAVE_OFFLINE = 'offline';
 export const FFA_LEAVE_IDLE = 'idle';
+export const FFA_LEAVE_YIELD = 'yield';
 
 const NO_ACTION = '-';
+const BOT_MARK = 'b';
+const BOT_FIELD = '1';
 const SERVER_LINE = /^\S+ S gt=(\d+) tc=\S+ (.*)$/;
 
+// Без isBot — человек.
 export interface FfaJournalPlayer {
   id: number;
   stats: Stats;
+  isBot?: boolean;
 }
 
-export function formatJournalStats(stats: Stats): string {
+function formatJournalStats(stats: Stats): string {
   return STAT_KEYS.map((key) => String(stats[key])).join('');
 }
 
 export function formatJournalRoster(roster: readonly FfaJournalPlayer[]): string {
-  return roster.map((entry) => `${String(entry.id)}:${formatJournalStats(entry.stats)}`).join(',');
+  return roster
+    .map((entry) => {
+      const mark = entry.isBot === true ? `:${BOT_MARK}` : '';
+      return `${String(entry.id)}:${formatJournalStats(entry.stats)}${mark}`;
+    })
+    .join(',');
+}
+
+export function formatJournalJoin(player: FfaJournalPlayer): string {
+  const mark = player.isBot === true ? ` bot=${BOT_FIELD}` : '';
+  return `${FFA_JOURNAL.join} id=${String(player.id)} stats=${formatJournalStats(player.stats)}${mark}`;
 }
 
 function formatAction(action: Action): string {
@@ -159,8 +175,8 @@ function parseStats(raw: string): Stats {
 
 function parseRoster(raw: string): FfaJournalPlayer[] {
   return raw.split(',').map((item) => {
-    const [id = '', stats = ''] = item.split(':');
-    return { id: Number(id), stats: parseStats(stats) };
+    const [id = '', stats = '', mark = ''] = item.split(':');
+    return { id: Number(id), stats: parseStats(stats), isBot: mark === BOT_MARK };
   });
 }
 
@@ -230,12 +246,18 @@ function checkSum(running: Running, text: string): void {
   }
 }
 
-// Строка журнала относится к тику игры: всё до шага движка (выход по обрыву, вход, команды) применяется перед
-// шагом этого тика, всё после (события, сверка, выход за бездействие, конец) — после.
+const FIGHT_TAGS = [FFA_JOURNAL.actions, FFA_JOURNAL.join, FFA_JOURNAL.leave, FFA_JOURNAL.sum, FFA_JOURNAL.matchOver];
+
+// Строка журнала относится к тику игры: всё до шага движка (выходы кроме idle, вход, команды) применяется перед
+// шагом этого тика, всё после (сверка, выход за бездействие, конец) — после. Прочие строки шагов не двигают: сервер
+// пишет их и до шага (вход серверного бота в игру), и после.
 function applyFightEntry(running: Running, entry: Entry, options: FfaJournalOptions): void {
   const { text, gameTick } = entry;
-  const isOfflineLeave = startsWith(text, FFA_JOURNAL.leave) && field(text, 'reason') === FFA_LEAVE_OFFLINE;
-  const isBeforeStep = isOfflineLeave || startsWith(text, FFA_JOURNAL.join) || startsWith(text, FFA_JOURNAL.actions);
+  if (!FIGHT_TAGS.some((tag) => startsWith(text, tag))) {
+    return;
+  }
+  const isEarlyLeave = startsWith(text, FFA_JOURNAL.leave) && field(text, 'reason') !== FFA_LEAVE_IDLE;
+  const isBeforeStep = isEarlyLeave || startsWith(text, FFA_JOURNAL.join) || startsWith(text, FFA_JOURNAL.actions);
   stepUntil(running, isBeforeStep ? gameTick - 1 : gameTick, options);
   if (startsWith(text, FFA_JOURNAL.actions)) {
     applyActions(running, text);
@@ -244,7 +266,12 @@ function applyFightEntry(running: Running, entry: Entry, options: FfaJournalOpti
   if (startsWith(text, FFA_JOURNAL.join)) {
     const id = numberField(text, 'id');
     if (id !== null) {
-      joinFfaMatch(running.result.match, { id, name: `#${String(id)}`, stats: parseStats(field(text, 'stats') ?? '') });
+      joinFfaMatch(running.result.match, {
+        id,
+        name: `#${String(id)}`,
+        stats: parseStats(field(text, 'stats') ?? ''),
+        isBot: field(text, 'bot') === BOT_FIELD,
+      });
     }
     return;
   }

@@ -12,7 +12,7 @@ import {
 } from '@tanks/shared/protocol';
 import { WebSocket } from 'ws';
 import { CrowdBot } from '../crowd/bot.js';
-import { CROWD_PROFILES, crowdPyramid } from '../crowd/profile.js';
+import { crowdNickname, crowdPyramid } from '../crowd/profile.js';
 import { TargetBook } from '../crowd/targets.js';
 
 const DEFAULT_JOIN_INTERVAL_MS = 200;
@@ -297,7 +297,7 @@ export class Swarm {
     this.members = crowdPyramid(options.count).map((level, index) => {
       const bot = new CrowdBot({
         level,
-        nickname: `${CROWD_PROFILES[level].name} ${String(index + 1)}`,
+        nickname: crowdNickname(level),
         size: options.size,
         random: options.random,
         book,

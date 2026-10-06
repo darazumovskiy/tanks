@@ -19,10 +19,12 @@ import { formatReport, healthUrlOf, Swarm, type SwarmOptions, type SwarmReport }
 import { TestClient } from './client.js';
 import { seededRandom, sleep } from './support.js';
 
-// Тик 10 мс — игра втрое быстрее настоящей; боты успевают ответить на каждый снимок.
+// Тик 10 мс — игра втрое быстрее настоящей; боты успевают ответить на каждый снимок. Наблюдатель входит человеком,
+// а игру заполняет только рой.
 const TICK_MS = 10;
 const QUICK: FfaOptions = {
   ...DEFAULT_FFA_OPTIONS,
+  hasServerBots: false,
   countdownTicks: 3,
   resultsTicks: 5,
   lobbyQuietTicks: 5,
@@ -96,7 +98,7 @@ async function until(isDone: () => boolean, what: string, timeoutMs = 10_000): P
 function namesOf(players: readonly FfaRosterEntry[]): string[] {
   return players
     .filter((player) => player.isBot)
-    .map((player) => player.nickname.replace(/ \d+$/, ''))
+    .map((player) => player.nickname)
     .sort();
 }
 
@@ -247,7 +249,16 @@ describe('рой ботов через сокет', () => {
       'восемь ботов в составе, у каждого свой номер',
     );
     expect(namesOf(roster)).toEqual(
-      ['Ветеран', 'Манекен', 'Манекен', 'Новобранец', 'Призрак', 'Прогульщик', 'Прогульщик', 'Сержант'].sort(),
+      [
+        'Ветеран [5]',
+        'Манекен [1]',
+        'Манекен [1]',
+        'Новобранец [3]',
+        'Призрак [7]',
+        'Прогульщик [2]',
+        'Прогульщик [2]',
+        'Сержант [4]',
+      ].sort(),
     );
     const ids = swarm.bots().map((bot) => bot.playerId);
 
@@ -300,13 +311,13 @@ describe('рой ботов через сокет', () => {
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
     expect(Object.fromEntries(counts)).toEqual({
-      Манекен: 7,
-      Прогульщик: 6,
-      Новобранец: 5,
-      Сержант: 4,
-      Ветеран: 3,
-      Снайпер: 2,
-      Призрак: 1,
+      'Манекен [1]': 7,
+      'Прогульщик [2]': 6,
+      'Новобранец [3]': 5,
+      'Сержант [4]': 4,
+      'Ветеран [5]': 3,
+      'Снайпер [6]': 2,
+      'Призрак [7]': 1,
     });
   }, 30_000);
 
@@ -376,7 +387,7 @@ describe('рой ботов через сокет', () => {
     await until(() => swarm.isDone, 'бот остановлен');
     await sleep(200);
     expect(swarm.bots()[0]).toMatchObject({ isStopped: true, isOnline: false });
-    expect(lines.join('\n')).toContain('Манекен 1 остановлен');
+    expect(lines.join('\n')).toContain('Манекен [1] остановлен');
   }, 20_000);
 
   it('выкинутый за бездействие бот входит заново новым игроком', async () => {

@@ -52,6 +52,7 @@ const CASES: readonly (readonly [FfaEvent, FfaSnapshotEvent])[] = [
   ],
   [{ type: 'bump', tank: 1, x: 2, y: 3 }, expected({ kind: 'bump', tank: 1, x: 2, y: 3 })],
   [{ type: 'spawn', tank: 1, x: 2, y: 3 }, expected({ kind: 'spawn', tank: 1, x: 2, y: 3 })],
+  [{ type: 'out', tank: 4, x: 5, y: 6 }, expected({ kind: 'death', tank: 4, x: 5, y: 6, flags: EventFlag.Out })],
   [{ type: 'pickup', tank: 1, x: 2, y: 3, healed: 50 }, expected({ kind: 'pickup', tank: 1, x: 2, y: 3, value: 50 })],
   [{ type: 'zoneStart' }, expected({ kind: 'zoneStart' })],
   [{ type: 'suddenDeath' }, expected({ kind: 'suddenDeath' })],

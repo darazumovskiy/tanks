@@ -76,6 +76,7 @@ PANELS = [
             prom('tanks_tick_duration_ms{quantile="0.5"}', "медиана"),
             prom('tanks_tick_duration_ms{quantile="0.99"}', "p99"),
             prom('tanks_tick_duration_ms{quantile="max"}', "максимум"),
+            prom('tanks_bot_think_ms{quantile="max"}', "мозг ботов после тика, максимум"),
         ],
         unit="ms",
         width=THIRD,
@@ -139,6 +140,20 @@ PANELS = [
         ],
     ),
     row("Игроки"),
+    timeseries(
+        "Онлайн: люди и боты",
+        PROM,
+        [
+            prom('sum(tanks_players{kind="human"})', "люди"),
+            prom('sum(tanks_players{kind="bot"})', "серверные боты"),
+            prom('sum(tanks_players{kind="swarm"})', "рой"),
+        ],
+    ),
+    timeseries(
+        "Люди по играм",
+        PROM,
+        [prom('sum by (mode) (tanks_players{kind="human"})', "{{mode}}")],
+    ),
     timeseries("Задержка до игроков, мс", LOKI, [loki_metric(unwrap("rtt"), "{{game}} {{side}} {{platform}}")], unit="ms"),
     timeseries("Кадров в секунду у игроков", LOKI, [loki_metric(unwrap("fps"), "{{game}} {{side}} {{platform}}")]),
     timeseries(
@@ -149,7 +164,7 @@ PANELS = [
         width=THIRD,
     ),
     timeseries(
-        "Игроков онлайн по платформам",
+        "Устройства людей по платформам",
         LOKI,
         [loki_metric(f"count by (platform) (sum by (game, side, platform) (count_over_time({CLIENT_SECONDS} [1m])))", "{{platform}}")],
         width=THIRD,

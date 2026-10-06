@@ -58,8 +58,9 @@ export class TestClient {
     protocolVersion = PROTOCOL_VERSION,
     token = '',
     isBot = false,
+    gameId = '',
   ): void {
-    this.send({ type: MessageType.Join, protocolVersion, roomCode, nickname, stats, token, isBot });
+    this.send({ type: MessageType.Join, protocolVersion, roomCode, nickname, stats, token, isBot, gameId });
   }
 
   input(action: Partial<Action>): number {

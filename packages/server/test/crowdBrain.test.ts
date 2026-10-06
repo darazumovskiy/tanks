@@ -15,6 +15,7 @@ import {
   type ZonePlan,
 } from '@tanks/shared/engine';
 import {
+  FfaInviteMiss,
   FfaPhase,
   MessageType,
   type FfaSnapshotEvent,
@@ -24,7 +25,13 @@ import {
 } from '@tanks/shared/protocol';
 import { CrowdBot } from '../src/crowd/bot.js';
 import { CrowdBrain } from '../src/crowd/brain.js';
-import { CROWD_PROFILES, crowdPyramid, type CrowdLevel, type CrowdProfile } from '../src/crowd/profile.js';
+import {
+  CROWD_PROFILES,
+  crowdNickname,
+  crowdPyramid,
+  type CrowdLevel,
+  type CrowdProfile,
+} from '../src/crowd/profile.js';
 import { chooseTarget, TargetBook, Targeting } from '../src/crowd/targets.js';
 import { crowdView, type CrowdBullet, type CrowdTank, type CrowdView, type Frame } from '../src/crowd/view.js';
 import { seededRandom } from './support.js';
@@ -294,6 +301,20 @@ describe('мозг толпы на крафтовых видах', () => {
     expect(Math.abs(action.turn)).toBeGreaterThan(0.3);
   });
 
+  it('первый путь — только на своём тике по фазе: десять ботов на одном тике ищут путь по одному', () => {
+    const walled: BattleMap = { ...OPEN, walls: [{ x: 900, y: 250, w: 40, h: 400 }] };
+    const me = crowdTank(ME, 700, 450, { heading: 0 });
+    const target = crowdTank(2, 1100, 450);
+    const isDetouring = (phase: number, tick: number): boolean => {
+      const brain = new CrowdBrain(profileOf(5), seededRandom(1), phase);
+      brain.init();
+      return Math.abs(brain.tick(viewOf(me, { map: walled, tick }), target).turn) > 0.3;
+    };
+    const phases = Array.from({ length: 10 }, (_, phase) => phase);
+    expect(phases.filter((phase) => isDetouring(phase, 1))).toEqual([9]);
+    expect(phases.filter((phase) => isDetouring(phase, 4))).toEqual([6]);
+  });
+
   it('цель внутри сплошной стены недостижима: пути нет, едет прямо на цель', () => {
     const block: BattleMap = { ...OPEN, walls: [{ x: 900, y: 100, w: 600, h: 700 }] };
     const me = crowdTank(ME, 400, 450, { heading: 0 });
@@ -498,6 +519,18 @@ describe('пирамида уровней', () => {
     expect(crowdPyramid(0)).toEqual([]);
     expect(crowdPyramid(48)).toHaveLength(48);
   });
+
+  it('6 ботов — по одному уровней 1–5 и 7; ник — имя уровня и уровень в скобках', () => {
+    expect(crowdPyramid(6)).toEqual([1, 2, 3, 4, 5, 7]);
+    expect(crowdPyramid(6).map(crowdNickname)).toEqual([
+      'Манекен [1]',
+      'Прогульщик [2]',
+      'Новобранец [3]',
+      'Сержант [4]',
+      'Ветеран [5]',
+      'Призрак [7]',
+    ]);
+  });
 });
 
 const TEST_MAP: FfaMap = {
@@ -545,7 +578,7 @@ function snapshot(gameTick: number, overrides: Partial<FfaSnapshotMessage> = {})
     tick: gameTick,
     gameTick,
     ackSeq: 0,
-    self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: null },
+    self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: null, isOut: false },
     tanks: [tankSnapshot(ME, 400, 450), tankSnapshot(2, 900, 450), tankSnapshot(3, 1500, 450)],
     kits: [{ isActive: true, respawnIn: 0 }],
     events: [],
@@ -562,7 +595,15 @@ function hit(by: number | null, value: number, tank = ME): FfaSnapshotEvent {
 
 function enter(bot: CrowdBot, phase: FfaPhase = FfaPhase.Fight): void {
   const messages: ServerMessage[] = [
-    { type: MessageType.FfaWelcome, playerId: ME, token: 'пропуск', gameId: 'игра', size: 10, rules: DEFAULT_RULES },
+    {
+      type: MessageType.FfaWelcome,
+      playerId: ME,
+      token: 'пропуск',
+      gameId: 'игра',
+      size: 10,
+      rules: DEFAULT_RULES,
+      inviteMiss: FfaInviteMiss.None,
+    },
     {
       type: MessageType.FfaRoster,
       players: [
@@ -595,6 +636,7 @@ describe('бот толпы на сообщениях сервера', () => {
       gameId: 'и',
       size: 10,
       rules: DEFAULT_RULES,
+      inviteMiss: FfaInviteMiss.None,
     });
     expect(bot.receive(snapshot(2))).toBeNull();
   });
@@ -620,7 +662,7 @@ describe('бот толпы на сообщениях сервера', () => {
     const fallen = botOf();
     enter(fallen);
     for (const state of ['wreck', 'waiting', 'spectator'] as const) {
-      const self = { state, ticksLeft: 30, killerId: 2, idleTicksLeft: null };
+      const self = { state, ticksLeft: 30, killerId: 2, idleTicksLeft: null, isOut: false };
       expect(fallen.receive(snapshot(1, { self }))).toBeNull();
     }
     expect(fallen.receive(snapshot(2))?.seq).toBe(1);

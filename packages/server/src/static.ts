@@ -2,6 +2,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { FFA_SIZES } from '@tanks/shared/engine';
+import { FFA_PATH_GAME_ID } from '@tanks/shared/protocol';
 
 const MIME: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8',
@@ -15,8 +16,14 @@ const MIME: Readonly<Record<string, string>> = {
   '.woff2': 'font/woff2',
 };
 
-// Общий бой: `/ffa` — игра на 30 мест, `/ffa/<размер>` — только размеры из списка игр.
-const SPA_ROUTES = [/^\/$/, /^\/d\/[a-z0-9]+$/, /^\/ffa$/, new RegExp(`^/ffa/(${FFA_SIZES.join('|')})$`)];
+// Общий бой: `/ffa` — игра на 30 мест, `/ffa/<размер>` и приглашение `/ffa/<размер>/<номер игры>` — только размеры
+// из списка игр.
+const SPA_ROUTES = [
+  /^\/$/,
+  /^\/d\/[a-z0-9]+$/,
+  /^\/ffa$/,
+  new RegExp(`^/ffa/(${FFA_SIZES.join('|')})(/${FFA_PATH_GAME_ID})?$`),
+];
 
 export const APK_ROUTE = '/app/tanks.apk';
 const APK_MIME = 'application/vnd.android.package-archive';

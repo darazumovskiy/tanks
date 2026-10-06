@@ -207,6 +207,7 @@ export class Game {
         nickname: options.nickname,
         stats: options.stats ?? { ...DEFAULT_STATS },
         token: '',
+        gameId: '',
       },
     );
     this.showOverlay('Подключаюсь…', false);

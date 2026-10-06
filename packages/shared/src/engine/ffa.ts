@@ -16,14 +16,18 @@ import { chooseSpawn } from './spawn.js';
 // alive — танк на поле; wreck — подбит, ещё на поле; waiting — ждёт возрождения; spectator — зритель до конца матча.
 export type FfaPlayerState = 'alive' | 'wreck' | 'waiting' | 'spectator';
 
+// Без isBot — человек.
 export interface FfaSetup extends TankSetup {
   id: number;
+  isBot?: boolean;
 }
 
 export interface FfaPlayer {
   id: number;
   name: string;
   stats: unknown;
+  // В финале боты выбывают первыми.
+  isBot: boolean;
   state: FfaPlayerState;
   ticksLeft: number;
   kills: number;
@@ -33,6 +37,8 @@ export interface FfaPlayer {
   killerId: number | null;
   // Был ли танк на поле в этом матче: вошедший в финал зрителем в счёт матча не входит.
   hasPlayed: boolean;
+  // Подбит в финале без права вернуться: обломки догорят — зритель.
+  isOut: boolean;
 }
 
 // durationSeconds — длительность матча; suddenDeathAt — секунда матча, с которой возрождения нет.
@@ -45,10 +51,17 @@ export interface FfaMatch {
   suddenDeathAt: number;
   isSuddenDeath: boolean;
   isOver: boolean;
+  // События входа между тиками: уходят с ближайшим тиком.
+  pendingEvents: FfaEvent[];
 }
 
+// out — бот выбыл в финале за человека: танк взорвался на месте без убийства и смерти в счёт.
 export type FfaEvent =
-  WorldEvent | { type: 'spawn'; tank: number; x: number; y: number } | { type: 'suddenDeath' } | { type: 'matchOver' };
+  | WorldEvent
+  | { type: 'spawn'; tank: number; x: number; y: number }
+  | { type: 'out'; tank: number; x: number; y: number }
+  | { type: 'suddenDeath' }
+  | { type: 'matchOver' };
 
 const WRECK_TICKS = Math.round(FFA.wreckSeconds * TICK_RATE);
 // Тиков от исчезновения обломков до появления: клиент досчитывает по ним отсчёт подбитого.
@@ -87,6 +100,7 @@ function newPlayer(setup: FfaSetup, state: FfaPlayerState): FfaPlayer {
     id: setup.id,
     name: setup.name,
     stats: setup.stats,
+    isBot: setup.isBot === true,
     state,
     ticksLeft: 0,
     kills: 0,
@@ -95,6 +109,7 @@ function newPlayer(setup: FfaSetup, state: FfaPlayerState): FfaPlayer {
     damageTaken: 0,
     killerId: null,
     hasPlayed: false,
+    isOut: false,
   };
 }
 
@@ -132,6 +147,7 @@ export function createFfaMatch(
     suddenDeathAt: suddenDeathTime(map, plan),
     isSuddenDeath: false,
     isOver: false,
+    pendingEvents: [],
   };
   for (const player of match.players) {
     spawnPlayer(match, player, []);
@@ -139,12 +155,16 @@ export function createFfaMatch(
   return match;
 }
 
-// До финала вошедший появляется на ближайшем тике, в финале — смотрит зрителем.
+// До финала вошедший появляется на ближайшем тике, в финале — решает судьбу, как подбитый.
 export function joinFfaMatch(match: FfaMatch, setup: FfaSetup): void {
   if (playerById(match, setup.id) !== undefined) {
     throw new Error(`игрок ${String(setup.id)} уже в матче`);
   }
-  match.players.push(newPlayer(setup, match.isSuddenDeath ? 'spectator' : 'waiting'));
+  const player = newPlayer(setup, 'waiting');
+  match.players.push(player);
+  if (match.isSuddenDeath) {
+    settleFinalFate(match, player, match.pendingEvents);
+  }
 }
 
 export function leaveFfaMatch(match: FfaMatch, id: number): void {
@@ -153,7 +173,7 @@ export function leaveFfaMatch(match: FfaMatch, id: number): void {
 }
 
 // Убийство — автору добивающего выстрела; свой рикошет и зона — смерть без убийства.
-function scoreEvent(match: FfaMatch, event: WorldEvent): void {
+function scoreEvent(match: FfaMatch, event: WorldEvent, events: FfaEvent[]): void {
   if (event.type === 'hit') {
     const victim = playerById(match, event.tank);
     if (victim !== undefined) {
@@ -168,16 +188,21 @@ function scoreEvent(match: FfaMatch, event: WorldEvent): void {
   if (event.type !== 'death') {
     return;
   }
-  const victim = playerById(match, event.tank);
-  if (victim !== undefined) {
-    victim.deaths++;
-    victim.killerId = event.cause === 'bullet' ? event.by : null;
-    victim.state = 'wreck';
-    victim.ticksLeft = WRECK_TICKS;
-  }
   const killer = event.cause === 'bullet' && event.by !== null ? playerById(match, event.by) : undefined;
   if (killer !== undefined) {
     killer.kills++;
+  }
+  const victim = playerById(match, event.tank);
+  if (victim === undefined) {
+    return;
+  }
+  victim.deaths++;
+  victim.killerId = event.cause === 'bullet' ? event.by : null;
+  victim.state = 'wreck';
+  victim.ticksLeft = WRECK_TICKS;
+  // Место в таблице для замены — уже с этим убийством.
+  if (match.isSuddenDeath) {
+    settleFinalFate(match, victim, events);
   }
 }
 
@@ -188,7 +213,7 @@ function advancePlayer(match: FfaMatch, player: FfaPlayer, events: FfaEvent[]): 
       return;
     }
     match.world.tanks = match.world.tanks.filter((tank) => tank.id !== player.id);
-    if (match.isSuddenDeath) {
+    if (player.isOut) {
       becomeSpectator(player);
       return;
     }
@@ -212,14 +237,62 @@ function becomeSpectator(player: FfaPlayer): void {
   player.ticksLeft = 0;
 }
 
+// Танк, погибший на этом тике, ещё числится alive у игрока до счёта: живость — по танку.
+function lowestBotOnField(match: FfaMatch): FfaPlayer | undefined {
+  const aliveIds = new Set(match.world.tanks.filter((tank) => tank.isAlive).map((tank) => tank.id));
+  const bots = ffaStandings(
+    match.players.filter((player) => player.isBot && player.state === 'alive' && aliveIds.has(player.id)),
+  );
+  return bots[bots.length - 1];
+}
+
+function knockOut(match: FfaMatch, bot: FfaPlayer, events: FfaEvent[]): void {
+  const tank = match.world.tanks.find((candidate) => candidate.id === bot.id);
+  if (tank !== undefined) {
+    tank.isAlive = false;
+    tank.hp = 0;
+    tank.speed = 0;
+    events.push({ type: 'out', tank: tank.id, x: tank.x, y: tank.y });
+  }
+  bot.state = 'wreck';
+  bot.ticksLeft = WRECK_TICKS;
+  bot.isOut = true;
+}
+
+// Судьба в финале подбитого (wreck) или ждущего (waiting): бот выбывает; за человека, пока на поле есть живой
+// бот, выбывает бот с самым низким местом, а человек возвращается по своему таймеру; живых ботов нет — выбывает.
+function settleFinalFate(match: FfaMatch, player: FfaPlayer, events: FfaEvent[]): void {
+  const substitute = player.isBot ? undefined : lowestBotOnField(match);
+  if (substitute !== undefined) {
+    knockOut(match, substitute, events);
+    return;
+  }
+  if (player.state === 'wreck') {
+    player.isOut = true;
+    return;
+  }
+  becomeSpectator(player);
+}
+
 function startSuddenDeath(match: FfaMatch, events: FfaEvent[]): void {
   match.isSuddenDeath = true;
   events.push({ type: 'suddenDeath' });
   for (const player of match.players) {
-    if (player.state === 'waiting') {
-      becomeSpectator(player);
+    if (player.state === 'waiting' || player.state === 'wreck') {
+      settleFinalFate(match, player, events);
     }
   }
+}
+
+// Ещё в игре: живой танк или человек, за которого выбыл бот, — в обломках или в ожидании.
+function isContender(player: FfaPlayer): boolean {
+  return player.state === 'alive' || ((player.state === 'wreck' || player.state === 'waiting') && !player.isOut);
+}
+
+// Один живой или никого; человек, который вернётся на поле, — ещё не конец: матч ждёт его возвращения.
+function isLastOneStanding(match: FfaMatch): boolean {
+  const contenders = match.players.filter(isContender);
+  return contenders.length <= 1 && contenders.every((player) => player.state === 'alive');
 }
 
 // actions — команды по номеру игрока; нет команды — танк стоит.
@@ -232,7 +305,8 @@ export function stepFfaMatch(match: FfaMatch, actions: ReadonlyMap<number, unkno
     world,
     world.tanks.map((tank) => actions.get(tank.id)),
   );
-  const events: FfaEvent[] = [...roundEvents];
+  const events: FfaEvent[] = [...match.pendingEvents, ...roundEvents];
+  match.pendingEvents = [];
   if (!match.isSuddenDeath && world.time >= match.suddenDeathAt - 1e-9) {
     startSuddenDeath(match, events);
   }
@@ -241,11 +315,10 @@ export function stepFfaMatch(match: FfaMatch, actions: ReadonlyMap<number, unkno
     advancePlayer(match, player, events);
   }
   for (const event of roundEvents) {
-    scoreEvent(match, event);
+    scoreEvent(match, event, events);
   }
-  const aliveCount = world.tanks.filter((tank) => tank.isAlive).length;
   const isTimeUp = world.time >= match.durationSeconds - 1e-9;
-  if (isTimeUp || (match.isSuddenDeath && aliveCount <= 1)) {
+  if (isTimeUp || (match.isSuddenDeath && isLastOneStanding(match))) {
     match.isOver = true;
     events.push({ type: 'matchOver' });
   }

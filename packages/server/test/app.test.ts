@@ -152,12 +152,21 @@ describe('HTTP', () => {
     expect(await stale.text()).toBe('<svg/>');
   });
 
-  it('отдаёт index.html на маршрутах общего боя, кроме размеров не из списка', async () => {
+  it('отдаёт index.html на маршрутах общего боя и приглашения, кроме размеров не из списка и кривых номеров', async () => {
     const base = `http://127.0.0.1:${String(port)}`;
-    for (const route of ['/ffa', '/ffa/10', '/ffa/30', '/ffa/50']) {
+    for (const route of ['/ffa', '/ffa/10', '/ffa/30', '/ffa/50', '/ffa/10/K7MF', '/ffa/30/x']) {
       expect(await (await fetch(`${base}${route}`)).text()).toBe('<html>tanks</html>');
     }
-    for (const route of ['/ffa/11', '/ffa/', '/ffa/30/x', '/ffax']) {
+    const longId = 'A'.repeat(17);
+    for (const route of [
+      '/ffa/11',
+      '/ffa/',
+      '/ffa/11/K7MF',
+      '/ffa/10/',
+      '/ffa/10/K7MF/x',
+      `/ffa/10/${longId}`,
+      '/ffax',
+    ]) {
       expect((await fetch(`${base}${route}`)).status).toBe(404);
     }
   });
@@ -306,11 +315,18 @@ describe('переключатели общей игры из окружения
     expect((await client.nextOfType(MessageType.Error, WAIT_MS)).code).toBe(ErrorCode.Idle);
   });
 
-  it('пустая переменная — умолчание', async () => {
-    await restart({ FFA_MINIMUM: '', FFA_MATCH_SECONDS: '' });
+  it('пустая переменная — умолчание: минимум 7, лобби добрано серверными ботами', async () => {
+    await restart({ FFA_MINIMUM: '', FFA_MATCH_SECONDS: '', FFA_SERVER_BOTS: '' });
     const client = await connect();
     client.join('ffa10');
-    expect(await stateOf(client, FfaPhase.Lobby)).toMatchObject({ minimum: 7, ticksLeft: null });
+    expect(await stateOf(client, FfaPhase.Lobby)).toMatchObject({ minimum: 7, players: 7, ticksLeft: 10 * TICK_RATE });
+  });
+
+  it('FFA_SERVER_BOTS=0 — игру ботами не добирает', async () => {
+    await restart({ FFA_SERVER_BOTS: '0' });
+    const client = await connect();
+    client.join('ffa10');
+    expect(await stateOf(client, FfaPhase.Lobby)).toMatchObject({ minimum: 7, players: 1, ticksLeft: null });
   });
 
   it.each([
@@ -323,6 +339,7 @@ describe('переключатели общей игры из окружения
     ['FFA_RESULTS_SECONDS', '1e9'],
     ['FFA_IDLE_WARN_SECONDS', 'x'],
     ['FFA_IDLE_KICK_SECONDS', '3000'],
+    ['FFA_SERVER_BOTS', 'да'],
   ])('%s=«%s» — createApp бросает ошибку с именем переменной', (name, value) => {
     expect(() => createApp({ ffaEnv: { [name]: value } })).toThrow(name);
   });

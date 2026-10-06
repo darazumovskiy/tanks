@@ -52,6 +52,7 @@ export type FfaScreen =
 export interface FfaDebugState {
   screen: FfaScreen;
   playerId: number | null;
+  gameId: string | null;
   phase: number | null;
   matchIndex: number;
   players: number;
@@ -162,6 +163,11 @@ export class Player {
     options: PlayerOptions = {},
   ): Promise<Player> {
     return Player.openPage(browser, `${baseUrl}/ffa/${String(size)}${options.query ?? ''}`, name, stats, options);
+  }
+
+  // Страница по готовой ссылке — например, по приглашению из буфера обмена.
+  static openLink(browser: Browser, url: string, name: string, stats: string): Promise<Player> {
+    return Player.openPage(browser, url, name, stats);
   }
 
   // Главная с розданными очками танка: кнопки входа в бой доступны.

@@ -28,15 +28,19 @@ Vector держит очереди на диске (по 256 МБ на приё�
 |---|---|---|
 | `tanks_tick_duration_ms{quantile="0.5"\|"0.99"\|"max"}` | gauge | длительность `rooms.step` за окно |
 | `tanks_event_loop_delay_ms{quantile="0.5"\|"0.99"\|"max"}` | gauge | опоздание цикла событий Node: на сколько таймер с шагом 10 мс сработал позже срока — первый признак перегрузки |
+| `tanks_bot_think_ms{quantile="0.5"\|"0.99"\|"max"}` | gauge | ход мозга всех серверных ботов процесса после тика за окно |
 | `tanks_ticks_total` | counter | тиков с запуска |
 | `tanks_ticks_late_total` | counter | тиков, начавшихся позже расписания больше чем на тик |
 | `tanks_rooms`, `tanks_connections` | gauge | комнат и сокетов сейчас |
+| `tanks_players{mode="duel"\|"ffa10"\|"ffa30"\|"ffa50",kind="human"\|"bot"\|"swarm"}` | gauge | игроков в играх сейчас: люди, серверные боты (в дуэли — бот лестницы), боты роя; человек с оборванной связью в окне возврата — в игре |
 | `tanks_messages_total{direction="in"\|"out"}` | counter | сообщений по сокетам |
 | `tanks_bytes_total{direction="in"\|"out"}` | counter | байт по сокетам |
 | `tanks_inputs_dropped_total{reason="stale"\|"limit"\|"overflow"\|"backlog"}` | counter | команд отброшено как устаревшие, сверх лимита в секунду, из переполненной очереди или слито из стойкого запаса |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total`, `process_start_time_seconds` | gauge/counter | процесс |
 
-Подсчёт — инкремент числа или запись в гистограмму `perf_hooks.createHistogram` (микросекунды); аллокаций и вызовов наружу внутри тика нет. Текст собирается только при запросе ручки. Сообщения и байты считаются только по сокетам: подключения ботов внутри процесса сетью не являются.
+Подсчёт — инкремент числа или запись в гистограмму `perf_hooks.createHistogram` (микросекунды); аллокаций и вызовов наружу внутри тика нет. Текст собирается только при запросе ручки; число игроков игры считают в этот момент. Сообщения и байты считаются только по сокетам: подключения ботов внутри процесса сетью не являются.
+
+Онлайн на дашборде — `tanks_players`: сколько людей и ботов в игре по данным самого сервера. Отчёты страниц (`/telemetry`) показывают только устройства людей по платформам: бот страницы не имеет, а открытая страница может быть уже не в игре.
 
 ### Логи в облако
 
@@ -87,7 +91,7 @@ Vector читает `journalctl` юнитов `tanks`, `caddy` и `vector` це�
 - Доступы — `/etc/default/vector` (root, 600; юнит пакета читает его как `EnvironmentFile`), кладутся с рабочей машины: `deploy/vector-secrets.sh root@<машина>` берёт строки `GRAFANA_CLOUD_*` из `~/.secrets-tank/grafana-cloud.env`. Адрес Loki в файле — без пути (`https://logs-prod-012.grafana.net`), адрес Prometheus — полный до `/api/prom/push`.
 - `deploy/setup.sh` ставит Vector из репозитория `setup.vector.dev` и добавляет пользователя `vector` в группу `systemd-journal`; `deploy-local.sh` при каждой выкладке переустанавливает `vector.yaml`, drop-in и `Caddyfile`, перезагружает Caddy и перезапускает Vector (без доступов Vector не стартует, игра от этого не зависит).
 - `deploy/Caddyfile` — `/metrics` → 404, `/telemetry` → Vector с лимитом тела 64 КБ, остальное → игра.
-- `deploy/grafana/build-dashboard.py` собирает `tanks-dashboard.json` (uid `tanks-main`: тик и цикл событий, опоздавшие тики, комнаты и сокеты, сообщения и байты, отброшенные команды, процесс игры, задержка и кадры игроков из строк `sec`, события клиента и игр, процессор, память, нагрузка, сеть и диск машины, журнал systemd); `deploy/grafana-dashboard.sh` загружает его по API сервисным аккаунтом из `grafana-cloud.env`.
+- [build-dashboard.py](../../../../deploy/grafana/build-dashboard.py) собирает [tanks-dashboard.json](../../../../deploy/grafana/tanks-dashboard.json) (uid `tanks-main`: тик, ход ботов и цикл событий, опоздавшие тики, комнаты и сокеты, онлайн людей и ботов по `tanks_players`, устройства людей по платформам из строк `sec`, сообщения и байты, отброшенные команды, процесс игры, задержка и кадры игроков из строк `sec`, события клиента и игр, процессор, память, нагрузка, сеть и диск машины, журнал systemd); `deploy/grafana-dashboard.sh` загружает его по API сервисным аккаунтом из `grafana-cloud.env`.
 - MCP проекта — `.cursor/mcp.json` → `.cursor/bin/mcp-grafana.sh`: читает `GRAFANA_URL` и `GRAFANA_SERVICE_ACCOUNT_TOKEN` из `grafana-cloud.env`, запускает `mcp-grafana`; агент читает дашборды и делает запросы к метрикам и логам без браузера.
 
 ## План тестирования
@@ -96,7 +100,8 @@ Vector читает `journalctl` юнитов `tanks`, `caddy` и `vector` це�
 
 | Сценарий | Ожидание | Статус |
 |---|---|---|
-| `GET /metrics` на пустом сервере | 200, `text/plain; version=0.0.4`, ровно ряды из таблицы в порядке таблицы, `tanks_rooms 0`, память и старт процесса заполнены | авто |
+| `GET /metrics` на пустом сервере | 200, `text/plain; version=0.0.4`, ровно ряды из таблицы в порядке таблицы, `tanks_rooms 0`, все 12 рядов `tanks_players` — 0, память и старт процесса заполнены | авто |
+| Человек в `ffa10` с серверными ботами, бот роя в `ffa30`, человек в комнате бота дуэли | `tanks_players` — `ffa10` 1 человек и 6 ботов, `ffa30` 1 бот роя, `duel` 1 человек и 1 бот; `tanks_bot_think_ms{max}` > 0 | авто |
 | Два клиента отыгрывают тики с вводом | `tanks_ticks_total` растёт, `tanks_rooms 1`, `tanks_connections 2`, `messages_total{in}` = входы + команды, `messages_total{out}` > 0, `bytes_total{out}` > `messages_total{out}`, квантили тика > 0 | авто |
 | Устаревший `seq` и сверх лимита | `inputs_dropped_total{reason="stale"}` и `{reason="limit"}` увеличились ровно на число отброшенных | авто |
 | Комната без счётчика (стенд бот против бота строит `Room` напрямую) | устаревшая команда отбрасывается без ошибки | авто |

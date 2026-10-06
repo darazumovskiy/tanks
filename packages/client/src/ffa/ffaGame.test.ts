@@ -23,6 +23,7 @@ import {
   encode,
   ErrorCode,
   EventFlag,
+  FfaInviteMiss,
   FfaPhase,
   MessageType,
   type ClientMessage,
@@ -32,7 +33,7 @@ import {
   type ServerMessage,
 } from '@tanks/shared/protocol';
 import { DiagLog } from '../diag.js';
-import type { SocketLike } from '../net.js';
+import { RECONNECT_BASE_MS, type SocketLike } from '../net.js';
 import { Effects } from '../render/effects.js';
 import type { FfaDrawInput } from '../render/ffaRenderer.js';
 import { StampDecals } from '../render/stampDecals.js';
@@ -143,7 +144,7 @@ let clock = 0;
 let pendingFrame: ((now: number) => void) | null = null;
 
 // Страница боя как в index.html: холст, корень интерфейса толпы и панель настроек — соседи.
-function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings> = {}): Harness {
+function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings> = {}, inviteGameId = ''): Harness {
   document.body.innerHTML = '';
   const stage = document.createElement('div');
   const canvas = document.createElement('canvas');
@@ -169,6 +170,7 @@ function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings>
   const game = new FfaGame(
     {
       size: SIZE,
+      inviteGameId,
       nickname: 'Дима',
       stats: DEFAULT_STATS,
       canvas,
@@ -244,8 +246,16 @@ function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings>
   };
 }
 
-function welcome(playerId = ME, token = 'пропуск'): ServerMessage {
-  return { type: MessageType.FfaWelcome, playerId, token, gameId: 'K7QX', size: SIZE, rules: DEFAULT_RULES };
+function welcome(playerId = ME, token = 'пропуск', inviteMiss: FfaInviteMiss = FfaInviteMiss.None): ServerMessage {
+  return {
+    type: MessageType.FfaWelcome,
+    playerId,
+    token,
+    gameId: 'K7QX',
+    size: SIZE,
+    rules: DEFAULT_RULES,
+    inviteMiss,
+  };
 }
 
 function roster(ids: readonly number[] = [ME, ENEMY]): ServerMessage {
@@ -642,7 +652,7 @@ describe('обрыв и возврат', () => {
     socket.receive(roster());
     socket.receive(state(FfaPhase.Fight, 900));
     socket.receive(matchStart());
-    socket.receive(snapshotOf(world, { state: 'wreck', killerId: ENEMY }));
+    socket.receive(snapshotOf(world, { state: 'wreck', killerId: ENEMY, isOut: true }));
     harness.frames(2);
     expect(harness.state()).toMatchObject({ isFinal: true, screen: 'dead', self: { killerId: ENEMY } });
     expect(statusText(harness)).toContain('ТЫ ВЫБЫЛ');
@@ -1075,10 +1085,10 @@ describe('интерфейс матча', () => {
     expect(hudPart(harness, '.ffa-progress-fill').classList.contains('is-ready')).toBe(true);
   });
 
-  it('U1 «Позвать друга» копирует ссылку на игру этого размера и говорит об этом 2 с; «Выйти» закрывает соединение', async () => {
+  it('U1 «Позвать друга» копирует ссылку на эту игру и говорит об этом 2 с; «Выйти» закрывает соединение', async () => {
     const harness = lobbyGame(3);
     click(harness, '.ffa-lobby', 'Позвать друга');
-    expect(harness.copied).toEqual(['https://tanks.test/ffa/10']);
+    expect(harness.copied).toEqual(['https://tanks.test/ffa/10/K7QX']);
     await Promise.resolve();
     harness.frames(1);
     expect(isShown(harness, '.ffa-lobby-copied')).toBe(true);
@@ -1088,6 +1098,62 @@ describe('интерфейс матча', () => {
     click(harness, '.ffa-lobby', 'Выйти');
     expect(harness.socket().isClosedByClient).toBe(true);
     expect(harness.calls).toEqual(['home']);
+  });
+
+  it('U1a вход по приглашению: номер игры уходит в каждый вход; попал куда звали — плашки нет', () => {
+    const harness = makeGame('', false, {}, 'ZZ9Q');
+    const socket = harness.socket();
+    socket.open();
+    expect(socket.sent[0]).toMatchObject({ type: MessageType.Join, gameId: 'ZZ9Q' });
+    socket.receive(welcome());
+    socket.receive(roster([ENEMY, ME, 6]));
+    socket.receive(state(FfaPhase.Lobby, null, 0, 3));
+    harness.frames(1);
+    expect(isShown(harness, '.ffa-invite')).toBe(false);
+    socket.drop();
+    vi.advanceTimersByTime(RECONNECT_BASE_MS);
+    harness.socket().open();
+    expect(harness.socket().sent[0]).toMatchObject({ type: MessageType.Join, gameId: 'ZZ9Q', token: 'пропуск' });
+  });
+
+  it.each([
+    [FfaInviteMiss.Full, 'ИГРА ДРУГА ПОЛНА Ты в соседней — зови сюда'],
+    [FfaInviteMiss.Gone, 'ТОЙ ИГРЫ УЖЕ НЕТ Все разошлись — вот новая'],
+  ])('U1a приглашение мимо (%i): плашка с причиной в лобби и в бою, гаснет через 8 с после входа', (miss, text) => {
+    const harness = makeGame('', false, {}, 'ZZ9Q');
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome(ME, 'пропуск', miss));
+    socket.receive(roster([ENEMY, ME, 6]));
+    socket.receive(state(FfaPhase.Lobby, null, 0, 3));
+    harness.frames(1);
+    expect(harness.state().screen).toBe('lobby');
+    expect(isShown(harness, '.ffa-invite')).toBe(true);
+    expect(partText(harness, '.ffa-invite')).toBe(text);
+    const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
+    socket.receive(state(FfaPhase.Fight, 3600));
+    socket.receive(matchStart());
+    step(world);
+    socket.receive(snapshotOf(world));
+    harness.frames(5 * SECOND_FRAMES);
+    expect(harness.state().screen).toBe('fight');
+    expect(isShown(harness, '.ffa-invite')).toBe(true);
+    harness.frames(3 * SECOND_FRAMES);
+    expect(isShown(harness, '.ffa-invite')).toBe(false);
+  });
+
+  it('U1a связь пропала — баннер связи на месте плашки приглашения', () => {
+    const harness = makeGame('', false, {}, 'ZZ9Q');
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome(ME, 'пропуск', FfaInviteMiss.Full));
+    socket.receive(roster([ENEMY, ME, 6]));
+    socket.receive(state(FfaPhase.Lobby, null, 0, 3));
+    harness.frames(1);
+    socket.drop();
+    harness.frames(1);
+    expect(isShown(harness, '.ffa-connection')).toBe(true);
+    expect(isShown(harness, '.ffa-invite')).toBe(false);
   });
 
   it('U2 отсчёт: 3, 2, 1, «В БОЙ!» по местным часам; «В БОЙ!» держится и после начала боя, потом гаснет', () => {
@@ -1142,7 +1208,7 @@ describe('интерфейс матча', () => {
     expect(partText(harness, '.ffa-place')).toBe('1-й из 2 подбил 4 · погиб 2');
   });
 
-  it('U4 лента: свои строки выделены, значки по виду, на телефоне 3 строки, на компьютере 4; строка гаснет через 5 с', () => {
+  it('U4 лента: свои строки выделены, значки по виду, бот выбыл, на телефоне 3 строки, на компьютере 4; строка гаснет через 5 с', () => {
     for (const [isTouch, rows] of [
       [true, 3],
       [false, 4],
@@ -1156,6 +1222,7 @@ describe('интерфейс матча', () => {
         { ...event('death', 6, 900, 650, 6), flags: EventFlag.Self | EventFlag.Ricochet },
         { ...event('death', ENEMY, 900, 650, null), flags: EventFlag.Zone },
         event('death', 6, 900, 650, 77),
+        { ...event('death', 6, 900, 650, null), flags: EventFlag.Out },
       ];
       for (const death of deaths) {
         step(world);
@@ -1165,12 +1232,12 @@ describe('интерфейс матча', () => {
       const shown = [...harness.hud.querySelectorAll<HTMLElement>('.ffa-feed-row')];
       expect(shown).toHaveLength(rows);
       expect(shown.map((row) => shownText(row)).slice(0, 3)).toEqual([
+        'Робот выбыл',
         'Неизвестный танкист Робот',
         'Вася сгорел в зоне',
-        'Робот сам себя',
       ]);
       expect(shown.map((row) => row.querySelector('.ffa-feed-icon')?.getAttribute('data-cause'))).toEqual(
-        ['bullet', 'zone', 'self', 'ricochet'].slice(0, rows),
+        ['out', 'bullet', 'zone', 'self'].slice(0, rows),
       );
       harness.frames(5 * SECOND_FRAMES);
       expect(harness.hud.querySelectorAll('.ffa-feed-row')).toHaveLength(0);
@@ -1229,7 +1296,9 @@ describe('интерфейс матча', () => {
     harness
       .socket()
       .receive(
-        selfSnapshot(world, { state: 'wreck', killerId: ENEMY, ticksLeft: 57 }, [event('suddenDeath', null, 0, 0)]),
+        selfSnapshot(world, { state: 'wreck', killerId: ENEMY, ticksLeft: 57, isOut: true }, [
+          event('suddenDeath', null, 0, 0),
+        ]),
       );
     harness.frames(1);
     expect(partText(harness, '.ffa-death')).toBe('ТЫ ВЫБЫЛ Финал без возрождений — смотрим, кто кого');
@@ -1246,6 +1315,7 @@ describe('интерфейс матча', () => {
     const harness = makeGame();
     const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
     enterFight(harness, world);
+    harness.socket().receive(roster([ME, ENEMY]));
     world.tick = (SUDDEN_DEATH_AT - 5) * 30;
     harness.socket().receive(snapshotOf(world));
     harness.frames(1);
@@ -1385,12 +1455,12 @@ describe('интерфейс матча', () => {
     );
     step(world);
     socket.receive(snapshotOf(world, { events: [event('death', 6, 9, 9, ME)] }));
-    socket.receive(state(FfaPhase.Results, 450, 1, 7));
+    socket.receive(state(FfaPhase.Results, 150, 1, 7));
     harness.frames(1);
     expect(partText(harness, '.ffa-results-title')).toBe('В СЛЕДУЮЩИЙ РАЗ');
-    expect(partText(harness, '.ffa-results-next')).toBe('Следующий матч через 15');
+    expect(partText(harness, '.ffa-results-next')).toBe('Следующий матч через 5');
     harness.frames(3 * SECOND_FRAMES);
-    expect(partText(harness, '.ffa-results-next')).toBe('Следующий матч через 12');
+    expect(partText(harness, '.ffa-results-next')).toBe('Следующий матч через 2');
     socket.receive(state(FfaPhase.Countdown, 90, 2, 7));
     harness.frames(1);
     expect(harness.state().screen).toBe('results');

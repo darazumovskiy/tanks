@@ -129,6 +129,10 @@ export class Room {
     return this.players.every((player) => player === null);
   }
 
+  get playerCount(): number {
+    return this.players.filter((player) => player !== null).length;
+  }
+
   freeSide(): Side | null {
     if (this.players[0] === null) {
       return 0;

@@ -147,6 +147,11 @@ function gridFor(map: BattleMap): Grid {
   return grid;
 }
 
+// Сетка пути карты строится заранее, чтобы первый тик боя её не строил.
+export function prepareCrowdMap(map: BattleMap): void {
+  gridFor(map);
+}
+
 function isFree(grid: Grid, row: number, col: number): boolean {
   return grid.free[row * grid.cols + col] === 1;
 }
@@ -504,7 +509,6 @@ export class CrowdBrain {
     this.unstickDrive = { throttle: this.lastThrottle > 0 ? -1 : 1, turn: this.unstickSide };
     this.unstickSide = -this.unstickSide;
     this.path = [];
-    this.pathGoal = null;
     return this.unstickDrive;
   }
 
@@ -613,15 +617,18 @@ export class CrowdBrain {
   }
 
   // Путь пересчитывается по расписанию (свой тик у каждого бота), когда цель пути заметно сдвинулась или путь
-  // кончился — но не чаще раза в MIN_REPLAN_GAP_TICKS: недостижимая цель не гоняет поиск каждый тик.
+  // кончился — но не чаще раза в MIN_REPLAN_GAP_TICKS: недостижимая цель не гоняет поиск каждый тик. Первый путь —
+  // только по расписанию: на старте боя боты ищут его не все в одном тике.
   private followPath(view: CrowdView, grid: Grid, goal: Point): Drive {
     const { me, map } = view;
+    const isDue = (view.tick + this.phase) % REPLAN_TICKS === 0;
+    const isFirst = this.pathGoal === null;
     const isStale =
       this.pathGoal === null ||
       this.path.length === 0 ||
       Math.hypot(goal.x - this.pathGoal.x, goal.y - this.pathGoal.y) > GOAL_SHIFT;
-    const isDue = (view.tick + this.phase) % REPLAN_TICKS === 0;
-    if ((isStale || isDue) && view.tick - this.pathTick >= MIN_REPLAN_GAP_TICKS) {
+    const isReplanWanted = isFirst ? isDue : isStale || isDue;
+    if (isReplanWanted && view.tick - this.pathTick >= MIN_REPLAN_GAP_TICKS) {
       this.path = findPath(grid, nearestFree(grid, me.x, me.y), nearestFree(grid, goal.x, goal.y));
       this.pathTick = view.tick;
       this.pathGoal = { x: goal.x, y: goal.y };

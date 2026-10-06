@@ -39,6 +39,7 @@ export interface SnapshotDetails {
   state?: FfaPlayerState;
   killerId?: number | null;
   gameTick?: number;
+  isOut?: boolean;
 }
 
 export function snapshotOf(world: World, details: SnapshotDetails = {}): FfaSnapshotMessage {
@@ -47,7 +48,13 @@ export function snapshotOf(world: World, details: SnapshotDetails = {}): FfaSnap
     tick: world.tick,
     gameTick: details.gameTick ?? world.tick,
     ackSeq: details.ackSeq ?? 0,
-    self: { state: details.state ?? 'alive', ticksLeft: 0, killerId: details.killerId ?? null, idleTicksLeft: null },
+    self: {
+      state: details.state ?? 'alive',
+      ticksLeft: 0,
+      killerId: details.killerId ?? null,
+      idleTicksLeft: null,
+      isOut: details.isOut ?? false,
+    },
     tanks: world.tanks.map((tank) => ({
       id: tank.id,
       x: tank.x,

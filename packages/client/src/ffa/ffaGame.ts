@@ -44,11 +44,14 @@ import { edgeArrows, visibleEnemies, type EdgeArrow } from './arrows.js';
 import { FfaCamera, type FfaAim, type FfaFraming } from './ffaCamera.js';
 import { FfaPrediction, type FfaFrameView, type FfaViewTank } from './ffaPrediction.js';
 import { FfaFxPolicy } from './fxPolicy.js';
+import { ffaInvitePath } from '../ffaRoute.js';
 import { FfaHud } from './hud/hud.js';
 import { feedText, FfaSession, type FfaScreen as SessionScreen } from './session.js';
 
 export interface FfaGameOptions {
   size: FfaSize;
+  // Номер игры из приглашения друга, пусто — любая игра этого размера.
+  inviteGameId: string;
   nickname: string;
   stats: Stats;
   // Ввод боя слушает только холст: интерфейс поверх с pointer-events: none пропускает нажатия к нему.
@@ -228,7 +231,7 @@ export class FfaGame {
     this.hud = new FfaHud(
       options.hud,
       {
-        invite: () => this.deps.copyText(`${this.deps.pageOrigin}/ffa/${String(options.size)}`),
+        invite: () => this.deps.copyText(`${this.deps.pageOrigin}${this.invitePath()}`),
         leave: () => {
           this.leave();
         },
@@ -371,6 +374,7 @@ export class FfaGame {
         nickname: this.options.nickname,
         stats: this.options.stats,
         token: this.deps.tokens.read(size),
+        gameId: this.options.inviteGameId,
       },
       { createSocket: this.deps.createSocket, now: this.deps.now },
     );
@@ -791,6 +795,15 @@ export class FfaGame {
     this.prediction = null;
     this.resetMatchEffects();
     this.net = this.connect();
+  }
+
+  // До приветствия номера игры ещё нет — ссылка на игру этого размера.
+  private invitePath(): string {
+    const gameId = this.session.gameId;
+    if (gameId === null) {
+      return `/ffa/${String(this.options.size)}`;
+    }
+    return ffaInvitePath(this.options.size, gameId);
   }
 
   private leave(): void {

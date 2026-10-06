@@ -67,6 +67,8 @@ export function toFfaSnapshotEvent(event: FfaEvent): FfaSnapshotEvent {
       return plain('shield', event.tank, event.owner, event.x, event.y);
     case 'death':
       return plain('death', event.tank, event.by, event.x, event.y, 0, 0, 0, causeFlags(event.cause, event.isRicochet));
+    case 'out':
+      return plain('death', event.tank, null, event.x, event.y, 0, 0, 0, EventFlag.Out);
     case 'bump':
     case 'spawn':
       return plain(event.type, event.tank, null, event.x, event.y);

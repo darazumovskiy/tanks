@@ -4,6 +4,7 @@ import { decode, encode, NO_ID, quantizeAction, rulesFromByte, rulesToByte } fro
 import { ffaRoomCode, ffaSizeOf, isFfaRoomCode } from './ffaRoom.js';
 import {
   ErrorCode,
+  FfaInviteMiss,
   FfaPhase,
   MESSAGE_TYPE_NAMES,
   MessageType,
@@ -62,7 +63,7 @@ const ffaSnapshot: FfaSnapshotMessage = {
   tick: 3599,
   gameTick: 99999,
   ackSeq: 4242,
-  self: { state: 'wreck', ticksLeft: 45, killerId: 17, idleTicksLeft: null },
+  self: { state: 'wreck', ticksLeft: 45, killerId: 17, idleTicksLeft: null, isOut: false },
   tanks: [
     {
       id: 17,
@@ -100,6 +101,7 @@ const samples: Message[] = [
     stats: { armor: 0, engine: 0, gun: 5, reload: 5 },
     token: '',
     isBot: false,
+    gameId: '',
   },
   {
     type: MessageType.Join,
@@ -109,6 +111,7 @@ const samples: Message[] = [
     stats: DEFAULT_STATS,
     token: 'Xy7-_q',
     isBot: true,
+    gameId: 'K7MF',
   },
   {
     type: MessageType.FfaWelcome,
@@ -117,6 +120,7 @@ const samples: Message[] = [
     gameId: 'K7MF',
     size: 30,
     rules: { wallSlidePercent: 30 },
+    inviteMiss: FfaInviteMiss.Gone,
   },
   {
     type: MessageType.FfaState,
@@ -151,7 +155,7 @@ const samples: Message[] = [
     suddenDeathAt: 85.4321,
   },
   ffaSnapshot,
-  { ...ffaSnapshot, self: { state: 'alive', ticksLeft: 0, killerId: null, idleTicksLeft: 300 } },
+  { ...ffaSnapshot, self: { state: 'wreck', ticksLeft: 0, killerId: null, idleTicksLeft: 300, isOut: true } },
   {
     type: MessageType.FfaScore,
     rows: [
@@ -297,9 +301,13 @@ describe('кодек протокола', () => {
       gameId: '',
       size: 10,
       rules: { wallSlidePercent: 0 },
+      inviteMiss: FfaInviteMiss.None,
     });
+    const badMiss = welcome.slice();
     welcome[1 + 2 + 1 + 1] = 11;
     expect(() => decode(welcome)).toThrow(RangeError);
+    badMiss[1 + 2 + 1 + 1 + 1 + 1] = 3;
+    expect(() => decode(badMiss)).toThrow(RangeError);
 
     const selfOffset = 1 + 4 + 4 + 4;
     const badState = encode(ffaSnapshot);
@@ -342,6 +350,7 @@ describe('кодек протокола', () => {
         stats: DEFAULT_STATS,
         token: '',
         isBot: false,
+        gameId: '',
       }),
     );
     expect(decoded.type).toBe(MessageType.Join);

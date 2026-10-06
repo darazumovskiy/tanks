@@ -1,6 +1,6 @@
 import type { Action, EndReason, FfaPlayerState, FfaSize, RoundRules, Side, Stats, ZonePlan } from '../engine/index.js';
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 export const MessageType = {
   Join: 1,
@@ -26,7 +26,8 @@ export const MESSAGE_TYPE_NAMES: Readonly<Record<MessageType, string>> = Object.
   Object.entries(MessageType).map(([name, value]) => [value, name]),
 ) as Record<MessageType, string>;
 
-// token — пропуск для возврата в общую игру после обрыва, пусто у нового игрока; isBot — честный бот.
+// token — пропуск для возврата в общую игру после обрыва, пусто у нового игрока; isBot — честный бот;
+// gameId — номер общей игры из приглашения друга, пусто — любая игра этого размера.
 export interface JoinMessage {
   type: typeof MessageType.Join;
   protocolVersion: number;
@@ -35,6 +36,7 @@ export interface JoinMessage {
   stats: Stats;
   token: string;
   isBot: boolean;
+  gameId: string;
 }
 
 export interface InputMessage {
@@ -130,6 +132,8 @@ export const EventFlag = {
   Ricochet: 2,
   Zone: 4,
   ByTime: 8,
+  // Смерть в общей игре: бот выбыл в финале за человека.
+  Out: 16,
 } as const;
 
 // value: угол выстрела, урон, лечение; dx, dy: направление снаряда при попадании или нормаль стены при рикошете.
@@ -189,6 +193,14 @@ export const FfaPhase = {
 } as const;
 export type FfaPhase = (typeof FfaPhase)[keyof typeof FfaPhase];
 
+// Почему вошедший по приглашению не в игре друга: Full — там все места у участников, Gone — игры с этим номером нет.
+export const FfaInviteMiss = {
+  None: 0,
+  Full: 1,
+  Gone: 2,
+} as const;
+export type FfaInviteMiss = (typeof FfaInviteMiss)[keyof typeof FfaInviteMiss];
+
 export interface FfaWelcomeMessage {
   type: typeof MessageType.FfaWelcome;
   playerId: number;
@@ -196,6 +208,7 @@ export interface FfaWelcomeMessage {
   gameId: string;
   size: FfaSize;
   rules: RoundRules;
+  inviteMiss: FfaInviteMiss;
 }
 
 // ticksLeft — тиков до конца фазы; в лобби — до старта, null — старт ещё не назначен.
@@ -230,12 +243,13 @@ export interface FfaMatchStartMessage {
 }
 
 // Своё состояние игрока: ticksLeft — до перехода (подбит → ждёт → на поле), idleTicksLeft — до выхода
-// по бездействию, null — отсчёта нет.
+// по бездействию, null — отсчёта нет; isOut — подбит в финале без возврата.
 export interface FfaSelf {
   state: FfaPlayerState;
   ticksLeft: number;
   killerId: number | null;
   idleTicksLeft: number | null;
+  isOut: boolean;
 }
 
 export interface FfaTankSnapshot extends TankSnapshot {

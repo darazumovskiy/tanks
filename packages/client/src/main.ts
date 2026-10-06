@@ -1,5 +1,5 @@
 import { Capacitor } from '@capacitor/core';
-import { DEFAULT_STATS, FFA_SIZES, STAT_KEYS, STAT_POINTS, type FfaSize, type Stats } from '@tanks/shared/engine';
+import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
 import { BOT_LEVEL_INFO, BOT_LEVELS, botRoomCode, type BotLevel } from '@tanks/shared/protocol';
 import QRCode from 'qrcode';
 import { resolveAdminMode } from './admin.js';
@@ -7,6 +7,7 @@ import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js'
 import { bindImmersive } from './immersive.js';
 import { readClientInfo } from './clientInfo.js';
 import { mountFfaEntry } from './ffaEntry.js';
+import { ffaRouteOf, type FfaRoute } from './ffaRoute.js';
 import { fetchHomeHtml, reloadOnNewBuild } from './freshBuild.js';
 import { Game } from './game.js';
 import { showFrameStand } from './frameStand/stand.js';
@@ -29,8 +30,6 @@ const LEVEL_SELECTED_CLASS = 'is-selected';
 const LEVEL_INFO_OPEN_CLASS = 'is-open';
 const LEVEL_LIST_OPEN_CLASS = 'is-open';
 // `/ffa` — игра на 30 мест, куда ведёт кнопка с главной.
-const FFA_DEFAULT_SIZE: FfaSize = 30;
-const FFA_ROUTE = /^\/ffa(?:\/(\d+))?$/;
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
 // Один на страницу: ошибки главной и боя уходят с одинаковым описанием клиента.
 const telemetry = new Telemetry(readClientInfo());
@@ -347,7 +346,7 @@ function startDuel(roomCode: string): void {
 
 // Общий бой: та же страница боя, что у дуэли, — холст, кнопки поверх и корень интерфейса толпы.
 // Код толпы — отдельный кусок сборки: страница дуэли его не грузит.
-async function startFfa(size: FfaSize): Promise<void> {
+async function startFfa(route: FfaRoute): Promise<void> {
   const ffaModule = await import('./ffa/ffaGame.js');
   const canvas = byId('stage', HTMLCanvasElement);
   canvas.hidden = false;
@@ -357,7 +356,8 @@ async function startFfa(size: FfaSize): Promise<void> {
   const autoFireButton = byId('autofire', HTMLButtonElement);
   const autoFire = bindAutoFire(autoFireButton, hasTouch);
   const game = new ffaModule.FfaGame({
-    size,
+    size: route.size,
+    inviteGameId: route.gameId,
     nickname: localStorage.getItem(NICKNAME_KEY) ?? '',
     stats: parseStats(localStorage.getItem(STATS_KEY)),
     canvas,
@@ -395,27 +395,14 @@ async function startFfa(size: FfaSize): Promise<void> {
   });
 }
 
-// null — адрес не общего боя или размер не из списка игр.
-function ffaSizeOfPath(pathname: string): FfaSize | null {
-  const match = FFA_ROUTE.exec(pathname);
-  if (match === null) {
-    return null;
-  }
-  const digits = match[1];
-  if (digits === undefined) {
-    return FFA_DEFAULT_SIZE;
-  }
-  return FFA_SIZES.find((size) => String(size) === digits) ?? null;
-}
-
 const duelMatch = /^\/d\/([a-z0-9]{3,16})$/.exec(location.pathname);
-const ffaSize = ffaSizeOfPath(location.pathname);
+const ffaRoute = ffaRouteOf(location.pathname);
 const query = new URLSearchParams(location.search);
 const labKind = query.get('lab');
 if (duelMatch?.[1] !== undefined) {
   startDuel(duelMatch[1]);
-} else if (ffaSize !== null) {
-  void startFfa(ffaSize);
+} else if (ffaRoute !== null) {
+  void startFfa(ffaRoute);
 } else if (labKind === 'camera') {
   showCameraLab(byId('lab', HTMLElement));
 } else if (labKind === 'fx') {

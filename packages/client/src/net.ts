@@ -40,11 +40,13 @@ export interface NetHandlers {
 }
 
 // token — пропуск общей игры для возврата на своё место; пусто у нового игрока и в дуэли.
+// gameId — номер общей игры из приглашения друга; пусто — любая игра и в дуэли.
 export interface NetJoin {
   roomCode: string;
   nickname: string;
   stats: Stats;
   token: string;
+  gameId: string;
 }
 
 // Подмножество WebSocket, которое нужно клиенту; в тестах заменяется поддельным сокетом.
@@ -156,6 +158,7 @@ export class NetClient {
           stats: this.join.stats,
           token: this.token,
           isBot: false,
+          gameId: this.join.gameId,
         }),
       );
       this.pingTimer = window.setInterval(() => {

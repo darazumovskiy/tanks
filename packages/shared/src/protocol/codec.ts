@@ -14,6 +14,7 @@ import {
 import { ByteReader, ByteWriter } from './bytes.js';
 import {
   ErrorCode,
+  FfaInviteMiss,
   FfaPhase,
   MESSAGE_TYPE_NAMES,
   MessageType,
@@ -43,6 +44,7 @@ const NO_SIDE = 255;
 // Номер игрока в общей игре — u16; это значение означает «нет».
 export const NO_ID = 0xffff;
 const FFA_PHASES: readonly FfaPhase[] = [FfaPhase.Lobby, FfaPhase.Countdown, FfaPhase.Fight, FfaPhase.Results];
+const FFA_INVITE_MISSES: readonly FfaInviteMiss[] = [FfaInviteMiss.None, FfaInviteMiss.Full, FfaInviteMiss.Gone];
 const FFA_PLAYER_STATES: readonly FfaPlayerState[] = ['alive', 'wreck', 'waiting', 'spectator'];
 const FFA_EVENT_KINDS: readonly FfaEventKind[] = [
   'shot',
@@ -297,6 +299,7 @@ function writeSelf(writer: ByteWriter, self: FfaSelf): void {
   writer.u8(FFA_PLAYER_STATES.indexOf(self.state)).u16(self.ticksLeft);
   writeOptionalId(writer, self.killerId);
   writeOptionalId(writer, self.idleTicksLeft);
+  writer.bool(self.isOut);
 }
 
 function readSelf(reader: ByteReader): FfaSelf {
@@ -305,6 +308,7 @@ function readSelf(reader: ByteReader): FfaSelf {
     ticksLeft: reader.u16(),
     killerId: readOptionalId(reader),
     idleTicksLeft: readOptionalId(reader),
+    isOut: reader.bool(),
   };
 }
 
@@ -432,7 +436,7 @@ export function encode(message: Message): Uint8Array {
     case MessageType.Join:
       writer.u8(message.protocolVersion).string(message.roomCode).string(message.nickname);
       writeStats(writer, message.stats);
-      writer.string(message.token).bool(message.isBot);
+      writer.string(message.token).bool(message.isBot).string(message.gameId);
       break;
     case MessageType.Input:
       writer.u32(message.seq);
@@ -483,7 +487,7 @@ export function encode(message: Message): Uint8Array {
       break;
     case MessageType.FfaWelcome:
       writer.u16(message.playerId).string(message.token).string(message.gameId);
-      writer.u8(message.size).u8(rulesToByte(message.rules));
+      writer.u8(message.size).u8(rulesToByte(message.rules)).u8(message.inviteMiss);
       break;
     case MessageType.FfaState:
       writer.u8(message.phase);
@@ -584,6 +588,7 @@ export function decode(data: Uint8Array): Message {
         stats: readStats(reader),
         token: reader.string(),
         isBot: reader.bool(),
+        gameId: reader.string(),
       };
     case MessageType.Input:
       return { type, seq: reader.u32(), action: readAction(reader) };
@@ -618,6 +623,7 @@ export function decode(data: Uint8Array): Message {
         gameId: reader.string(),
         size: readFfaSize(reader),
         rules: rulesFromByte(reader.u8()),
+        inviteMiss: listItem(FFA_INVITE_MISSES, reader.u8(), 'промах приглашения'),
       };
     case MessageType.FfaState:
       return {
