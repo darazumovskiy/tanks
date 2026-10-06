@@ -21,4 +21,6 @@
 
 Выкладка берёт код только из `origin/main` на GitHub: сначала коммит и пуш, потом `deploy/deploy.sh root@172.232.212.157`. Перезапуск рвёт активные дуэли.
 
+После выкладки изменений сервера — бой под нагрузкой (игра на 50 мест: один клиент и серверные боты) и ряд «Сервер: ОК?» на дашборде: все плитки зелёные. Средний процессор и память машины паузы сервера не показывают ([infra.md](../../base/infra.md), «Мониторинг и логи»).
+
 Логи процесса: `journalctl -u tanks`, `journalctl -u caddy`, `journalctl -u vector`. Журналы игр — `/opt/tanks-logs/<gameId>.log`, один файл на дуэль, около 1 МБ в минуту боя двух игроков ([game-log.md](../backend/game-log.md)); старше 7 дней удаляет ежедневный cron `tanks-logs-cleanup`. Метрики, системный журнал и редкие события игр — в Grafana Cloud, дашборд `https://graylichen2028.grafana.net/d/tanks-main` ([monitoring.md](monitoring.md)).
