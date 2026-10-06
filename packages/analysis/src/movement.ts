@@ -1,4 +1,4 @@
-import { normalizeAngle, TICK_RATE, type Side, type Wall } from '@tanks/shared/engine';
+import { normalizeAngle, TANK_RADIUS, TICK_RATE, type Side, type Wall } from '@tanks/shared/engine';
 import { wallClearance } from './geometry.js';
 import {
   FIGHT_PHASE,
@@ -12,9 +12,9 @@ import {
 import { median, pct, roundTo, toRadians } from './numbers.js';
 import { MOVING_SPEED } from './shots.js';
 
-const FULL_THROTTLE = 0.9;
-const REVERSE_THROTTLE = -0.05;
-const FORWARD_THROTTLE = 0.05;
+export const FULL_THROTTLE = 0.9;
+// Ось команды считается тронутой, если отклонена больше чем на 0,05.
+export const AXIS_TOUCH = 0.05;
 const AXIS_FULL = 0.99;
 const AXIS_LOW = 0.3;
 const AXIS_HIGH = 0.7;
@@ -28,11 +28,15 @@ const SHARP_STOP_WINDOW_TICKS = 10;
 const TURN_AROUND_RAD = toRadians(90);
 const TURN_STEP_EPSILON = 0.002;
 const TURN_GAP_MAX_TICKS = 3;
-const KITE_SPEED = 80;
-const CIRCLE_RADIAL_PER_TICK = 2;
-const CIRCLE_BEARING_PER_TICK = toRadians(0.6);
+// Кайтинг и кружение — на скорости выше 80; кружение — дистанция за тик меняется меньше чем на 2, а направление
+// на противника — больше чем на 0,6°.
+export const KITE_SPEED = 80;
+export const CIRCLE_RADIAL_PER_TICK = 2;
+export const CIRCLE_BEARING_PER_TICK = toRadians(0.6);
 const NEAR_WALL = 150;
-const TOUCHING_WALL = 60;
+// У стены — зазор между корпусом и стеной меньше 36.
+const TOUCHING_WALL_GAP = 36;
+export const TOUCHING_WALL = TANK_RADIUS + TOUCHING_WALL_GAP;
 const HALF_TURN = Math.PI / 2;
 const SECONDS_PER_MINUTE = 60;
 const INPUT_PREFIX = 'in seq=';
@@ -151,7 +155,7 @@ export function analyzeMovement(round: ParsedRound, side: Side): MovementTotals 
     if (Math.abs(action.throttle) > FULL_THROTTLE) {
       totals.fullThrottleTicks++;
     }
-    if (action.throttle < REVERSE_THROTTLE) {
+    if (action.throttle < -AXIS_TOUCH) {
       totals.reverseTicks++;
     }
     if (action.throttle === 0 && action.turn === 0) {
@@ -306,7 +310,7 @@ export function analyzeDynamics(round: ParsedRound, side: Side, enemy: Side, wal
       totals.reverseSpeedTicks++;
     }
 
-    const throttleSign = signOf(action.throttle, FORWARD_THROTTLE);
+    const throttleSign = signOf(action.throttle, AXIS_TOUCH);
     if (throttleSign !== 0 && lastThrottleSign !== 0 && throttleSign !== lastThrottleSign) {
       totals.throttleFlips++;
       pendingFlip = { gt: cur.gt, sign: throttleSign };

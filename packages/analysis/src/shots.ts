@@ -7,11 +7,16 @@ import { roundTo, toDegrees, toRadians } from './numbers.js';
 // Противник быстрее 30 единиц в секунду считается движущимся.
 export const MOVING_SPEED = 30;
 // Наведение: от потери цели (ошибка башни больше 30°) до наведения (меньше 5°).
-const AIM_LOST_RAD = toRadians(30);
-const AIM_DONE_RAD = toRadians(5);
-// Доля упреждения не определена, когда точка упреждения почти совпадает с корпусом.
-const LEAD_SPAN_MIN_RAD = 0.01;
-const MIN_DISTANCE = 1;
+export const AIM_LOST_RAD = toRadians(30);
+export const AIM_DONE_RAD = toRadians(5);
+// Ошибка башни меньше 5° — башня смотрит на противника.
+export const AIM_GOOD_DEG = 5;
+// Доля упреждения не определена, когда точка упреждения почти совпадает с корпусом; вне коридора от −1 до 2 —
+// выстрел не по противнику.
+export const LEAD_SPAN_MIN_RAD = 0.01;
+export const LEAD_FRACTION_MIN = -1;
+export const LEAD_FRACTION_MAX = 2;
+export const MIN_DISTANCE = 1;
 
 export const SHOT_KIND = {
   standingHit: 'стоящий: в цель',
@@ -22,17 +27,63 @@ export const SHOT_KIND = {
 } as const;
 export type ShotKind = (typeof SHOT_KIND)[keyof typeof SHOT_KIND];
 
+const NEAR_DISTANCE = 300;
+export const FAR_DISTANCE = 600;
+export const MID_DISTANCE_LABEL = '300–600';
+export const DISTANCE_BUCKET_LABELS = ['<300', MID_DISTANCE_LABEL, '>600'] as const;
+export type DistanceBucketLabel = (typeof DISTANCE_BUCKET_LABELS)[number];
+
 export interface DistanceBucket {
   low: number;
   high: number;
-  label: string;
+  label: DistanceBucketLabel;
 }
 
 export const DISTANCE_BUCKETS: readonly DistanceBucket[] = [
-  { low: 0, high: 300, label: '<300' },
-  { low: 300, high: 600, label: '300–600' },
-  { low: 600, high: Infinity, label: '>600' },
+  { low: 0, high: NEAR_DISTANCE, label: '<300' },
+  { low: NEAR_DISTANCE, high: FAR_DISTANCE, label: MID_DISTANCE_LABEL },
+  { low: FAR_DISTANCE, high: Infinity, label: '>600' },
 ];
+
+export function distanceBucketOf(distance: number): DistanceBucketLabel {
+  if (distance < NEAR_DISTANCE) {
+    return '<300';
+  }
+  return distance < FAR_DISTANCE ? MID_DISTANCE_LABEL : '>600';
+}
+
+// Корзины дистанции для угла хода к линии на противника — по 100 от 200 до 800: угол человека меняется с
+// дистанцией круче, чем видно в трёх корзинах огня.
+export const COURSE_BAND_LABELS = [
+  '<200',
+  '200–300',
+  '300–400',
+  '400–500',
+  '500–600',
+  '600–700',
+  '700–800',
+  '>800',
+] as const;
+export type CourseBandLabel = (typeof COURSE_BAND_LABELS)[number];
+
+export interface CourseBand {
+  low: number;
+  high: number;
+  label: CourseBandLabel;
+}
+
+const COURSE_BAND_FIRST_EDGE = 200;
+const COURSE_BAND_WIDTH = 100;
+
+export const COURSE_BANDS: readonly CourseBand[] = COURSE_BAND_LABELS.map((label, index) => ({
+  low: index === 0 ? 0 : COURSE_BAND_FIRST_EDGE + (index - 1) * COURSE_BAND_WIDTH,
+  high: index === COURSE_BAND_LABELS.length - 1 ? Infinity : COURSE_BAND_FIRST_EDGE + index * COURSE_BAND_WIDTH,
+  label,
+}));
+
+export function courseBandOf(distance: number): CourseBandLabel {
+  return COURSE_BANDS.find((band) => distance < band.high)?.label ?? '>800';
+}
 
 export interface ShotRow {
   gt: number;
@@ -49,11 +100,6 @@ export interface ShotRow {
   bucket: string;
   isHit: boolean;
   isRicochetHit: boolean;
-}
-
-function bucketOf(distance: number): string {
-  const bucket = DISTANCE_BUCKETS.find((candidate) => candidate.low <= distance && distance < candidate.high);
-  return bucket?.label ?? DISTANCE_BUCKETS[DISTANCE_BUCKETS.length - 1]?.label ?? '';
 }
 
 function ticksByGt(round: ParsedRound): Map<number, Tick> {
@@ -125,7 +171,7 @@ export function analyzeShots(
       kind: shotKind(isMoving, errCur, errLead, size),
       leadFraction: leadFraction === null ? null : roundTo(leadFraction, 2),
       hasLineOfSight: isClear(walls, me.x, me.y, target.x, target.y),
-      bucket: bucketOf(distance),
+      bucket: distanceBucketOf(distance),
       isHit,
       isRicochetHit: isHit && bullet.hasBounced,
     });

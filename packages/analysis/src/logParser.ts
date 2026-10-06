@@ -1,4 +1,4 @@
-import type { Side } from '@tanks/shared/engine';
+import { DEFAULT_RULES, WALL_SLIDE_MAX_PERCENT, type Side } from '@tanks/shared/engine';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -78,11 +78,14 @@ export interface LeaveRecord {
   nick: string;
 }
 
+// wallSlidePercent — байт `rules=` строки старта; в журналах до появления байта и при испорченном значении
+// стены липкие, 0.
 export interface ParsedGame {
   id: string;
   room: string;
   names: [string, string];
   startSec: number;
+  wallSlidePercent: number;
   rounds: ParsedRound[];
   clientLines: [ClientLine[], ClientLine[]];
   droppedInputs: [number, number];
@@ -127,6 +130,12 @@ export function parseKeyValues(text: string): Map<string, string> {
 // Значение поля `key=`; отсутствующее поле — пустая строка, Number('') даёт 0.
 export function field(values: Map<string, string>, key: string): string {
   return values.get(key) ?? '';
+}
+
+function wallSlideOf(text: string): number {
+  const value = Number(text);
+  const isValid = text !== '' && Number.isInteger(value) && value >= 0 && value <= WALL_SLIDE_MAX_PERCENT;
+  return isValid ? value : DEFAULT_RULES.wallSlidePercent;
 }
 
 export function parseAction(text: string): LogAction | null {
@@ -207,6 +216,7 @@ export function parseGameLog(id: string, text: string): ParsedGame | null {
   let room: string | null = null;
   let names: [string, string] = ['', ''];
   let startSec: number | null = null;
+  let wallSlidePercent = 0;
   const rounds: ParsedRound[] = [];
   const clientLines: [ClientLine[], ClientLine[]] = [[], []];
   const droppedInputs: [number, number] = [0, 0];
@@ -257,6 +267,7 @@ export function parseGameLog(id: string, text: string): ParsedGame | null {
       room = field(values, 'room');
       names = [field(values, 'p0'), field(values, 'p1')];
       startSec = sec;
+      wallSlidePercent = wallSlideOf(field(values, 'rules'));
       continue;
     }
     if (DROPPED_INPUT_PREFIXES.some((prefix) => body.startsWith(prefix))) {
@@ -274,7 +285,7 @@ export function parseGameLog(id: string, text: string): ParsedGame | null {
   if (room === null || startSec === null || rounds.length === 0) {
     return null;
   }
-  return { id, room, names, startSec, rounds, clientLines, droppedInputs, leave };
+  return { id, room, names, startSec, wallSlidePercent, rounds, clientLines, droppedInputs, leave };
 }
 
 export interface DeviceEntry {
@@ -314,23 +325,41 @@ function listLogFiles(logDir: string): string[] {
     .sort();
 }
 
+export function isGameLogFile(name: string): boolean {
+  return name.endsWith(LOG_EXTENSION) && !isRoomLogFile(name) && name !== SERVER_LOG_FILE;
+}
+
+export function isRoomLogFile(name: string): boolean {
+  return name.startsWith(ROOM_LOG_PREFIX) && name.endsWith(LOG_EXTENSION);
+}
+
+export function gameIdOf(name: string): string {
+  return name.slice(0, -LOG_EXTENSION.length);
+}
+
 export function listGameIds(logDir: string): string[] {
+  return listLogFiles(logDir).filter(isGameLogFile).map(gameIdOf);
+}
+
+export interface RoomLog {
+  name: string;
+  lines: readonly string[];
+}
+
+export function readRoomLogs(logDir: string): RoomLog[] {
   return listLogFiles(logDir)
-    .filter((name) => !name.startsWith(ROOM_LOG_PREFIX) && name !== SERVER_LOG_FILE)
-    .map((name) => name.slice(0, -LOG_EXTENSION.length));
+    .filter(isRoomLogFile)
+    .map((name) => ({ name, lines: readFileSync(join(logDir, name), 'utf8').split('\n') }));
 }
 
 // Строки `device` из `room-<код>.log`; ник из `net room slots=` — запасной ключ, когда игра началась
 // без новой строки `device` (игрок пришёл в комнату раньше, чем за пять минут до старта).
-export function readDeviceIndex(logDir: string): DeviceIndex {
+export function deviceIndexOf(rooms: readonly RoomLog[]): DeviceIndex {
   const index: DeviceIndex = { byRoomSide: new Map(), byNick: new Map() };
-  for (const name of listLogFiles(logDir)) {
-    if (!name.startsWith(ROOM_LOG_PREFIX)) {
-      continue;
-    }
-    const code = name.slice(ROOM_LOG_PREFIX.length, -LOG_EXTENSION.length);
+  for (const room of rooms) {
+    const code = room.name.slice(ROOM_LOG_PREFIX.length, -LOG_EXTENSION.length);
     const lastDevice = new Map<Side, DeviceEntry>();
-    for (const raw of readFileSync(join(logDir, name), 'utf8').split('\n')) {
+    for (const raw of room.lines) {
       const line = parseLine(raw);
       if (line === null) {
         continue;

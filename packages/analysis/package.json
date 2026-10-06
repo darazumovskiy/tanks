@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./logFixture": {
+      "types": "./dist/logFixture.d.ts",
+      "default": "./dist/logFixture.js"
     }
   },
   "scripts": {

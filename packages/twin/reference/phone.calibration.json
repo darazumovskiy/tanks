@@ -1,0 +1,27 @@
+{
+ "correlationTicks": 24.3288,
+ "lagTicks": 0,
+ "holdShare": {
+  "visible|<300": 0.9167,
+  "visible|300–600": 1,
+  "visible|>600": 1,
+  "hidden|<300": 0.8958,
+  "hidden|300–600": 1,
+  "hidden|>600": 0.9583
+ },
+ "decisionMeanS": 5,
+ "courseReach": 290.6632,
+ "reverseChance": 0,
+ "kitShare": {
+  "closer": 0.7083,
+  "farther": 0.5208
+ },
+ "hiddenAim": {
+  "bearing": 0.0104,
+  "exit": 1,
+  "ricochet": 0,
+  "lastSeen": 0
+ },
+ "coverHoldShare": 0,
+ "returnAvoidShare": 0.75
+}
