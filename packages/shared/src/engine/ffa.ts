@@ -250,11 +250,14 @@ function becomeSpectator(player: FfaPlayer): void {
   player.ticksLeft = 0;
 }
 
-// Танк, погибший на этом тике, ещё числится alive у игрока до счёта: живость — по танку.
-function lowestBotOnField(match: FfaMatch): FfaPlayer | undefined {
+// Танк, погибший на этом тике, ещё числится alive у игрока до счёта: живость — по танку. Убийца за свою жертву не
+// выбывает: иначе последний бот, подбивший человека, взрывался бы сам, и матч выигрывал бы подбитый.
+function lowestBotOnField(match: FfaMatch, killerId: number | null): FfaPlayer | undefined {
   const aliveIds = new Set(match.world.tanks.filter((tank) => tank.isAlive).map((tank) => tank.id));
   const bots = ffaStandings(
-    match.players.filter((player) => player.isBot && player.state === 'alive' && aliveIds.has(player.id)),
+    match.players.filter(
+      (player) => player.isBot && player.state === 'alive' && aliveIds.has(player.id) && player.id !== killerId,
+    ),
   );
   return bots[bots.length - 1];
 }
@@ -273,10 +276,15 @@ function knockOut(match: FfaMatch, bot: FfaPlayer, events: FfaEvent[]): void {
 }
 
 // Судьба в финале подбитого (wreck) или ждущего (waiting): бот выбывает; за человека, пока на поле есть живой
-// бот, выбывает бот с самым низким местом, а человек возвращается по своему таймеру; живых ботов нет — выбывает.
+// бот, кроме его убийцы, выбывает такой бот с самым низким местом, а человек возвращается по своему таймеру;
+// других живых ботов нет — выбывает. Последний живой танк поля за человека не выбывает: иначе подбитый
+// возвращался бы на пустое поле победителем.
 function settleFinalFate(match: FfaMatch, player: FfaPlayer, events: FfaEvent[]): void {
-  const substitute = player.isBot ? undefined : lowestBotOnField(match);
-  if (substitute !== undefined) {
+  const substitute = player.isBot ? undefined : lowestBotOnField(match, player.killerId);
+  const hasOtherTankAlive = match.world.tanks.some(
+    (tank) => tank.isAlive && tank.id !== player.id && tank.id !== substitute?.id,
+  );
+  if (substitute !== undefined && hasOtherTankAlive) {
     knockOut(match, substitute, events);
     return;
   }

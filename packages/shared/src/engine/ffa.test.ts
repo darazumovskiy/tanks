@@ -549,7 +549,21 @@ describe('финал и боты', () => {
     expect(match.world.time).toBeLessThan(FFA.matchSeconds);
   });
 
-  it('человек, бот 1, бот 2: человек и бот 1 подбиты в одном тике — бот 2 выбывает, матч ждёт возвращения человека', () => {
+  it('человек и единственный живой бот: человек подбит своим рикошетом — последний бот не выбывает, человек выбывает', () => {
+    const match = finalMatch(['человек', 'бот']);
+    const human = tankOf(match, 0);
+    human.hp = 1;
+    human.shieldLeft = 0;
+    shoot(match, 0, human.x, human.y - 40, 0, BULLET_SPEED, true);
+    const events = run(match, 1);
+    expect(deaths(events).map((event) => [event.tank, event.cause])).toEqual([[0, 'self']]);
+    expect(outEvents(events)).toEqual([]);
+    expect(playerOf(match, 0)).toMatchObject({ state: 'wreck', isOut: true });
+    expect(playerOf(match, 1).state).toBe('alive');
+    expect(events.filter((event) => event.type === 'matchOver')).toHaveLength(1);
+  });
+
+  it('человек, бот 1, бот 2: человек и бот 1 подбиты в одном тике — последний бот 2 не выбывает, человек выбывает', () => {
     const match = finalMatch(['человек', 'бот', 'бот']);
     for (const [victim, by] of [
       [0, 1],
@@ -562,14 +576,10 @@ describe('финал и боты', () => {
     }
     const events = run(match, 1);
     expect(deaths(events).map((event) => event.tank)).toEqual([0, 1]);
-    expect(outEvents(events).map((event) => (event.type === 'out' ? event.tank : null))).toEqual([2]);
-    expect(match.isOver).toBe(false);
-    run(match, WRECK_TICKS + FFA_RESPAWN_WAIT_TICKS - 1);
-    expect(match.isOver).toBe(false);
-    expect(playerOf(match, 0).state).toBe('waiting');
-    const back = run(match, 2);
-    expect(playerOf(match, 0).state).toBe('alive');
-    expect(back.some((event) => event.type === 'matchOver')).toBe(true);
+    expect(outEvents(events)).toEqual([]);
+    expect(playerOf(match, 0)).toMatchObject({ state: 'wreck', isOut: true });
+    expect(playerOf(match, 2).state).toBe('alive');
+    expect(events.some((event) => event.type === 'matchOver')).toBe(true);
   });
 
   it('в одном тике подбиты человек и единственный живой бот: бот не выбывает дважды, человек выбывает', () => {
@@ -587,6 +597,43 @@ describe('финал и боты', () => {
     run(match, WRECK_TICKS);
     expect(playerOf(match, 0).state).toBe('spectator');
     expect(playerOf(match, 1).state).toBe('spectator');
+  });
+
+  it('человек и единственный живой бот: бот подбил человека — убийца не выбывает, человек выбывает, матч окончен', () => {
+    const match = finalMatch(['человек', 'бот']);
+    const events = kill(match, 0, 1);
+    expect(outEvents(events)).toEqual([]);
+    expect(playerOf(match, 0)).toMatchObject({ state: 'wreck', isOut: true, deaths: 1 });
+    expect(playerOf(match, 1)).toMatchObject({ state: 'alive', isOut: false, kills: 1 });
+    expect(tankOf(match, 1).isAlive).toBe(true);
+    expect(events.filter((event) => event.type === 'matchOver')).toHaveLength(1);
+  });
+
+  it('человек, бот 1 с наименьшим счётом и бот 2: бот 1 подбил человека — выбывает бот 2, не убийца', () => {
+    const match = finalMatch(['человек', 'бот', 'бот']);
+    playerOf(match, 2).kills = 3;
+    const events = kill(match, 0, 1);
+    expect(outEvents(events).map((event) => (event.type === 'out' ? event.tank : null))).toEqual([2]);
+    expect(playerOf(match, 1)).toMatchObject({ state: 'alive', isOut: false });
+    expect(playerOf(match, 0)).toMatchObject({ state: 'wreck', isOut: false });
+    expect(match.isOver).toBe(false);
+  });
+
+  it('начало финала: человек в обломках, его убийца — единственный живой бот — человек выбывает, взрывов нет', () => {
+    const match = createFfaMatch(testMap(), mixedSetups(['человек', 'бот', 'человек']), 1, DEFAULT_RULES);
+    run(match, 5);
+    const human = tankOf(match, 0);
+    human.hp = 1;
+    human.shieldLeft = 0;
+    shoot(match, 1, human.x, human.y - 40, 0, BULLET_SPEED);
+    run(match, 1);
+    expect(playerOf(match, 0)).toMatchObject({ state: 'wreck', killerId: 1 });
+    match.suddenDeathAt = match.world.time;
+    const events = run(match, 1);
+    expect(match.isSuddenDeath).toBe(true);
+    expect(outEvents(events)).toEqual([]);
+    expect(playerOf(match, 0)).toMatchObject({ state: 'wreck', isOut: true });
+    expect(playerOf(match, 1).state).toBe('alive');
   });
 
   it('подбитый и ждущий в момент начала финала: за каждого взрывается свой бот; подбитый и ждущий боты выбывают', () => {

@@ -99,7 +99,7 @@ const SEED_LIMIT = 2 ** 31;
 
 export const DEFAULT_FFA_OPTIONS: FfaOptions = {
   countdownTicks: 3 * TICK_RATE,
-  resultsTicks: 5 * TICK_RATE,
+  resultsTicks: 7 * TICK_RATE,
   lobbyWaitTicks: 5 * TICK_RATE,
   reconnectTicks: 15 * TICK_RATE,
   quitTicks: 10 * TICK_RATE,

@@ -215,6 +215,10 @@ const FINAL_NOTICE_MS = 2000;
 const GO_HOLD_MS = 900;
 const SPECTATOR_CARD_MS = 4000;
 const CONNECTION_NOTICE_MS = 2000;
+// Конец матча, увиденный вживую, доигрывается на поле: последний взрыв, свой фраг и лента видны до карточки итогов.
+const FINALE_HOLD_MS = 2000;
+// Конец матча увиден вживую, если последний снимок боя пришёл не раньше стольких мс до итогов.
+const LIVE_SNAPSHOT_MS = 1000;
 const INVITE_NOTICE_MS = 8000;
 const INVITE_NOTICES: Readonly<Record<FfaInviteMiss, FfaInviteNotice | null>> = {
   [FfaInviteMiss.None]: null,
@@ -289,7 +293,10 @@ export class FfaSession {
   private readonly names = new Map<number, KnownPlayer>();
   private scoreRows: FfaScoreRow[] = [];
   private lastSnapshotTick: number | null = null;
+  private lastSnapshotAt: number | null = null;
   private hasSnapshotSinceWelcome = false;
+  // До этого момента по местным часам итоги ждут, пока доиграется конец матча на поле; null — не ждут.
+  private finaleUntil: number | null = null;
   private ownDeath: FfaSnapshotEvent | null = null;
   private feedEntries: FeedEntry[] = [];
   private nextFeedKey = 1;
@@ -375,6 +382,13 @@ export class FfaSession {
     }
     if (this.state !== null && this.state.phase !== message.phase) {
       this.phaseBefore = this.state.phase;
+      const isLiveFinish =
+        this.state.phase === FfaPhase.Fight &&
+        message.phase === FfaPhase.Results &&
+        this.hasSnapshotSinceWelcome &&
+        this.lastSnapshotAt !== null &&
+        receivedAt - this.lastSnapshotAt < LIVE_SNAPSHOT_MS;
+      this.finaleUntil = isLiveFinish ? receivedAt + FINALE_HOLD_MS : null;
     }
     this.state = message;
     this.stateAt = receivedAt;
@@ -423,6 +437,7 @@ export class FfaSession {
       this.spectatorSince = receivedAt;
     }
     this.lastSnapshotTick = message.tick;
+    this.lastSnapshotAt = receivedAt;
     this.hasSnapshotSinceWelcome = true;
     this.tick = message.tick;
     this.self = message.self;
@@ -447,7 +462,7 @@ export class FfaSession {
     this.welcomeNotice = null;
   }
 
-  screen(): FfaScreen {
+  screen(now: number): FfaScreen {
     if (this.fatal !== null) {
       return this.fatal;
     }
@@ -463,7 +478,7 @@ export class FfaSession {
       case FfaPhase.Fight:
         return this.fightScreen();
       case FfaPhase.Results:
-        return 'results';
+        return this.finaleUntil !== null && now < this.finaleUntil ? this.fightScreen() : 'results';
     }
   }
 
@@ -546,7 +561,7 @@ export class FfaSession {
   }
 
   hud(now: number, layout: FfaHudLayout): FfaHudModel {
-    const screen = this.screen();
+    const screen = this.screen(now);
     const isInFight = screen === 'fight' || screen === 'dead' || screen === 'spectator';
     const countdown = this.countdown(now, screen);
     const death = this.deathCard(now, screen);
@@ -749,7 +764,11 @@ export class FfaSession {
     return { kind: 'soon', secondsLeft: Math.max(1, Math.ceil(untilFinalS - FINAL_EPSILON)), hasBots };
   }
 
+  // Отсчёт бездействия — только пока бой идёт: на доигрывании конца матча он стоит.
   private idleInS(): number | null {
+    if (this.state?.phase !== FfaPhase.Fight) {
+      return null;
+    }
     const idleTicksLeft = this.self?.idleTicksLeft ?? null;
     return idleTicksLeft === null ? null : Math.ceil(idleTicksLeft / TICK_RATE);
   }
@@ -882,6 +901,8 @@ export class FfaSession {
     this.ownKills = [];
     this.missedOwnKills = 0;
     this.lastSnapshotTick = null;
+    this.lastSnapshotAt = null;
+    this.finaleUntil = null;
     this.ownDeath = null;
     this.outBotIds = null;
     this.fightStartedAt = null;
