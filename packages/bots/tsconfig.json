@@ -4,8 +4,8 @@
     "rootDir": "src",
     "outDir": "dist",
     "lib": ["ES2022"],
-    "types": ["node"]
+    "types": []
   },
   "include": ["src"],
-  "references": [{ "path": "../shared" }, { "path": "../bots" }]
+  "references": [{ "path": "../shared" }]
 }

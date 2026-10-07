@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { Script } from 'node:vm';
 import {
   sanitizeAction,
   type Action,
@@ -10,7 +8,7 @@ import {
   type Stats,
   type TankView,
 } from '@tanks/shared/engine';
-import type { BotBrain } from './arenaBot.js';
+import type { BotBrain } from './brain.js';
 
 // Вид участника в формате арены tank-arena: отличается от BotView только именами булевых полей.
 type ArenaTankView = Omit<TankView, 'isAlive'> & { alive: boolean };
@@ -37,17 +35,17 @@ interface ArenaBotModule {
   tick(view: ArenaView): { throttle: number; turn: number; turretTurn: number; fire: boolean };
 }
 
+export type ArenaBotScript = () => ArenaBotModule;
+
 const EXPORT_DEFAULT = /^export default /m;
 
-// Файл бота арены — самодостаточный ES-модуль без импортов с одним `export default`. Тело модуля становится
-// телом функции: каждый вызов даёт свежий экземпляр со своими переменными модуля, комнаты не делят состояние.
-export function loadArenaBotScript(path: string | URL): () => ArenaBotModule {
-  const source = readFileSync(path, 'utf8');
-  const script = new Script(`(function () {\n${source.replace(EXPORT_DEFAULT, 'return ')}\n})`, {
-    filename: String(path),
-  });
-  const factory: unknown = script.runInThisContext();
-  return factory as () => ArenaBotModule;
+// Скрипт бота арены — самодостаточный ES-модуль без импортов с одним `export default`. Тело модуля становится
+// телом функции: каждый вызов даёт свежий экземпляр со своими переменными модуля, боты не делят состояние.
+export function compileArenaBotScript(source: string): ArenaBotScript {
+  // Скрипт — доверенный контент из репозитория, не ввод игрока.
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const factory: unknown = new Function(source.replace(EXPORT_DEFAULT, 'return '));
+  return factory as ArenaBotScript;
 }
 
 function arenaTank(tank: TankView): ArenaTankView {

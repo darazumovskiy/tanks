@@ -1,13 +1,5 @@
-import {
-  botView,
-  createRound,
-  DT,
-  type Action,
-  type BotView,
-  type Round,
-  type Side,
-  type Stats,
-} from '@tanks/shared/engine';
+import type { BotBrain } from '@tanks/bots';
+import { botView, createRound, DT, type Round, type Side } from '@tanks/shared/engine';
 import {
   decode,
   MessageType,
@@ -16,14 +8,6 @@ import {
   type TankSnapshot,
 } from '@tanks/shared/protocol';
 import type { Connection, Seat } from '../room.js';
-
-// reactionTicks — бот действует по снимку такой давности (модель времени реакции); 0 — по свежему.
-export interface BotBrain {
-  readonly stats: Stats;
-  readonly reactionTicks: number;
-  init?(view: BotView): void;
-  tick(view: BotView): Action;
-}
 
 // Бот живёт внутри процесса как обычное подключение: получает те же сообщения, что игрок (сторону узнаёт из
 // Welcome), и отвечает тем же вводом через проверки комнаты. Поля боя не видит — восстанавливает его из протокола
