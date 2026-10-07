@@ -931,11 +931,12 @@ body:has(.privacy-note:not([hidden])) .home {
     max-width: 920px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto auto 1fr auto;
     grid-template-areas:
       'title .'
       'lead more'
-      'help more';
+      'help more'
+      'credits credits';
     column-gap: 32px;
     row-gap: 16px;
     align-items: start;
@@ -961,6 +962,26 @@ body:has(.privacy-note:not([hidden])) .home {
     grid-area: help;
     padding-top: 8px;
   }
+
+  .home-credits {
+    grid-area: credits;
+  }
+}
+
+.home-credits {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 16px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-align: center;
+  opacity: 0.4;
+}
+
+.home-credits a {
+  color: #e8825a;
 }
 
 .home h1 {
