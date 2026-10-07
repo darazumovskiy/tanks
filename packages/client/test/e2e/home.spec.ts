@@ -8,6 +8,7 @@ const HTTP_OK = 200;
 const MAIN_SCRIPT = /\/assets\/index-[^"]+\.js/;
 const NEXT_BUILD_SCRIPT = '/assets/index-nextbuild.js';
 const LOCKED_TEXT = 'Раздай танку все очки — и в бой';
+const CREDITS_TEXT = 'Производство: Разумовский Дмитрий и Claude';
 const PHONE = { isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 const SCREENS: readonly { id: string; options: BrowserContextOptions }[] = [
   { id: 'телефон 834 × 375', options: { ...PHONE, viewport: { width: 834, height: 375 } } },
@@ -56,12 +57,21 @@ async function openHome(browser: Browser, options: BrowserContextOptions, stats:
   return page;
 }
 
-async function bottomOf(page: Page, selector: string): Promise<number> {
+async function boxOf(page: Page, selector: string): Promise<{ y: number; height: number }> {
   const box = await page.locator(selector).boundingBox();
   if (box === null) {
     throw new Error(`${selector} не виден`);
   }
+  return box;
+}
+
+async function bottomOf(page: Page, selector: string): Promise<number> {
+  const box = await boxOf(page, selector);
   return box.y + box.height;
+}
+
+async function topOf(page: Page, selector: string): Promise<number> {
+  return (await boxOf(page, selector)).y;
 }
 
 // Страница дочитала свежий `/` и следующей задачей шлёт этот запрос: к нему сверка уже решила, перезагружаться ли.
@@ -125,6 +135,19 @@ for (const screen of SCREENS) {
     await expect(locked.locator('#ffa-locked')).toHaveText(LOCKED_TEXT);
     expect(await bottomOf(locked, '#ffa-locked')).toBeLessThanOrEqual(height);
     await locked.context().close();
+  });
+
+  test(`подпись авторов — последней строкой главной: ${screen.id}`, async ({ browser }) => {
+    const page = await openHome(browser, screen.options, FULL_STATS);
+    const credits = page.locator('.home-credits');
+    await credits.scrollIntoViewIfNeeded();
+    await expect(credits).toBeVisible();
+    await expect(credits).toHaveText(CREDITS_TEXT);
+    const top = await topOf(page, '.home-credits');
+    expect(top).toBeGreaterThanOrEqual(await bottomOf(page, '.home-help'));
+    expect(top).toBeGreaterThanOrEqual(await bottomOf(page, '.home-more'));
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.context().close();
   });
 }
 
