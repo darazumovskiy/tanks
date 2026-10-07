@@ -3014,6 +3014,10 @@
      "pct": 25.4701
     }
    },
+   "startsPerMinute": {
+    "closer": 32.087,
+    "farther": 11.8481
+   },
    "followed": {
     "part": 37,
     "total": 53,

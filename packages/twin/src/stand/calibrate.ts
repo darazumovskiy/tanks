@@ -11,6 +11,7 @@ import {
 } from '@tanks/analysis';
 import {
   HIDDEN_AIM_NAMES,
+  KIT_NAMES,
   twinProfile,
   type TwinCalibration,
   type TwinProfile,
@@ -37,12 +38,15 @@ export type CalibrationParam =
 // Сетка поиска — равномерная по значению или по логарифму значения.
 type GridScale = 'linear' | 'log';
 
+// isSparse — вход по редким событиям: на части игр его шум больше шага сетки, поэтому грубая сетка идёт по всем
+// играм.
 export interface CalibrationInput {
   param: CalibrationParam;
   name: string;
   tolerance: number;
   range: readonly [number, number];
   scale: GridScale;
+  isSparse: boolean;
   isApplicable: (profile: TwinProfile) => boolean;
   measure: (metrics: PlayerMetrics) => number | null;
 }
@@ -58,14 +62,12 @@ export interface InputCheck {
   verdict: Verdict;
 }
 
-// Допуски — в пределах округления профиля: тики до половины, доли до пункта, расстояния до единицы.
+// Допуски — в пределах округления профиля: тики и события в минуту до половины, доли до пункта, расстояния до
+// единицы.
 const TICKS_TOLERANCE = 0.5;
+const RATE_TOLERANCE = 0.5;
 const SHARE_TOLERANCE = 1;
 const DISTANCE_TOLERANCE = 1;
-const KIT_NAMES: Readonly<Record<KitSide, string>> = {
-  closer: 'я ближе бота',
-  farther: 'бот ближе',
-};
 // Запаздывание руки человека — от 0 до 30 тиков; опережение цели — упреждение, оно задано отдельно.
 const LAG_RANGE: readonly [number, number] = [0, 30];
 // Погрешность входа — полуширина 95 %: 1,96 стандартной ошибки, оценённой по 10 частям раундов.
@@ -91,6 +93,7 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     tolerance: TICKS_TOLERANCE,
     range: [1, 120],
     scale: 'log',
+    isSparse: false,
     isApplicable: ALWAYS,
     measure: (m) => m.main.aim.aimFit.residualSameSideTicks?.median ?? null,
   },
@@ -100,6 +103,7 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     tolerance: TICKS_TOLERANCE,
     range: LAG_RANGE,
     scale: 'linear',
+    isSparse: false,
     isApplicable: ALWAYS,
     measure: (m) => m.main.aim.aimFit.lagTicks,
   },
@@ -109,6 +113,7 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     tolerance: SHARE_TOLERANCE,
     range: [0, 1],
     scale: 'linear',
+    isSparse: false,
     isApplicable: ALWAYS,
     measure: (m) => m.main.fire.heldAfterStartByContext[context].pct,
   })),
@@ -118,6 +123,7 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     tolerance: SHARE_TOLERANCE,
     range: [0, 1],
     scale: 'linear',
+    isSparse: false,
     isApplicable: (profile) => profile.cover !== null,
     measure: (m) => m.main.position.hold.firing.pct,
   },
@@ -127,6 +133,7 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     tolerance: SHARE_TOLERANCE,
     range: [0, 1],
     scale: 'linear',
+    isSparse: false,
     isApplicable: ALWAYS,
     measure: (m) => m.main.fire.returningShotsGuardOff.pct,
   },
@@ -136,6 +143,7 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     tolerance: DISTANCE_TOLERANCE,
     range: [50, 600],
     scale: 'log',
+    isSparse: false,
     isApplicable: ALWAYS,
     measure: (m) => m.movement.freeRunAhead?.median ?? null,
   },
@@ -145,6 +153,7 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     tolerance: DISTANCE_TOLERANCE,
     range: [0.1, 5],
     scale: 'log',
+    isSparse: false,
     isApplicable: ALWAYS,
     measure: (m) => m.movement.pathShift?.median ?? null,
   },
@@ -154,17 +163,19 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     tolerance: SHARE_TOLERANCE,
     range: [0, 1],
     scale: 'linear',
+    isSparse: false,
     isApplicable: (profile) => profile.control === 'mouseKeys',
     measure: (m) => m.movement.reverse.pct,
   },
   ...KIT_SIDES.map((side): CalibrationInput => ({
     param: `kit ${side}`,
-    name: `Ход к аптечке, ${KIT_NAMES[side]}, %`,
-    tolerance: SHARE_TOLERANCE,
+    name: `Поездки к аптечке в минуту езды без поездки, ${KIT_NAMES[side]}`,
+    tolerance: RATE_TOLERANCE,
     range: [0, 1],
     scale: 'linear',
+    isSparse: true,
     isApplicable: ALWAYS,
-    measure: (m) => m.main.kits.toward[side].pct,
+    measure: (m) => m.main.kits.startsPerMinute[side],
   })),
   {
     param: 'kitFollowShare',
@@ -172,6 +183,7 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     tolerance: SHARE_TOLERANCE,
     range: [0, 1],
     scale: 'linear',
+    isSparse: true,
     isApplicable: ALWAYS,
     measure: (m) => m.main.kits.followed.pct,
   },
@@ -181,6 +193,7 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     tolerance: SHARE_TOLERANCE,
     range: [0, 1],
     scale: 'linear',
+    isSparse: false,
     isApplicable: (profile) => profile.hiddenAimTargets.includes(target),
     measure: (m) => m.main.aim.hiddenAim[target].excessPct,
   })),
@@ -288,6 +301,7 @@ export interface SearchInput {
   tolerance: number;
   range: readonly [number, number];
   scale: GridScale;
+  isSparse: boolean;
 }
 
 export type Measurements = Partial<Record<CalibrationParam, number | null>>;
@@ -321,8 +335,8 @@ interface Probe {
   measurements: Measurements;
 }
 
-// Поиск по очереди: каждый параметр — только по своей метрике, остальные стоят. Грубая сетка на части игр
-// находит минимум |метрика − цель|, уточнение на всех играх делит шаг пополам около него — немонотонная метрика
+// Поиск по очереди: каждый параметр — только по своей метрике, остальные стоят. Грубая сетка на части игр (у входа
+// по редким событиям — на всех играх) находит минимум |метрика − цель|, уточнение на всех играх делит шаг пополам около него — немонотонная метрика
 // не уводит к краю, как деление отрезка. Проходов несколько: параметры руки и манёвра влияют на чужие входы
 // через видимость и дистанцию.
 export async function searchInputs(
@@ -352,7 +366,7 @@ export async function searchInputs(
       for (let point = 0; point < GRID_POINTS; point++) {
         const unit = point / (GRID_POINTS - 1);
         values[input.param] = fromUnit(input, unit);
-        const value = (await run(true))[input.param] ?? null;
+        const value = (await run(!input.isSparse))[input.param] ?? null;
         grid.push({ value: values[input.param], measured: value });
         const miss = missOf(value, input.target);
         if (miss < best.miss) {

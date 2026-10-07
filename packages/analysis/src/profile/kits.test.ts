@@ -27,6 +27,7 @@ const PICKUP_TICK = 70;
 const SECOND_SPAWN_TICK = 100;
 const TICKS = 160;
 const KIT_STRIDE = 5;
+const MINUTE_TICKS = 60 * TICK_RATE;
 const DRIVE = action(1);
 const REVERSE = action(-1);
 const START_X = 400;
@@ -121,6 +122,8 @@ describe('аптечки', () => {
     expect(kits.toward.closer).toMatchObject({ part: towardTicks, total: towardTicks });
     expect(kits.toward.farther).toMatchObject({ part: 0, total: awayTicks });
     expect(kits.followed).toMatchObject({ part: 1, total: 1 });
+    expect(kits.startsPerMinute.closer).toBeCloseTo(MINUTE_TICKS / KIT_STRIDE, 6);
+    expect(kits.startsPerMinute.farther).toBe(0);
     expect(kits.picked).toMatchObject({ part: 1, total: 2 });
     expect(kits.mine).toMatchObject({ part: 1, total: 1 });
     expect(kits.healPerMinute).toBeCloseTo((HEALED * 60 * TICK_RATE) / TICKS, 6);
@@ -186,6 +189,17 @@ describe('аптечки', () => {
     it('поездка, сократившая путь меньше чем на 100, и поездка, оборванная концом раунда, — не в счёт', () => {
       expect(kitsOf(tripLog(legsUntil(20, 'away'), 60)).followed.total).toBe(0);
       expect(kitsOf(tripLog(() => 'toward', 50)).followed.total).toBe(0);
+    });
+
+    it('поездки в минуту езды без поездки: тики поездки и тики без газа не в знаменателе; оборванная концом раунда — начата', () => {
+      // Езда без поездки — отсчёт начала поездки; после разрыва — ещё отсчёт начала короткой поездки.
+      const cut = kitsOf(tripLog(() => 'toward', 50));
+      const broken = kitsOf(tripLog(pauseAt(40, 20), 100, 75));
+      const short = kitsOf(tripLog(legsUntil(20, 'away'), 60));
+
+      expect(cut.startsPerMinute.closer).toBeCloseTo(MINUTE_TICKS / KIT_STRIDE, 6);
+      expect(broken.startsPerMinute.closer).toBeCloseTo(MINUTE_TICKS / (2 * KIT_STRIDE), 6);
+      expect(short.startsPerMinute.closer).toBe(0);
     });
   });
 });

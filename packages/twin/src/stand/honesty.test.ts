@@ -190,7 +190,7 @@ describe('калибровка входов', () => {
 
   it('монотонная метрика на логарифмической сетке — сходится в допуск; повтор — те же значения', async () => {
     const inputs: SearchInput[] = [
-      { param: 'correlationTicks', target: 30, tolerance: 1, range: [1, 120], scale: 'log' },
+      { param: 'correlationTicks', target: 30, tolerance: 1, range: [1, 120], scale: 'log', isSparse: false },
     ];
     const result = await searchInputs(inputs, START, hump);
     const again = await searchInputs(inputs, START, hump);
@@ -201,12 +201,42 @@ describe('калибровка входов', () => {
   });
 
   it('немонотонная метрика: минимум |метрика − цель| внутри, поиск не уходит к краю, как деление пополам', async () => {
-    const lag: SearchInput = { param: 'lagTicks', target: 0.4, tolerance: 0.01, range: [-1, 2], scale: 'linear' };
+    const lag: SearchInput = {
+      param: 'lagTicks',
+      target: 0.4,
+      tolerance: 0.01,
+      range: [-1, 2],
+      scale: 'linear',
+      isSparse: false,
+    };
     const result = await searchInputs([lag], START, hump);
 
     expect(result.isConverged).toBe(true);
     expect(isAtEdge(lag, result.values.lagTicks)).toBe(false);
     expect(result.sensitivity.get('lagTicks')?.map((point) => point.value)).toEqual([-1, -0.5, 0, 0.5, 1, 1.5, 2]);
+  });
+
+  it('вход по редким событиям — грубая сетка на всех играх, остальные входы — на части игр', async () => {
+    const coarseRuns = async (isSparse: boolean): Promise<number> => {
+      let coarse = 0;
+      const counting = (values: Readonly<ParamValues>, isCoarse: boolean): Promise<Measurements> => {
+        coarse += isCoarse ? 1 : 0;
+        return hump(values);
+      };
+      const input: SearchInput = {
+        param: 'lagTicks',
+        target: 0.4,
+        tolerance: 0.01,
+        range: [-1, 2],
+        scale: 'linear',
+        isSparse,
+      };
+      await searchInputs([input], START, counting);
+      return coarse;
+    };
+
+    expect(await coarseRuns(true)).toBe(0);
+    expect(await coarseRuns(false)).toBeGreaterThan(0);
   });
 
   it('недостижимый вход — параметр на краю диапазона, поиск сообщает, что не сошёлся', async () => {
@@ -216,6 +246,7 @@ describe('калибровка входов', () => {
       tolerance: 1,
       range: [1, 120],
       scale: 'log',
+      isSparse: false,
     };
     const result = await searchInputs([memory], START, hump);
 

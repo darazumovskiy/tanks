@@ -315,6 +315,8 @@ export interface KitTrips {
   dropped: number;
 }
 
+// starts — поездки в счёт по стороне ближайшей аптечки в начале поездки; freeTicks — тики езды, пока на поле есть
+// аптечка, а поездки нет, по той же стороне.
 export interface KitCounts {
   spawns: number;
   pickups: number;
@@ -322,6 +324,8 @@ export interface KitCounts {
   healed: number;
   toward: Record<KitSide, TowardCount>;
   trips: KitTrips;
+  starts: Record<KitSide, number>;
+  freeTicks: Record<KitSide, number>;
 }
 
 export interface AppearCounts {
@@ -1333,14 +1337,22 @@ function isCourseToward(field: PathField, me: Point, course: number | null): boo
 
 interface OpenTrip {
   key: string;
+  side: KitSide;
   field: PathField;
   startLength: number;
   lastLength: number;
   gap: number;
 }
 
-function countTrip(trips: KitTrips, trip: OpenTrip, outcome: keyof KitTrips): void {
-  trips[outcome] += trip.startLength - trip.lastLength >= KIT_TRIP_MIN_CLOSE ? 1 : 0;
+// Поездка в счёт — начатая; доведённая или брошенная, если её не оборвал конец раунда (outcome null).
+function countTrip(counts: KitCounts, trip: OpenTrip, outcome: keyof KitTrips | null): void {
+  if (trip.startLength - trip.lastLength < KIT_TRIP_MIN_CLOSE) {
+    return;
+  }
+  counts.starts[trip.side]++;
+  if (outcome !== null) {
+    counts.trips[outcome]++;
+  }
 }
 
 // Подборы и лечение — по событиям раунда; ход к аптечке и поездки к ней — по тикам боя, пока на поле есть
@@ -1355,6 +1367,8 @@ function kitCounts(round: ParsedRound, frames: readonly FightFrame[], map: MapDe
     healed: 0,
     toward: { closer: { toward: 0, total: 0 }, farther: { toward: 0, total: 0 } },
     trips: { followed: 0, dropped: 0 },
+    starts: { closer: 0, farther: 0 },
+    freeTicks: { closer: 0, farther: 0 },
   };
   const events = round.events.filter((event) => event.kind === EVENT_KIND.kitSpawn || event.kind === EVENT_KIND.pickup);
   for (const event of events) {
@@ -1377,7 +1391,7 @@ function kitCounts(round: ParsedRound, frames: readonly FightFrame[], map: MapDe
         active.delete(key);
       }
       if (event.kind === EVENT_KIND.pickup && trip?.key === key) {
-        countTrip(counts.trips, trip, 'followed');
+        countTrip(counts, trip, 'followed');
         trip = null;
       }
       next++;
@@ -1394,7 +1408,7 @@ function kitCounts(round: ParsedRound, frames: readonly FightFrame[], map: MapDe
       trip.lastLength = isTripToward ? pathLengthFrom(trip.field, me) : trip.lastLength;
     }
     if (trip !== null && trip.gap > KIT_TRIP_GAP_SAMPLES) {
-      countTrip(counts.trips, trip, 'dropped');
+      countTrip(counts, trip, 'dropped');
       trip = null;
     }
     const nearest = nearestKit(map, active.values(), me, tick.poses[bot]);
@@ -1402,12 +1416,19 @@ function kitCounts(round: ParsedRound, frames: readonly FightFrame[], map: MapDe
       continue;
     }
     const isToward = isCourseToward(nearest.field, me, course);
-    const count = counts.toward[nearest.mine < nearest.theirs ? 'closer' : 'farther'];
-    count.total++;
-    count.toward += isToward ? 1 : 0;
-    if (trip === null && isToward) {
-      trip = { key: nearest.key, field: nearest.field, startLength: nearest.mine, lastLength: nearest.mine, gap: 0 };
+    const side: KitSide = nearest.mine < nearest.theirs ? 'closer' : 'farther';
+    counts.toward[side].total++;
+    counts.toward[side].toward += isToward ? 1 : 0;
+    if (trip !== null) {
+      continue;
     }
+    counts.freeTicks[side] += KIT_STRIDE;
+    if (isToward) {
+      trip = { key: nearest.key, side, field: nearest.field, startLength: nearest.mine, lastLength: nearest.mine, gap: 0 };
+    }
+  }
+  if (trip !== null) {
+    countTrip(counts, trip, null);
   }
   return counts;
 }

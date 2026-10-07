@@ -130,10 +130,12 @@ export interface HiddenAimShare {
   excessPct: number | null;
 }
 
-// Ход к аптечке по тому, кому она ближе; поездки к аптечке, доведённые до её подбора, из доведённых и брошенных;
-// подобранные из появившихся, мои из подобранных, лечение в минуту боя.
+// Ход к аптечке по тому, кому она ближе; поездки к аптечке в минуту езды без поездки, пока аптечка на поле, — по
+// той же стороне; поездки, доведённые до подбора аптечки, из доведённых и брошенных; подобранные из появившихся,
+// мои из подобранных, лечение в минуту боя.
 export interface KitMetrics {
   toward: Record<KitSide, Share>;
+  startsPerMinute: Record<KitSide, number | null>;
   followed: Share;
   picked: Share;
   mine: Share;
@@ -551,16 +553,22 @@ function hiddenAimShares(rounds: readonly RoundWithDetail[]): Record<HiddenAimTa
 
 function kitMetrics(rounds: readonly RoundWithDetail[], fightTicks: number): KitMetrics {
   const toward = {} as Record<KitSide, Share>;
+  const startsPerMinute = {} as Record<KitSide, number | null>;
   for (const side of KIT_SIDES) {
     toward[side] = share(
       sumOf(rounds, (round) => round.detail.kits.toward[side].toward),
       sumOf(rounds, (round) => round.detail.kits.toward[side].total),
+    );
+    startsPerMinute[side] = perMinute(
+      sumOf(rounds, (round) => round.detail.kits.starts[side]),
+      sumOf(rounds, (round) => round.detail.kits.freeTicks[side]),
     );
   }
   const pickups = sumOf(rounds, (round) => round.detail.kits.pickups);
   const followed = sumOf(rounds, (round) => round.detail.kits.trips.followed);
   return {
     toward,
+    startsPerMinute,
     followed: share(followed, followed + sumOf(rounds, (round) => round.detail.kits.trips.dropped)),
     picked: share(
       pickups,

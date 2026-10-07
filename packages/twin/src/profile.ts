@@ -45,6 +45,11 @@ export const SIGHT_KEYS = ['sight', 'hidden'] as const;
 export type SightKey = (typeof SIGHT_KEYS)[number];
 export const SIGHT_NAMES: Readonly<Record<SightKey, string>> = { sight: 'на виду', hidden: 'без видимости' };
 
+export const KIT_NAMES: Readonly<Record<KitSide, string>> = {
+  closer: 'я ближе бота',
+  farther: 'бот ближе',
+};
+
 export const HIDDEN_AIM_NAMES: Readonly<Record<HiddenAimTarget, string>> = {
   bearing: 'пеленге',
   exit: 'точке выхода',

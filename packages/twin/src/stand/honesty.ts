@@ -1,6 +1,7 @@
 import {
   DISTANCE_BUCKET_LABELS,
   HIDDEN_AIM_TARGETS,
+  KIT_SIDES,
   MOTION_KINDS,
   wilson,
   type Distribution,
@@ -14,6 +15,7 @@ import {
 import type { BotLevel } from '@tanks/shared/protocol';
 import {
   HIDDEN_AIM_NAMES,
+  KIT_NAMES,
   hiddenAimTargetsOf,
   PROFILE_WINDOWS,
   SIGHT_KEYS,
@@ -160,6 +162,10 @@ function outcomeChecks(reference: TwinReference): OutcomeCheck[] {
     { name: 'Урон в минуту', of: (m) => ({ kind: 'rate', value: m.main.outcomes.damagePerMinute }) },
     { name: 'Урон бота в минуту', of: (m) => ({ kind: 'rate', value: m.main.outcomes.damageTakenPerMinute }) },
     { name: 'Первое попадание моё', of: (m) => share(m.main.outcomes.firstHit) },
+    ...KIT_SIDES.map((side) => ({
+      name: `Ход к аптечке, ${KIT_NAMES[side]}`,
+      of: (m: PlayerMetrics) => share(m.main.kits.toward[side]),
+    })),
     { name: 'Подобрано аптечек из появившихся', of: (m) => share(m.main.kits.picked) },
     { name: 'Аптечки мои из подобранных', of: (m) => share(m.main.kits.mine) },
     { name: 'Лечение в минуту', of: (m) => ({ kind: 'rate', value: m.main.kits.healPerMinute }) },
