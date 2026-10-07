@@ -48,7 +48,7 @@
 Тернарник одного уровня для выбора простого значения; остальное — `if`.
 
 ### Модули — ESM, импорты с расширением
-`import { x } from './file.js'` в коде пакетов `shared` и `server` (NodeNext); между пакетами — через имена `@tanks/shared/engine`, `@tanks/shared/protocol`.
+`import { x } from './file.js'` в коде пакетов `shared`, `bots` и `server` (NodeNext); между пакетами — через имена `@tanks/shared/engine`, `@tanks/shared/protocol`, `@tanks/bots`.
 
 ### Тесты рядом с кодом
 `*.test.ts` рядом с проверяемым модулем; большие эталонные данные — в `packages/<пакет>/test/`.

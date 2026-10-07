@@ -40,7 +40,7 @@
 | Пакет | Роль |
 |---|---|
 | `packages/shared` | Движок (`engine/`) и протокол (`protocol/`) — общие для сервера и клиента; импорт `@tanks/shared/engine`, `@tanks/shared/protocol` |
-| `packages/bots` | Мозги ботов лестницы дуэли — общие для сервера и браузера, без платформы, как `shared`; импорт `@tanks/bots`; скрипт бота уровня 10 — `@tanks/bots/parallax.js` (сервер читает файл, Vite — `?raw`); см. [bot-ladder.md](docs/tech/impl/backend/bot-ladder.md) |
+| `packages/bots` | Мозги ботов лестницы дуэли — общие для сервера и браузера, без платформы, как `shared`; импорт `@tanks/bots`; скрипт бота уровня 10 — `@tanks/bots/parallax.js` (сервер читает файл, Vite может взять его текстом через `?raw`); см. [bot-ladder.md](docs/tech/impl/backend/bot-ladder.md) |
 | `packages/server` | Игровой сервер: комнаты, тик, WebSocket (`ws`) |
 | `packages/client` | Браузерный клиент: Vite, Canvas 2D |
 | `packages/mobile` | Оболочка Capacitor (Android, iOS): открывает клиент с игрового сервера; APK собирается в Docker — `deploy/android/build.sh`, см. [android-app.md](docs/tech/impl/infra/android-app.md) |

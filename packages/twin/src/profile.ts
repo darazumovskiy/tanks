@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import {
   COURSE_BANDS,
   DISTANCE_BUCKET_LABELS,
@@ -17,12 +16,10 @@ import {
   type ProfileSelection,
   type SelectedRounds,
 } from '@tanks/analysis';
-import { compileArenaBotScript, createBrain } from '@tanks/bots';
+import { createBrain } from '@tanks/bots';
+import { createParallax } from '@tanks/server/bots/ladder';
 import { deriveStats, TICK_RATE } from '@tanks/shared/engine';
 import { BOT_LEVELS, type BotLevel } from '@tanks/shared/protocol';
-
-const PARALLAX_SCRIPT = new URL(import.meta.resolve('@tanks/bots/parallax.js'));
-const createParallax = compileArenaBotScript(readFileSync(PARALLAX_SCRIPT, 'utf8'));
 
 export const TWIN_PROFILE_NAMES = ['phone', 'pc'] as const;
 export const TWIN_NICK = 'Двойник';

@@ -1,12 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { compileArenaBotScript, createBrain } from '@tanks/bots';
+import { compileArenaBotScript, createBrain, type ArenaBotScript } from '@tanks/bots';
 import type { Stats } from '@tanks/shared/engine';
 import { BOT_LEVEL_INFO, type BotLevel } from '@tanks/shared/protocol';
 import type { Connection, Seat } from '../room.js';
 import { ArenaBot } from './arenaBot.js';
 
 const PARALLAX_SCRIPT = new URL(import.meta.resolve('@tanks/bots/parallax.js'));
-const createParallax = compileArenaBotScript(readFileSync(PARALLAX_SCRIPT, 'utf8'));
+export const createParallax: ArenaBotScript = compileArenaBotScript(readFileSync(PARALLAX_SCRIPT, 'utf8'));
 
 type JoinRoom = (connection: Connection, nickname: string, stats: Stats) => Seat;
 
