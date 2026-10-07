@@ -53,7 +53,8 @@ export const HIDDEN_AIM_NAMES: Readonly<Record<HiddenAimTarget, string>> = {
 };
 
 // Параметры, которые подбираются калибровкой по своим метрикам-входам. hiddenAim — доли решений, на которых
-// башня без видимости ведётся на цель; kitShare — доля решений манёвра, на которых танк едет к аптечке.
+// башня без видимости ведётся на цель; kitShare — доля решений манёвра, на которых танк едет к аптечке;
+// kitFollowShare — доля начатых поездок к аптечке, которые танк доводит, пока аптечку не подберут.
 export interface TwinCalibration {
   correlationTicks: number;
   lagTicks: number;
@@ -62,6 +63,7 @@ export interface TwinCalibration {
   courseReach: number;
   reverseChance: number;
   kitShare: Record<KitSide, number>;
+  kitFollowShare: number;
   hiddenAim: Record<HiddenAimTarget, number>;
   coverHoldShare: number;
   returnAvoidShare: number;

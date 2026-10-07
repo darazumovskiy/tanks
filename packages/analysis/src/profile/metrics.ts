@@ -130,9 +130,11 @@ export interface HiddenAimShare {
   excessPct: number | null;
 }
 
-// Ход к аптечке по тому, кому она ближе; подобранные из появившихся, мои из подобранных, лечение в минуту боя.
+// Ход к аптечке по тому, кому она ближе; поездки к аптечке, доведённые до её подбора, из доведённых и брошенных;
+// подобранные из появившихся, мои из подобранных, лечение в минуту боя.
 export interface KitMetrics {
   toward: Record<KitSide, Share>;
+  followed: Share;
   picked: Share;
   mine: Share;
   healPerMinute: number | null;
@@ -556,8 +558,10 @@ function kitMetrics(rounds: readonly RoundWithDetail[], fightTicks: number): Kit
     );
   }
   const pickups = sumOf(rounds, (round) => round.detail.kits.pickups);
+  const followed = sumOf(rounds, (round) => round.detail.kits.trips.followed);
   return {
     toward,
+    followed: share(followed, followed + sumOf(rounds, (round) => round.detail.kits.trips.dropped)),
     picked: share(
       pickups,
       sumOf(rounds, (round) => round.detail.kits.spawns),

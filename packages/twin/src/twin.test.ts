@@ -236,6 +236,7 @@ describe('профиль двойника', () => {
       courseReach: 240,
       reverseChance: 0,
       kitShare: { closer: 0.4, farther: 0.2 },
+      kitFollowShare: 0.6,
       hiddenAim: { bearing: 0.1, exit: 0.2, ricochet: 0.3, lastSeen: 0.1 },
       coverHoldShare: 0.9,
       returnAvoidShare: 0.5,

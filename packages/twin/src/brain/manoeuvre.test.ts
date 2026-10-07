@@ -53,6 +53,7 @@ function manoeuvreWith(settings: Partial<ManoeuvreSettings> = {}, seed = 1): Man
       courseDecilesDeg: courseWith(UNIFORM_COURSE),
       reverseChance: 0,
       kitShare: { closer: 0, farther: 0 },
+      kitFollowShare: 0,
       ...settings,
     },
     createRandom(seed),
@@ -325,6 +326,86 @@ describe('манёвр двойника', () => {
       driveAt(manoeuvre, drift({ ...spec, kits: [kit(200, 300, false)] }, 5), OPEN, true);
       expect(manoeuvre.decisions).toBe(decisions + 1);
       expect(manoeuvre.intent.kind).toBe('course');
+    });
+
+    describe('поездка, которую танк доводит', () => {
+      const KIT_SPEC: ViewSpec = { ...NEAR_ME, kits: [kit(200, 300)] };
+      // Противник встал у аптечки: она теперь ближе ему, а к такой аптечке танк с долей 0 не едет.
+      const ENEMY_AT_KIT: ViewSpec = { ...KIT_SPEC, enemy: { x: 210, y: 300 } };
+      const ONLY_CLOSER = { closer: 1, farther: 0 };
+      // Полный стик: танк, который не сдвигается, упирается — так проверяется отъезд от препятствия.
+      const FULL_STICK = WEAK_STICK.map(() => 1);
+
+      function startTrip(kitFollowShare: number, seed = 1): Manoeuvre {
+        const settings = {
+          decisionMeanS: TINY_INTERVAL,
+          stickDeciles: FULL_STICK,
+          kitShare: ONLY_CLOSER,
+          kitFollowShare,
+        };
+        const manoeuvre = manoeuvreWith(settings, seed);
+        driveAt(manoeuvre, drift(KIT_SPEC, 0), OPEN, true);
+        return manoeuvre;
+      }
+
+      it('держится через истёкшие интервалы и смену видимости, пока аптечка лежит; забрали — решение сразу', () => {
+        const followed = startTrip(1);
+        const dropped = startTrip(0);
+        const decisions = followed.decisions;
+        for (let tick = 1; tick < 100; tick++) {
+          driveAt(followed, drift(ENEMY_AT_KIT, tick), OPEN, tick % 2 === 0);
+          driveAt(dropped, drift(ENEMY_AT_KIT, tick), OPEN, tick % 2 === 0);
+        }
+
+        expect(followed.decisions).toBe(decisions);
+        expect(followed.intent).toMatchObject({ kind: 'kit', goal: { x: 200, y: 300 } });
+        expect(dropped.intent.kind).toBe('course');
+        driveAt(followed, drift({ ...ENEMY_AT_KIT, kits: [kit(200, 300, false)] }, 100), OPEN, true);
+        expect(followed.decisions).toBe(decisions + 1);
+        expect(followed.intent.kind).toBe('course');
+      });
+
+      it('доводится доля kitFollowShare новых поездок; новое решение к той же аптечке поездку не начинает', () => {
+        // Ход к аптечке — на каждом решении: поездка, которую танк не решил довести, продолжается к той же
+        // аптечке, но решения довести её на продолжении нет.
+        const seeds = Array.from({ length: 400 }, (_, index) => index + 1);
+        const followedShare =
+          seeds.filter((seed) => {
+            const manoeuvre = startTrip(0.5, seed);
+            for (let tick = 1; tick < 50; tick++) {
+              driveAt(manoeuvre, drift(KIT_SPEC, tick), OPEN, true);
+            }
+            const decisions = manoeuvre.decisions;
+            driveAt(manoeuvre, drift(KIT_SPEC, 50), OPEN, true);
+            return manoeuvre.decisions === decisions;
+          }).length / seeds.length;
+
+        expect(followedShare).toBeGreaterThan(0.43);
+        expect(followedShare).toBeLessThan(0.57);
+      });
+
+      it('после отъезда от препятствия поездка продолжается', () => {
+        const followed = startTrip(1);
+        const dropped = startTrip(0);
+        const kinds: string[] = [];
+        for (let tick = 0; tick <= TICK_RATE + 1; tick++) {
+          driveAt(followed, ENEMY_AT_KIT, OPEN, true);
+          driveAt(dropped, ENEMY_AT_KIT, OPEN, true);
+          kinds.push(followed.intent.kind);
+        }
+
+        expect(kinds).toContain('unstick');
+        expect(followed.intent).toMatchObject({ kind: 'kit', goal: { x: 200, y: 300 } });
+        expect(dropped.intent.kind).not.toBe('kit');
+      });
+
+      it('выезд на место засады бросает поездку', () => {
+        const manoeuvre = startTrip(1);
+        manoeuvre.travel(craftView(drift(ENEMY_AT_KIT, 1)), OPEN, { x: 400, y: 100 });
+        driveAt(manoeuvre, drift(ENEMY_AT_KIT, 2), OPEN, true);
+
+        expect(manoeuvre.intent.kind).toBe('course');
+      });
     });
   });
 

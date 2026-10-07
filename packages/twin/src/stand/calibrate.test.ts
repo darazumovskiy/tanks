@@ -52,6 +52,15 @@ const FALLING_INPUTS: ReadonlySet<string> = new Set(['decisionMeanS', 'returnAvo
 // Против восьмого уровня раунды коротки и аптечки почти не появляются — ход к ним мерится против третьего.
 const KIT_LEVEL: BotLevel = 3;
 const LEVEL: BotLevel = 8;
+// Доведение поездки мерится на поездках к аптечке: у этого параметра ход к ней включён.
+const KIT_SHARE_ON = 0.5;
+
+function baseFor(input: CalibrationInput): ParamValues {
+  if (input.param !== 'kitFollowShare') {
+    return BASE;
+  }
+  return { ...BASE, 'kit closer': KIT_SHARE_ON, 'kit farther': KIT_SHARE_ON };
+}
 
 // Задний ход есть только у компьютера; цели башни без видимости — тоже на его руке: ошибка руки телефона около 24°
 // размывает окно цели в 10°, и на 48 раундах сдвиг метрики тонет в шуме.
@@ -71,8 +80,9 @@ describe('калибровка: каждый параметр двигает с�
     '%s',
     async (_, { input, reference }) => {
       const level = input.param.startsWith('kit') ? KIT_LEVEL : LEVEL;
-      const low = await metricsOf(reference, { ...BASE, [input.param]: at(input, LOW_SHARE) }, level);
-      const high = await metricsOf(reference, { ...BASE, [input.param]: at(input, HIGH_SHARE) }, level);
+      const base = baseFor(input);
+      const low = await metricsOf(reference, { ...base, [input.param]: at(input, LOW_SHARE) }, level);
+      const high = await metricsOf(reference, { ...base, [input.param]: at(input, HIGH_SHARE) }, level);
 
       const lowValue = input.measure(low) ?? NaN;
       const highValue = input.measure(high) ?? NaN;

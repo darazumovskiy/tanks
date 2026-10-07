@@ -2674,15 +2674,20 @@
   "kits": {
    "toward": {
     "closer": {
-     "part": 347,
-     "total": 790,
-     "pct": 43.9241
+     "part": 359,
+     "total": 775,
+     "pct": 46.3226
     },
     "farther": {
-     "part": 98,
-     "total": 444,
-     "pct": 22.0721
+     "part": 95,
+     "total": 427,
+     "pct": 22.2482
     }
+   },
+   "followed": {
+    "part": 17,
+    "total": 33,
+    "pct": 51.5152
    },
    "picked": {
     "part": 39,

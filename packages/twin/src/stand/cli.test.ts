@@ -28,6 +28,7 @@ function tinyReference(): TwinReference {
   const noAim = { sole: NO_SHARE, chancePct: null, excessPct: null };
   reference.main.aim.hiddenAim = { bearing: noAim, exit: noAim, ricochet: noAim, lastSeen: noAim };
   reference.main.kits.toward = { closer: NO_SHARE, farther: NO_SHARE };
+  reference.main.kits.followed = NO_SHARE;
   reference.main.fire.returningShotsGuardOff = NO_SHARE;
   reference.movement.pathShift = null;
   reference.movement.freeRunAhead = null;

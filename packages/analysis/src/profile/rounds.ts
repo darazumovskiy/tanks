@@ -28,6 +28,7 @@ import {
   type ClientLine,
   type LogAction,
   type ParsedRound,
+  type Pose,
   type Tick,
 } from '../logParser.js';
 import {
@@ -130,11 +131,15 @@ const HIDDEN_AIM_STRIDE = 10;
 // Появление противника — видимость после секунды без неё; башня сверяется с точкой появления за 0,5 с до него.
 const APPEAR_HIDDEN_TICKS = TICK_RATE;
 const APPEAR_LOOKBACK_TICKS = TICK_RATE / 2;
-// Ход к аптечке — на каждом пятом тике боя, пока на поле есть аптечка: танк едет быстрее порога кайтинга, и
-// курс отличается меньше чем на 30° от направления на точку пути к ближайшей аптечке в 75 впереди.
+// Ход к аптечке — на каждом пятом тике боя с газом, пока на поле есть аптечка: курс корпуса, а на заднем ходу —
+// кормы, отличается меньше чем на 30° от направления на точку пути к ближайшей аптечке в 75 впереди.
 const KIT_STRIDE = 5;
 const KIT_TOWARD_RAD = Math.PI / 6;
 const KIT_PATH_REACH = 75;
+// Поездка к аптечке держится, пока ход к ней не прервётся дольше чем на 0,5 с. В счёт идут поездки, сократившие
+// путь до аптечки хотя бы на 100: короче — случайный курс, который ненадолго смотрит на аптечку.
+const KIT_TRIP_GAP_SAMPLES = TICK_RATE / 2 / KIT_STRIDE;
+const KIT_TRIP_MIN_CLOSE = 100;
 // Свободный путь по курсу — от центра танка вдоль курса корпуса и газа до первой стены или края поля, не дальше
 // 600, с точностью 5; от каждого третьего тика с газом.
 const FREE_RUN_STRIDE = 3;
@@ -303,12 +308,20 @@ export interface TowardCount {
   total: number;
 }
 
+// Поездки к аптечке: followed — кончились тем, что аптечку подобрал я или противник; dropped — ход к ней
+// прервался, пока она лежала. Поездка, которую оборвал конец раунда, не в счёт.
+export interface KitTrips {
+  followed: number;
+  dropped: number;
+}
+
 export interface KitCounts {
   spawns: number;
   pickups: number;
   botPickups: number;
   healed: number;
   toward: Record<KitSide, TowardCount>;
+  trips: KitTrips;
 }
 
 export interface AppearCounts {
@@ -1284,6 +1297,7 @@ function kitKey(point: Point): string {
 }
 
 interface NearestKit {
+  key: string;
   field: PathField;
   mine: number;
   theirs: number;
@@ -1295,13 +1309,43 @@ function nearestKit(map: MapDef, kits: Iterable<Point>, me: Point, enemy: Point)
     const field = pathFieldTo(map, kit);
     const mine = pathLengthFrom(field, me);
     if (mine < (nearest?.mine ?? Infinity)) {
-      nearest = { field, mine, theirs: pathLengthFrom(field, enemy) };
+      nearest = { key: kitKey(kit), field, mine, theirs: pathLengthFrom(field, enemy) };
     }
   }
   return nearest;
 }
 
-// Подборы и лечение — по событиям раунда; ход к аптечке — по тикам боя, пока на поле есть аптечка.
+// Курс, которым танк едет: корпус, на заднем ходу — корма; null — газа нет.
+function drivenCourseOf(action: LogAction, me: Pose): number | null {
+  if (Math.abs(action.throttle) <= AXIS_TOUCH) {
+    return null;
+  }
+  return action.throttle < 0 ? me.heading + Math.PI : me.heading;
+}
+
+function isCourseToward(field: PathField, me: Point, course: number | null): boolean {
+  const point = pathPointFrom(field, me, KIT_PATH_REACH);
+  if (course === null || point === null) {
+    return false;
+  }
+  return Math.abs(normalizeAngle(course - bearingOf(me, point))) < KIT_TOWARD_RAD;
+}
+
+interface OpenTrip {
+  key: string;
+  field: PathField;
+  startLength: number;
+  lastLength: number;
+  gap: number;
+}
+
+function countTrip(trips: KitTrips, trip: OpenTrip, outcome: keyof KitTrips): void {
+  trips[outcome] += trip.startLength - trip.lastLength >= KIT_TRIP_MIN_CLOSE ? 1 : 0;
+}
+
+// Подборы и лечение — по событиям раунда; ход к аптечке и поездки к ней — по тикам боя, пока на поле есть
+// аптечка. Поездка начинается с хода к ближайшей аптечке и дальше сверяется с ходом к своей аптечке, даже когда
+// ближайшей стала другая.
 function kitCounts(round: ParsedRound, frames: readonly FightFrame[], map: MapDef, context: GameContext): KitCounts {
   const { human, bot } = context;
   const counts: KitCounts = {
@@ -1310,6 +1354,7 @@ function kitCounts(round: ParsedRound, frames: readonly FightFrame[], map: MapDe
     botPickups: 0,
     healed: 0,
     toward: { closer: { toward: 0, total: 0 }, farther: { toward: 0, total: 0 } },
+    trips: { followed: 0, dropped: 0 },
   };
   const events = round.events.filter((event) => event.kind === EVENT_KIND.kitSpawn || event.kind === EVENT_KIND.pickup);
   for (const event of events) {
@@ -1321,39 +1366,49 @@ function kitCounts(round: ParsedRound, frames: readonly FightFrame[], map: MapDe
   }
   const active = new Map<string, Point>();
   let next = 0;
-  frames.forEach(({ tick }, n) => {
+  let trip: OpenTrip | null = null;
+  for (const [n, { tick }] of frames.entries()) {
     let event = events[next];
     while (event !== undefined && event.gt <= tick.gt) {
-      const kit = { x: event.x, y: event.y };
+      const key = kitKey(event);
       if (event.kind === EVENT_KIND.kitSpawn) {
-        active.set(kitKey(kit), kit);
+        active.set(key, { x: event.x, y: event.y });
       } else {
-        active.delete(kitKey(kit));
+        active.delete(key);
+      }
+      if (event.kind === EVENT_KIND.pickup && trip?.key === key) {
+        countTrip(counts.trips, trip, 'followed');
+        trip = null;
       }
       next++;
       event = events[next];
     }
-    const previous = frames[n - 1];
-    if (n % KIT_STRIDE !== 0 || previous === undefined) {
-      return;
+    if (n % KIT_STRIDE !== 0) {
+      continue;
     }
     const me = tick.poses[human];
-    const nearest = nearestKit(map, active.values(), me, tick.poses[bot]);
-    if (nearest === null) {
-      return;
+    const course = drivenCourseOf(tick.actions[human], me);
+    if (trip !== null) {
+      const isTripToward = isCourseToward(trip.field, me, course);
+      trip.gap = isTripToward ? 0 : trip.gap + 1;
+      trip.lastLength = isTripToward ? pathLengthFrom(trip.field, me) : trip.lastLength;
     }
-    const vx = me.x - previous.tick.poses[human].x;
-    const vy = me.y - previous.tick.poses[human].y;
-    const point = pathPointFrom(nearest.field, me, KIT_PATH_REACH);
-    const isMoving = Math.hypot(vx, vy) * TICK_RATE > KITE_SPEED;
-    const isToward =
-      isMoving &&
-      point !== null &&
-      Math.abs(normalizeAngle(Math.atan2(vy, vx) - bearingOf(me, point))) < KIT_TOWARD_RAD;
+    if (trip !== null && trip.gap > KIT_TRIP_GAP_SAMPLES) {
+      countTrip(counts.trips, trip, 'dropped');
+      trip = null;
+    }
+    const nearest = nearestKit(map, active.values(), me, tick.poses[bot]);
+    if (nearest === null || course === null) {
+      continue;
+    }
+    const isToward = isCourseToward(nearest.field, me, course);
     const count = counts.toward[nearest.mine < nearest.theirs ? 'closer' : 'farther'];
     count.total++;
     count.toward += isToward ? 1 : 0;
-  });
+    if (trip === null && isToward) {
+      trip = { key: nearest.key, field: nearest.field, startLength: nearest.mine, lastLength: nearest.mine, gap: 0 };
+    }
+  }
   return counts;
 }
 

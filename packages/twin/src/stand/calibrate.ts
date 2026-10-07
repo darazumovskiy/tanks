@@ -31,6 +31,7 @@ export type CalibrationParam =
   | 'decisionMeanS'
   | 'reverseChance'
   | `kit ${KitSide}`
+  | 'kitFollowShare'
   | `hiddenAim ${HiddenAimTarget}`;
 
 // Сетка поиска — равномерная по значению или по логарифму значения.
@@ -165,6 +166,15 @@ export const CALIBRATION_INPUTS: readonly CalibrationInput[] = [
     isApplicable: ALWAYS,
     measure: (m) => m.main.kits.toward[side].pct,
   })),
+  {
+    param: 'kitFollowShare',
+    name: 'Поездки к аптечке, доведённые до подбора, %',
+    tolerance: SHARE_TOLERANCE,
+    range: [0, 1],
+    scale: 'linear',
+    isApplicable: ALWAYS,
+    measure: (m) => m.main.kits.followed.pct,
+  },
   ...HIDDEN_AIM_TARGETS.map((target): CalibrationInput => ({
     param: `hiddenAim ${target}`,
     name: `Башня без видимости на ${HIDDEN_AIM_NAMES[target]} сверх случайной, п.`,
@@ -199,6 +209,7 @@ export function calibrationOf(values: Readonly<ParamValues>): TwinCalibration {
     courseReach: values.courseReach,
     reverseChance: values.reverseChance,
     kitShare,
+    kitFollowShare: values.kitFollowShare,
     hiddenAim,
     coverHoldShare: values.coverHoldShare,
     returnAvoidShare: values.returnAvoidShare,
@@ -212,6 +223,7 @@ export function valuesOf(calibration: TwinCalibration): ParamValues {
     decisionMeanS: calibration.decisionMeanS,
     courseReach: calibration.courseReach,
     reverseChance: calibration.reverseChance,
+    kitFollowShare: calibration.kitFollowShare,
     coverHoldShare: calibration.coverHoldShare,
     returnAvoidShare: calibration.returnAvoidShare,
   } as ParamValues;

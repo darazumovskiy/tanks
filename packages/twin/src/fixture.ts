@@ -42,6 +42,7 @@ export function calibrationWith(overrides: Partial<TwinCalibration> = {}): TwinC
     courseReach: COURSE_REACH,
     reverseChance: 0,
     kitShare: { closer: 0, farther: 0 },
+    kitFollowShare: 0,
     hiddenAim: { bearing: 0, exit: 0, ricochet: 0, lastSeen: 0 },
     coverHoldShare: ALWAYS_HELD,
     returnAvoidShare: 0,

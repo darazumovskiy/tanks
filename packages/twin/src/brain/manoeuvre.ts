@@ -27,6 +27,7 @@ export interface ManoeuvreSettings {
   courseDecilesDeg: CourseDeciles;
   reverseChance: number;
   kitShare: Readonly<Record<KitSide, number>>;
+  kitFollowShare: number;
 }
 
 // course — ход под углом к линии на противника; chase — путём к противнику, когда вокруг танка ни одно
@@ -72,6 +73,14 @@ interface TrackPoint {
 
 function activeKits(view: BotView): Point[] {
   return view.repairKits.filter((kit) => kit.isActive).map((kit) => ({ x: kit.x, y: kit.y }));
+}
+
+function isSamePoint(a: Point, b: Point): boolean {
+  return a.x === b.x && a.y === b.y;
+}
+
+function isKitActive(view: BotView, point: Point): boolean {
+  return activeKits(view).some((kit) => isSamePoint(kit, point));
 }
 
 function pathCells(grid: Grid, from: Point, to: Point): number {
@@ -150,6 +159,7 @@ export function courseAngleAt(deciles: CourseDeciles[SightKey], distance: number
 // Режим «манёвр»: в моменты решений танк берёт долю u распределения угла хода к линии на противника и держит её
 // до следующего решения; угол каждый тик — значение этой доли в распределении человека для своей видимости и
 // нынешней дистанции. Решение — по интервалу, при смене видимости и когда аптечку, к которой ехал, забрали.
+// Поездку к аптечке, которую танк решил довести, решения не прерывают: она держится, пока аптечка лежит.
 // Сторона линии держится, пока стена не отклонит курс на другую сторону или танк не упрётся.
 export class Manoeuvre {
   private intentState: ManoeuvreIntent = {
@@ -167,6 +177,8 @@ export class Manoeuvre {
   private hull: HullSteering = { ...IDLE_HULL };
   private track: TrackPoint[] = [];
   private decisionCount = 0;
+  // Аптечка поездки, которую танк доводит; null — такой поездки нет.
+  private kitTrip: Point | null = null;
   private readonly follower = new PathFollower();
 
   constructor(
@@ -189,6 +201,7 @@ export class Manoeuvre {
     this.side = chance(this.random, SIDE_LEFT_CHANCE) ? 1 : -1;
     this.hull = { ...IDLE_HULL };
     this.track = [];
+    this.kitTrip = null;
     this.follower.reset();
   }
 
@@ -203,8 +216,10 @@ export class Manoeuvre {
     }
     const { kind, goal } = this.intentState;
     const isUnstuck = kind === 'unstick' && this.isNear(view.me, goal);
-    const isKitGone = kind === 'kit' && !activeKits(view).some((kit) => kit.x === goal.x && kit.y === goal.y);
-    const isDeciding = this.ticksLeft <= 0 || sightKey !== this.sightKey || isUnstuck || isKitGone;
+    const isKitGone = kind === 'kit' && !isKitActive(view, goal);
+    const isFollowing = kind === 'kit' && !isKitGone && this.kitTrip !== null;
+    const isDecisionDue = this.ticksLeft <= 0 || sightKey !== this.sightKey || isUnstuck || isKitGone;
+    const isDeciding = isDecisionDue && !isFollowing;
     this.sightKey = sightKey;
     const isHeld = kind === 'unstick' || kind === 'kit';
     if (!isDeciding && isHeld) {
@@ -229,28 +244,45 @@ export class Manoeuvre {
     return this.steer(view, this.follower.waypoint(grid, view.me, view.zone, view.tick), false);
   }
 
+  // Выезд на место засады и стоянка на нём — режим «позиция»: поездку к аптечке танк при этом бросает.
   travel(view: BotView, grid: Grid, goal: Point): Drive {
+    this.kitTrip = null;
     this.remember(view.me, true);
     return this.steer(view, this.follower.waypoint(grid, view.me, goal, view.tick), false);
   }
 
   stop(view: BotView): Drive {
+    this.kitTrip = null;
     this.remember(view.me, false);
     this.hull = { ...IDLE_HULL };
     return HOLD;
   }
 
   // Решение: доля угла хода, сила стика, срок до следующего решения и, если на поле есть аптечка, — ехать ли к
-  // ближайшей по пути с долей решений своей для случая «я ближе к ней, чем противник» и обратного.
+  // ближайшей по пути с долей решений своей для случая «я ближе к ней, чем противник» и обратного. Поездку к
+  // аптечке, которую танк доводит, решение продолжает — после отъезда от препятствия. Новая поездка с долей
+  // kitFollowShare доводится; поездка к той же аптечке, к которой танк уже ехал, — не новая.
   private decide(view: BotView, grid: Grid): void {
+    const previousKit = this.intentState.kind === 'kit' ? this.intentState.goal : null;
     this.courseShare = nextRandom(this.random);
     this.intentState.strength = sampleDeciles(this.random, this.settings.stickDeciles);
     this.ticksLeft = this.intervalTicks();
     this.decisionCount++;
     this.intentState.kind = 'course';
+    const trip = this.kitTrip;
+    if (trip !== null && isKitActive(view, trip)) {
+      this.intentState = { ...this.intentState, kind: 'kit', goal: trip, angle: 0 };
+      return;
+    }
+    this.kitTrip = null;
     const kit = nearestKit(view, grid);
-    if (kit !== null && chance(this.random, this.settings.kitShare[kit.side])) {
-      this.intentState = { ...this.intentState, kind: 'kit', goal: kit.point, angle: 0 };
+    if (kit === null || !chance(this.random, this.settings.kitShare[kit.side])) {
+      return;
+    }
+    this.intentState = { ...this.intentState, kind: 'kit', goal: kit.point, angle: 0 };
+    const isNewTrip = previousKit === null || !isSamePoint(previousKit, kit.point);
+    if (isNewTrip && chance(this.random, this.settings.kitFollowShare)) {
+      this.kitTrip = kit.point;
     }
   }
 

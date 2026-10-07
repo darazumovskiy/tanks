@@ -175,6 +175,7 @@ export class TwinBrain {
           courseDecilesDeg: profile.manoeuvre.courseDecilesDeg,
           reverseChance: calibration.reverseChance,
           kitShare: calibration.kitShare,
+          kitFollowShare: calibration.kitFollowShare,
         },
         random,
       ),
