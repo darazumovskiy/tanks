@@ -1424,7 +1424,14 @@ function kitCounts(round: ParsedRound, frames: readonly FightFrame[], map: MapDe
     }
     counts.freeTicks[side] += KIT_STRIDE;
     if (isToward) {
-      trip = { key: nearest.key, side, field: nearest.field, startLength: nearest.mine, lastLength: nearest.mine, gap: 0 };
+      trip = {
+        key: nearest.key,
+        side,
+        field: nearest.field,
+        startLength: nearest.mine,
+        lastLength: nearest.mine,
+        gap: 0,
+      };
     }
   }
   if (trip !== null) {
