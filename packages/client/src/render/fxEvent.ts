@@ -3,7 +3,7 @@ import type { FxAnnouncement, FxEvent, FxEventOptions } from './effects.js';
 
 const DUEL_SHAKE = { shot: 2.5, clash: 6, hit: 9, death: 26 } as const;
 const DEATH_SCREEN_FLASH = 0.55;
-const QUIET: FxEventOptions = { shake: 0, flash: 0, announcement: null, hasParticles: true };
+const QUIET: FxEventOptions = { shake: 0, flash: 0, announcement: null, hasParticles: true, ownKillCount: null };
 const DUEL_ANNOUNCEMENT = {
   zoneStart: { kind: 'zoneStart', size: 1, duration: 1 },
   selfHit: { kind: 'selfHit', size: 1, duration: 1 },

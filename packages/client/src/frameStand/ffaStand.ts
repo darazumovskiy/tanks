@@ -256,7 +256,12 @@ function playFrame(target: StandTarget, frame: FfaStandFrame, zone: ZonePlan): v
     const framing = camera.update(focus, aim, renderer.screen, FRAME_MS);
     target.lastCamera = framing.camera;
     while (pending[0] !== undefined && -pending[0].ageS <= t) {
-      const options = fxPolicy.optionsFor(pending[0].event, frame.myId, framing.camera);
+      const options = fxPolicy.optionsFor(
+        pending[0].event,
+        frame.myId,
+        framing.camera,
+        pending[0].ownKillCount ?? null,
+      );
       if (options !== null) {
         effects.onEvent(pending[0].event, options);
       }

@@ -17,7 +17,7 @@ const KINDS: readonly SnapshotEventKind[] = [
   'zoneStart',
   'roundOver',
 ];
-const QUIET = { shake: 0, flash: 0, announcement: null, hasParticles: true };
+const QUIET = { shake: 0, flash: 0, announcement: null, hasParticles: true, ownKillCount: null };
 
 function duelEvent(kind: SnapshotEventKind, side: Side | null, flags = 0): SnapshotEvent {
   return { kind, side, x: 120, y: 340, value: 28, dx: 0.6, dy: 0.8, flags };
@@ -80,6 +80,7 @@ describe('тряска, вспышка и объявления дуэли', () =
       flash: 0.55,
       announcement: null,
       hasParticles: true,
+      ownKillCount: null,
     });
   });
 

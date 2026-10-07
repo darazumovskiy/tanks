@@ -13,7 +13,7 @@ import {
   type Point,
 } from '@tanks/shared/engine';
 import type { CrowdProfile } from './profile.js';
-import type { CrowdBullet, CrowdTank, CrowdView } from './view.js';
+import type { CrowdBullet, CrowdTank, CrowdView, CrowdZone } from './view.js';
 
 const CELL = 25;
 // Клетка сетки и отрезок пути считаются свободными на таком удалении от стен.
@@ -46,6 +46,11 @@ const SIDESTEP_DISTANCE = 80;
 // Куда кандидат уклонения успеет доехать — проверяется на свободу от стен.
 const DODGE_PROBE_S = 0.5;
 const ZONE_MARGIN = 80;
+// Возврат от края длится, пока бот не уйдёт вглубь на столько: без запаса он дёргался бы туда-обратно на границе
+// каждый тик и стоял на месте.
+const ZONE_RETURN_DEPTH = 70;
+// Точки, к которым бот едет сам, — не ближе этого к краю зоны: дальше начинается возврат.
+const ZONE_GOAL_MARGIN = 130;
 const KIT_HP_FRACTION = 0.6;
 const FIGHT_DISTANCE = 420;
 const STRAFE_PERIOD_TICKS = 180;
@@ -62,7 +67,6 @@ const FIRE_RETRY_TICKS = TICK_RATE / 2;
 const PAUSE_TICKS = TICK_RATE / 2;
 const PATROL_REACHED = 40;
 const PATROL_REPLAN_TICKS = TICK_RATE * 6;
-const PATROL_ZONE_MARGIN = 100;
 const STUCK_TICKS = TICK_RATE;
 const STUCK_MOVE = 10;
 const STUCK_THROTTLE = 0.5;
@@ -348,13 +352,30 @@ function leadPoint(me: CrowdTank, target: CrowdTank, quality: number): Point {
   return { x, y };
 }
 
-function sidestep(me: CrowdTank, alongX: number, alongY: number, side: number): Drive {
+function sidestepPoint(me: CrowdTank, alongX: number, alongY: number, side: number): Point {
   const perpendicular = Math.atan2(alongY, alongX) + Math.PI / 2;
-  return driveTo(
-    me,
-    me.x + Math.cos(perpendicular) * SIDESTEP_DISTANCE * side,
-    me.y + Math.sin(perpendicular) * SIDESTEP_DISTANCE * side,
-  );
+  return {
+    x: me.x + Math.cos(perpendicular) * SIDESTEP_DISTANCE * side,
+    y: me.y + Math.sin(perpendicular) * SIDESTEP_DISTANCE * side,
+  };
+}
+
+function goalRadius(zone: CrowdZone): number {
+  return Math.max(0, zone.radius - ZONE_GOAL_MARGIN);
+}
+
+function isGoalInZone(zone: CrowdZone, point: Point): boolean {
+  return Math.hypot(point.x - zone.x, point.y - zone.y) <= goalRadius(zone);
+}
+
+// Точка дальше от края, чем ZONE_GOAL_MARGIN, — как есть; ближе или снаружи — на окружность этой глубины к ней.
+function goalInZone(zone: CrowdZone, point: Point): Point {
+  if (isGoalInZone(zone, point)) {
+    return point;
+  }
+  const limit = goalRadius(zone);
+  const distance = Math.hypot(point.x - zone.x, point.y - zone.y);
+  return { x: zone.x + ((point.x - zone.x) / distance) * limit, y: zone.y + ((point.y - zone.y) / distance) * limit };
 }
 
 function positionAt(me: CrowdTank, move: Move, time: number): Point {
@@ -429,6 +450,7 @@ export class CrowdBrain {
   private noticed = new Map<number, boolean>();
   private dodgeMove: Move | null = null;
   private dodgeTicksLeft = 0;
+  private isReturningToZone = false;
   private lastThrottle = 0;
   private anchor: Point | null = null;
   private pushTicks = 0;
@@ -464,6 +486,7 @@ export class CrowdBrain {
     this.noticed = new Map();
     this.dodgeMove = null;
     this.dodgeTicksLeft = 0;
+    this.isReturningToZone = false;
     this.lastThrottle = 0;
     this.anchor = null;
     this.pushTicks = 0;
@@ -538,12 +561,11 @@ export class CrowdBrain {
     if (dodge !== null) {
       return dodge;
     }
-    const zoneDistance = Math.hypot(me.x - view.zone.x, me.y - view.zone.y);
-    if (zoneDistance > view.zone.radius - ZONE_MARGIN) {
+    if (this.isZoneReturnDue(view)) {
       return this.followPath(view, grid, view.zone, paths);
     }
     const kit = view.kits
-      .filter((candidate) => candidate.isActive)
+      .filter((candidate) => candidate.isActive && isGoalInZone(view.zone, candidate))
       .sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y))[0];
     if (this.profile.hasKits && kit !== undefined && me.hp < me.maxHp * KIT_HP_FRACTION) {
       return this.followPath(view, grid, kit, paths);
@@ -552,6 +574,18 @@ export class CrowdBrain {
       return this.patrol(view, grid, paths);
     }
     return this.hunt(view, grid, target, paths);
+  }
+
+  private isZoneReturnDue(view: CrowdView): boolean {
+    const { me, zone } = view;
+    const depth = zone.radius - Math.hypot(me.x - zone.x, me.y - zone.y);
+    if (depth < ZONE_MARGIN) {
+      this.isReturningToZone = true;
+    }
+    if (depth > ZONE_MARGIN + ZONE_RETURN_DEPTH) {
+      this.isReturningToZone = false;
+    }
+    return this.isReturningToZone;
   }
 
   private isPausing(): boolean {
@@ -656,13 +690,14 @@ export class CrowdBrain {
     return driveAlong(me, best);
   }
 
-  // Случайная свободная точка внутри зоны; новая — когда доехал или по таймеру.
+  // Случайная свободная точка внутри зоны; новая — когда доехал или по таймеру. Зона сжалась — доехать значит
+  // добраться до точки, прижатой внутрь зоны.
   private patrol(view: CrowdView, grid: Grid, paths: PathAllowance): Drive {
     const { me } = view;
-    const isReached =
-      this.patrolTarget !== null && Math.hypot(this.patrolTarget.x - me.x, this.patrolTarget.y - me.y) < PATROL_REACHED;
+    const goal = this.patrolTarget === null ? null : goalInZone(view.zone, this.patrolTarget);
+    const isReached = goal !== null && Math.hypot(goal.x - me.x, goal.y - me.y) < PATROL_REACHED;
     if (this.patrolTarget === null || isReached || view.tick - this.patrolTick > PATROL_REPLAN_TICKS) {
-      const cell = pickZoneCell(grid, view.zone, view.zone.radius - PATROL_ZONE_MARGIN, this.random());
+      const cell = pickZoneCell(grid, view.zone, goalRadius(view.zone), this.random());
       if (cell !== null) {
         this.patrolTarget = cell;
       }
@@ -671,31 +706,46 @@ export class CrowdBrain {
     return this.followPath(view, grid, this.patrolTarget ?? view.zone, paths);
   }
 
-  // Сближение держит дистанцию без кружения; круг в перестрелке ходит вокруг цели.
+  // Сближение держит дистанцию без кружения; круг в перестрелке ходит вокруг цели. Точки движения — внутри зоны.
   private hunt(view: CrowdView, grid: Grid, target: CrowdTank, paths: PathAllowance): Drive {
-    const { me, map } = view;
+    const { me, map, zone } = view;
     const distance = Math.hypot(target.x - me.x, target.y - me.y);
     const hasLineOfSight = isSegmentClear(map.walls, me.x, me.y, target.x, target.y, SHOT_PAD);
     if (!hasLineOfSight || distance >= FIGHT_DISTANCE) {
       return this.followPath(view, grid, target, paths);
     }
     if (this.profile.movement === 'approach') {
-      if (distance < RETREAT_DISTANCE) {
-        const away = Math.atan2(me.y - target.y, me.x - target.x);
-        return driveTo(me, target.x + Math.cos(away) * HOLD_DISTANCE, target.y + Math.sin(away) * HOLD_DISTANCE);
+      const away = Math.atan2(me.y - target.y, me.x - target.x);
+      const retreat = { x: target.x + Math.cos(away) * HOLD_DISTANCE, y: target.y + Math.sin(away) * HOLD_DISTANCE };
+      // Отход, упёршийся в край зоны, сменяется смещением поперёк: иначе бот стоял бы у края.
+      if (distance < RETREAT_DISTANCE && isGoalInZone(zone, retreat)) {
+        return driveTo(me, retreat.x, retreat.y);
       }
       if (distance < HOLD_DISTANCE) {
         // На дистанции не стоять столбом: медленно смещаться поперёк линии огня, меняя сторону.
-        const side = view.tick % DRIFT_PERIOD_TICKS < DRIFT_PERIOD_TICKS / 2 ? 1 : -1;
-        const drift = sidestep(me, me.x - target.x, me.y - target.y, side);
+        const side = this.cycleTick(view.tick, DRIFT_PERIOD_TICKS) < DRIFT_PERIOD_TICKS / 2 ? 1 : -1;
+        const step = goalInZone(zone, sidestepPoint(me, me.x - target.x, me.y - target.y, side));
+        const drift = driveTo(me, step.x, step.y);
         return { throttle: drift.throttle * DRIFT_THROTTLE, turn: drift.turn };
       }
-      return driveTo(me, target.x, target.y);
+      const closer = goalInZone(zone, target);
+      return driveTo(me, closer.x, closer.y);
     }
-    const sway = view.tick % STRAFE_PERIOD_TICKS < STRAFE_PERIOD_TICKS / 2 ? STRAFE_ANGLE : -STRAFE_ANGLE;
+    const sway =
+      this.cycleTick(view.tick, STRAFE_PERIOD_TICKS) < STRAFE_PERIOD_TICKS / 2 ? STRAFE_ANGLE : -STRAFE_ANGLE;
     const around = Math.atan2(me.y - target.y, me.x - target.x) + sway;
     const radius = distance < STRAFE_NEAR ? STRAFE_RADIUS_NEAR : STRAFE_RADIUS_FAR;
-    return driveTo(me, target.x + Math.cos(around) * radius, target.y + Math.sin(around) * radius);
+    const circle = goalInZone(zone, {
+      x: target.x + Math.cos(around) * radius,
+      y: target.y + Math.sin(around) * radius,
+    });
+    return driveTo(me, circle.x, circle.y);
+  }
+
+  // Место тика в цикле смены стороны, сдвинутое номером бота: боты рядом не меняют сторону разом и не идут по кругу
+  // друг за другом впритык.
+  private cycleTick(tick: number, period: number): number {
+    return (tick + (this.phase * period) / REPLAN_TICKS) % period;
   }
 
   // Тик расписания с прошлого хода: бот, пропустивший ход, не теряет пересчёт. Ход на том же тике или первый в
@@ -712,9 +762,10 @@ export class CrowdBrain {
   // Путь пересчитывается по расписанию (свой тик у каждого бота), когда цель пути заметно сдвинулась или путь
   // кончился — но не чаще раза в MIN_REPLAN_GAP_TICKS: недостижимая цель не гоняет поиск каждый тик. Первый путь —
   // только по расписанию: на старте боя боты ищут его не все в одном тике. Поиск без разрешения откладывается до
-  // следующего хода.
-  private followPath(view: CrowdView, grid: Grid, goal: Point, paths: PathAllowance): Drive {
+  // следующего хода. Цель пути прижимается внутрь зоны.
+  private followPath(view: CrowdView, grid: Grid, wanted: Point, paths: PathAllowance): Drive {
     const { me, map } = view;
+    const goal = goalInZone(view.zone, wanted);
     const isDue = this.isPathPending || this.isReplanDue(view.tick);
     const isFirst = this.pathGoal === null;
     const isStale =

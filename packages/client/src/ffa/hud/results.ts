@@ -1,5 +1,5 @@
 import type { FfaResultRow, FfaResultsModel, FfaResultsTitle } from '../session.js';
-import { botMark, button, element, layer, placeText, setShown, setText } from './dom.js';
+import { botMark, button, element, layer, placeText, setShown, setText, SHOWN_CLASS } from './dom.js';
 import { Hint } from './hint.js';
 
 const TITLES: Readonly<Record<FfaResultsTitle, string>> = {
@@ -12,6 +12,8 @@ const TITLES: Readonly<Record<FfaResultsTitle, string>> = {
 const TITLE_KINDS = Object.keys(TITLES);
 const COLUMNS = ['#', 'Танкист', 'Подбил', 'Погиб', 'Польза'];
 const EFFICIENCY_HINT = 'Сколько урона раздал на каждый полученный. Больше единицы — ты в плюсе.';
+const SURVIVED_BADGE = 'ВЫЖИЛ В ФИНАЛЕ';
+const SURVIVED_NOTE = 'До последней секунды на ходу — респект, танкист!';
 const GAP_TEXT = '···';
 const DECIMAL_COMMA = ',';
 
@@ -75,12 +77,14 @@ function gapRow(): HTMLTableRowElement {
   return node;
 }
 
-// Итоги матча: заголовок по месту, своё место, отсчёт до следующего матча, таблица лучших и своя строка с соседями.
+// Итоги матча: заголовок по месту, своё место, «выжил в финале», отсчёт до следующего матча, таблица лучших и своя
+// строка с соседями.
 export class ResultsView {
   readonly element: HTMLDivElement;
   private readonly card: HTMLDivElement;
   private readonly title: HTMLHeadingElement;
   private readonly place: HTMLParagraphElement;
+  private readonly survived: HTMLDivElement;
   private readonly next: HTMLParagraphElement;
   private readonly body: HTMLTableSectionElement;
   private readonly hint = new Hint(EFFICIENCY_HINT);
@@ -92,10 +96,12 @@ export class ResultsView {
     const side = element('div', 'ffa-results-side');
     this.title = element('h2', 'ffa-results-title');
     this.place = element('p', 'ffa-results-place');
+    this.survived = element('div', 'ffa-results-survived');
+    this.survived.hidden = true;
     this.next = element('p', 'ffa-results-next');
     const buttons = element('div', 'ffa-buttons');
     buttons.append(button('Выйти', false, leave));
-    side.append(this.title, this.place, this.next, buttons);
+    side.append(this.title, this.place, this.survived, this.next, buttons);
     const table = element('table', 'ffa-results-table');
     const head = element('thead', '');
     const headRow = element('tr', '');
@@ -114,10 +120,18 @@ export class ResultsView {
   }
 
   update(model: FfaResultsModel | null): void {
+    const isAppearing = model !== null && !this.element.classList.contains(SHOWN_CLASS);
     setShown(this.element, model !== null);
     if (model === null) {
       this.hint.close();
       return;
+    }
+    // Новые узлы плашки «выжил» на каждом показе итогов: её всплытие играется заново.
+    if (isAppearing) {
+      this.survived.replaceChildren(
+        element('p', 'ffa-results-survived-badge', SURVIVED_BADGE),
+        element('p', 'ffa-results-survived-note', SURVIVED_NOTE),
+      );
     }
     for (const kind of TITLE_KINDS) {
       this.card.classList.toggle(`is-${kind}`, kind === model.title);
@@ -127,6 +141,7 @@ export class ResultsView {
     if (model.place !== null) {
       setText(this.place, placeText(model.place, model.total));
     }
+    this.survived.hidden = !model.hasSurvived;
     setText(
       this.next,
       model.nextMatchInS === null ? 'Ждём, пока соберёмся' : `Следующий матч через ${String(model.nextMatchInS)}`,

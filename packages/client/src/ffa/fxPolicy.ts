@@ -56,17 +56,23 @@ function announcementFor(event: FfaSnapshotEvent, myId: number | null): FxAnnoun
   return null;
 }
 
-// Эффекты и звук боя толпы: частицы — у событий возле окна камеры, объявления — свои и общие, звук — только в окне
-// камеры с панорамой по экрану. Тряски и вспышки экрана нет: в толпе они только мешают.
+// Эффекты и звук боя толпы: частицы — у событий возле окна камеры, объявления — свои и общие, свой фраг — над
+// убитым, звук — только в окне камеры с панорамой по экрану. Тряски и вспышки экрана нет: в толпе они только мешают.
 export class FfaFxPolicy {
-  // null — событию нечего показать: далеко за окном и без объявления.
-  optionsFor(event: FfaSnapshotEvent, myId: number | null, camera: Camera): FxEventOptions | null {
+  // ownKillCount — номер своего убийства для гибели от своего выстрела, иначе null. Результат null — событию нечего
+  // показать: далеко за окном и без объявления.
+  optionsFor(
+    event: FfaSnapshotEvent,
+    myId: number | null,
+    camera: Camera,
+    ownKillCount: number | null,
+  ): FxEventOptions | null {
     const announcement = announcementFor(event, myId);
     const hasParticles = isInView(camera, event, PARTICLE_MARGIN);
     if (!hasParticles && announcement === null) {
       return null;
     }
-    return { shake: 0, flash: 0, announcement, hasParticles };
+    return { shake: 0, flash: 0, announcement, hasParticles, ownKillCount };
   }
 
   soundFor(event: FfaSnapshotEvent, camera: Camera, tick: number): FfaSound | null {

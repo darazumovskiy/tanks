@@ -27,18 +27,19 @@ function kill(victim: number, killer: number, at = INSIDE): FfaSnapshotEvent {
 describe('эффекты толпы: частицы, тряска, вспышка', () => {
   it('события далеко за окном — без частиц и без вызова эффектов', () => {
     const policy = new FfaFxPolicy();
-    expect(policy.optionsFor(event('shot', OTHER, FAR), ME, CAMERA)).toBeNull();
-    expect(policy.optionsFor(event('impact', OTHER, FAR), ME, CAMERA)).toBeNull();
-    expect(policy.optionsFor(kill(THIRD, OTHER, FAR), ME, CAMERA)).toBeNull();
+    expect(policy.optionsFor(event('shot', OTHER, FAR), ME, CAMERA, null)).toBeNull();
+    expect(policy.optionsFor(event('impact', OTHER, FAR), ME, CAMERA, null)).toBeNull();
+    expect(policy.optionsFor(kill(THIRD, OTHER, FAR), ME, CAMERA, null)).toBeNull();
   });
 
   it('у окна в пределах 200 — частицы есть, тряски нет', () => {
     const policy = new FfaFxPolicy();
-    expect(policy.optionsFor(event('impact', OTHER, NEAR_OUTSIDE), ME, CAMERA)).toEqual({
+    expect(policy.optionsFor(event('impact', OTHER, NEAR_OUTSIDE), ME, CAMERA, null)).toEqual({
       shake: 0,
       flash: 0,
       announcement: null,
       hasParticles: true,
+      ownKillCount: null,
     });
   });
 
@@ -53,7 +54,7 @@ describe('эффекты толпы: частицы, тряска, вспышк�
       event('shot', OTHER),
     ];
     for (const fired of events) {
-      expect(policy.optionsFor(fired, ME, CAMERA)).toMatchObject({ shake: 0, flash: 0 });
+      expect(policy.optionsFor(fired, ME, CAMERA, null)).toMatchObject({ shake: 0, flash: 0 });
     }
   });
 });
@@ -61,42 +62,52 @@ describe('эффекты толпы: частицы, тряска, вспышк�
 describe('объявления толпы', () => {
   it('P1 «ПЕРВАЯ КРОВЬ» нет: ни первое убийство матча своим танком, ни по танку за окном', () => {
     const policy = new FfaFxPolicy();
-    expect(policy.optionsFor(kill(OTHER, ME), ME, CAMERA)?.announcement).toBeNull();
-    expect(policy.optionsFor(kill(THIRD, ME, FAR), ME, CAMERA)).toBeNull();
+    expect(policy.optionsFor(kill(OTHER, ME), ME, CAMERA, null)?.announcement).toBeNull();
+    expect(policy.optionsFor(kill(THIRD, ME, FAR), ME, CAMERA, null)).toBeNull();
   });
 
   it('P1 своя смерть от своего рикошета — «САМ СЕБЯ!» в 1,5 раза меньше и на 30 % короче; чужой — без надписи', () => {
     const policy = new FfaFxPolicy();
     const selfFlags = EventFlag.Self | EventFlag.Ricochet;
-    expect(policy.optionsFor(event('death', OTHER, INSIDE, { by: OTHER, flags: selfFlags }), ME, CAMERA)).toMatchObject(
-      { announcement: null },
-    );
-    const own = policy.optionsFor(event('death', ME, INSIDE, { by: ME, flags: selfFlags }), ME, CAMERA);
+    expect(
+      policy.optionsFor(event('death', OTHER, INSIDE, { by: OTHER, flags: selfFlags }), ME, CAMERA, null),
+    ).toMatchObject({ announcement: null });
+    const own = policy.optionsFor(event('death', ME, INSIDE, { by: ME, flags: selfFlags }), ME, CAMERA, null);
     expect(own?.announcement).toEqual({ kind: 'selfHit', size: 1 / 1.5, duration: 0.7 });
-    expect(policy.optionsFor(event('death', THIRD, INSIDE, { flags: EventFlag.Zone }), ME, CAMERA)?.announcement).toBe(
-      null,
-    );
+    expect(
+      policy.optionsFor(event('death', THIRD, INSIDE, { flags: EventFlag.Zone }), ME, CAMERA, null)?.announcement,
+    ).toBe(null);
   });
 
   it('свой рикошет в себя далеко за окном — объявление без частиц', () => {
     const policy = new FfaFxPolicy();
     const selfFlags = EventFlag.Self | EventFlag.Ricochet;
-    expect(policy.optionsFor(event('death', ME, FAR, { by: ME, flags: selfFlags }), ME, CAMERA)).toEqual({
+    expect(policy.optionsFor(event('death', ME, FAR, { by: ME, flags: selfFlags }), ME, CAMERA, null)).toEqual({
       shake: 0,
       flash: 0,
       announcement: { kind: 'selfHit', size: 1 / 1.5, duration: 0.7 },
       hasParticles: false,
+      ownKillCount: null,
     });
   });
 
   it('«ЗОНА СУЖАЕТСЯ» — всем, в том числе без своего танка, базового размера и длительности', () => {
     const policy = new FfaFxPolicy();
-    expect(policy.optionsFor(event('zoneStart', null, { x: 0, y: 0 }), null, CAMERA)?.announcement).toEqual({
+    expect(policy.optionsFor(event('zoneStart', null, { x: 0, y: 0 }), null, CAMERA, null)?.announcement).toEqual({
       kind: 'zoneStart',
       size: 1,
       duration: 1,
     });
-    expect(policy.optionsFor(kill(OTHER, THIRD), null, CAMERA)?.announcement).toBeNull();
+    expect(policy.optionsFor(kill(OTHER, THIRD), null, CAMERA, null)?.announcement).toBeNull();
+  });
+});
+
+describe('свой фраг', () => {
+  it('F2 номер своего убийства уходит в эффекты; своё убийство за окном — ничего; без номера — пусто', () => {
+    const policy = new FfaFxPolicy();
+    expect(policy.optionsFor(kill(OTHER, ME), ME, CAMERA, 3)).toMatchObject({ ownKillCount: 3, hasParticles: true });
+    expect(policy.optionsFor(kill(OTHER, ME, FAR), ME, CAMERA, 3)).toBeNull();
+    expect(policy.optionsFor(kill(OTHER, THIRD), ME, CAMERA, null)?.ownKillCount).toBeNull();
   });
 });
 

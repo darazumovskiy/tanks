@@ -256,6 +256,29 @@ function fighting(own: FfaSelf, tick: number): FfaSession {
   return session;
 }
 
+// Итоги матча; last — свой последний снимок финала, null — снимков не было.
+function results(last: FfaSelf | null): FfaSession {
+  const session = joined(50, lobbyRoster(RESULTS_PLAYERS));
+  setState(session, FfaPhase.Fight, 600, RESULTS_PLAYERS, 0);
+  startMatch(session);
+  if (last !== null) {
+    snapshot(session, MATCH_SECONDS * TICK_RATE, last, [], NOW - 3000);
+  }
+  const others = lobbyRoster(RESULTS_PLAYERS)
+    .map((player) => player.id)
+    .filter((id) => id !== STAND_ME);
+  const order = [...others.slice(0, RESULTS_OWN_INDEX), STAND_ME, ...others.slice(RESULTS_OWN_INDEX)];
+  score(
+    session,
+    order.map((id, index): [number, number, number, number, number] => {
+      const kills = Math.max(0, 12 - index);
+      return [id, kills, 1 + (index % 4), 120 + kills * 60, 90 + (index % 5) * 70];
+    }),
+  );
+  setState(session, FfaPhase.Results, RESULTS_TICKS, PLAYERS_AFTER_RESULTS, NOW - 3000);
+  return session;
+}
+
 function withOwn(change: Partial<StandTank>): readonly StandTank[] {
   return CROWD.map((tank) => (tank.id === STAND_ME ? { ...tank, ...change } : tank));
 }
@@ -440,24 +463,15 @@ export const FFA_HUD_FRAMES: readonly FfaHudFrame[] = [
     screens: BOTH,
     scene: CROWD_FRAME,
     hasFieldControls: false,
-    build: () => {
-      const session = joined(50, lobbyRoster(RESULTS_PLAYERS));
-      setState(session, FfaPhase.Fight, 600, RESULTS_PLAYERS, 0);
-      startMatch(session);
-      const others = lobbyRoster(RESULTS_PLAYERS)
-        .map((player) => player.id)
-        .filter((id) => id !== STAND_ME);
-      const order = [...others.slice(0, RESULTS_OWN_INDEX), STAND_ME, ...others.slice(RESULTS_OWN_INDEX)];
-      score(
-        session,
-        order.map((id, index): [number, number, number, number, number] => {
-          const kills = Math.max(0, 12 - index);
-          return [id, kills, 1 + (index % 4), 120 + kills * 60, 90 + (index % 5) * 70];
-        }),
-      );
-      setState(session, FfaPhase.Results, RESULTS_TICKS, PLAYERS_AFTER_RESULTS, NOW - 3000);
-      return { session, now: NOW };
-    },
+    build: () => ({ session: results(null), now: NOW }),
+  },
+  {
+    id: 'hud-results-survived',
+    title: 'итоги: дожил до конца финала — плашка «выжил» и поздравление',
+    screens: PHONE,
+    scene: CROWD_FRAME,
+    hasFieldControls: false,
+    build: () => ({ session: results(self('alive')), now: NOW }),
   },
   ...(['idle', 'replaced', 'update', 'error'] as const).map((kind): FfaHudFrame => ({
     id: `hud-fatal-${kind}`,
