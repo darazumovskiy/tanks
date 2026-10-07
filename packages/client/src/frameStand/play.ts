@@ -1,4 +1,4 @@
-import { DEFAULT_RULES, DEFAULT_STATS, TICK_RATE } from '@tanks/shared/engine';
+import { DEFAULT_RULES, DEFAULT_STATS, DUEL_COUNTDOWN_TICKS, TICK_RATE } from '@tanks/shared/engine';
 import { MessageType, type RoundStartMessage } from '@tanks/shared/protocol';
 import { countdownSeconds, type DuelPresenter, type DuelReadout } from '../duelPresenter.js';
 import { cropAround, type Target } from '../fxLab/frame.js';
@@ -22,8 +22,6 @@ const DRAWN_FRAMES = 40;
 const FLUSH_S = 10;
 // Время эффектов в момент снимка: пульс аптечек, бег штрихов зоны и линии — всегда в одной фазе.
 const EFFECTS_TIME_S = 12.5;
-// Старт раунда, который присылает сервер: отсчёт — три секунды.
-const COUNTDOWN_TICKS = 3 * TICK_RATE;
 const GAME_ID = 'K7QX';
 // Таймкод игры: каждый прошлый раунд засчитан этой длительностью, плюс время текущего.
 const PAST_ROUND_S = 95;
@@ -56,7 +54,7 @@ function roundStartOf(frame: DuelFrame): RoundStartMessage {
     gameId: GAME_ID,
     roundIndex: frame.roundIndex,
     mapIndex: frame.mapIndex,
-    countdownTicks: COUNTDOWN_TICKS,
+    countdownTicks: DUEL_COUNTDOWN_TICKS,
     score: frame.score,
     rules: { ...DEFAULT_RULES },
     tanks: [

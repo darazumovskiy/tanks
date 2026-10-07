@@ -1,5 +1,5 @@
-# Vector на игровой машине: читает метрики игры и машины, журнал systemd, файлы журналов игр и события
-# клиента, отправляет в Grafana Cloud. Доступы — переменные из /etc/default/vector (vector-secrets.sh).
+# Vector на игровой машине: читает метрики игры и машины, журнал systemd, файлы журналов игр и визитов,
+# события клиента, отправляет в Grafana Cloud. Доступы — переменные из /etc/default/vector (vector-secrets.sh).
 data_dir: /var/lib/vector
 
 sources:
@@ -27,6 +27,11 @@ sources:
   game_files:
     type: file
     include: ['/opt/tanks-logs/*.log']
+    ignore_older_secs: 3600
+
+  visit_files:
+    type: file
+    include: ['/opt/tanks-logs/visits/*.log']
     ignore_older_secs: 3600
 
   # За Caddy: POST /telemetry с телом из JSON-строк через перевод строки.
@@ -84,6 +89,17 @@ transforms:
       }
       .message = encode_json(event)
 
+  # Визит — JSON после `HH:MM:SS.mmm V `; страна, город и устройство фильтруются в запросе: | json | geo_country="RU".
+  visit_lines:
+    type: remap
+    inputs: [visit_files]
+    drop_on_abort: true
+    source: |
+      parsed, err = parse_regex(string!(.message), r'^\S+ V (?P<json>\{.*\})$')
+      if err != null { abort }
+      .message = parsed.json
+      .labels = { "app": "tanks", "stream": "visit" }
+
 sinks:
   grafana_metrics:
     type: prometheus_remote_write
@@ -103,7 +119,7 @@ sinks:
 
   grafana_logs:
     type: loki
-    inputs: [journal_lines, game_events, client_lines]
+    inputs: [journal_lines, game_events, client_lines, visit_lines]
     endpoint: '${GRAFANA_CLOUD_LOKI_URL}'
     auth:
       strategy: basic

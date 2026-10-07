@@ -128,6 +128,33 @@ for (const screen of SCREENS) {
   });
 }
 
+for (const screen of SCREENS) {
+  test(`плашка о сборе данных внизу, не закрывает «В общий бой», крестик убирает её насовсем: ${screen.id}`, async ({
+    browser,
+  }) => {
+    const width = screen.options.viewport?.width ?? 0;
+    const height = screen.options.viewport?.height ?? 0;
+    const page = await openHome(browser, screen.options, FULL_STATS);
+    const note = page.locator('#privacy-note');
+    await expect(note).toBeVisible();
+    await expect(note.locator('a')).toHaveAttribute('href', 'https://db-ip.com');
+    const box = await note.boundingBox();
+    const start = await page.locator('#ffa-start').boundingBox();
+    expect(box).not.toBeNull();
+    expect(start).not.toBeNull();
+    expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(width);
+    expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(height);
+    expect(box?.y ?? 0).toBeGreaterThanOrEqual((start?.y ?? 0) + (start?.height ?? 0));
+    await page.locator('#privacy-note-close').click();
+    await expect(note).toBeHidden();
+    await page.reload();
+    await expect(page.locator('#home')).toBeVisible();
+    await expect(note).toBeHidden();
+    await page.context().close();
+  });
+}
+
 test('главная вернулась на экран после выкладки — перезагружается, ник на месте', async ({ browser }) => {
   const page = await openHome(browser, {}, FULL_STATS);
   await page.locator('#nickname').fill('Свёрнутый');

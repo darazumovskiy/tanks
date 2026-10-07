@@ -209,3 +209,79 @@ describe('сглаживание сдвига на 1280 × 720', () => {
     expect(shiftOf(camera.update(FOCUS, RIGHT_EDGE, SCREEN, FRAME_MS), FOCUS).x).toBeCloseTo(240, 9);
   });
 });
+
+describe('выход сдвига из центра', () => {
+  const FOCUS = { x: 1000, y: 1000 };
+  const RIGHT_EDGE: FfaAim = { kind: 'mouse', cursor: { x: 1, y: 0.5 } };
+  const CORNER: FfaAim = { kind: 'mouse', cursor: { x: 0.95, y: 0.05 } };
+  const EASE_IN_MS = 1500;
+
+  // Сдвиги по кадрам после выхода из центра: курсор у правого края, сдвиг до выхода — полный.
+  function easedShifts(aim: FfaAim, screen: ScreenSize, frames: number): Point[] {
+    const camera = new FfaCamera();
+    camera.update(FOCUS, aim, screen, FRAME_MS);
+    camera.easeIn();
+    const shifts: Point[] = [];
+    for (let frame = 0; frame < frames; frame++) {
+      const framing = camera.update(FOCUS, aim, screen, FRAME_MS);
+      expectFrameInvariants(framing, FOCUS, screen);
+      shifts.push(shiftOf(framing, FOCUS));
+    }
+    return shifts;
+  }
+
+  it('курсор у правого края: с нуля, без рывков и откатов, на середине — от трети до двух третей, потом полный', () => {
+    const shifts = easedShifts(RIGHT_EDGE, { width: 1280, height: 720 }, 200).map((shift) => shift.x);
+    expect(shifts[0]).toBeLessThan(1);
+    let fastest = 0;
+    for (let frame = 1; frame < shifts.length; frame++) {
+      const step = (shifts[frame] ?? 0) - (shifts[frame - 1] ?? 0);
+      expect(step).toBeGreaterThanOrEqual(-EPSILON);
+      fastest = Math.max(fastest, (step * 1000) / FRAME_MS);
+    }
+    expect(fastest).toBeLessThanOrEqual(MAX_SPEED + EPSILON);
+    const middle = shifts[Math.round(EASE_IN_MS / 2 / FRAME_MS) - 1] ?? 0;
+    expect(middle).toBeGreaterThan(240 / 3);
+    expect(middle).toBeLessThan((240 * 2) / 3);
+    expect(shifts[shifts.length - 1]).toBeCloseTo(240, 1);
+  });
+
+  it.each(SCREENS)(
+    'экран $width × $height, курсор в углу и башня: свойства кадра держатся, сдвиг доходит до полного',
+    (screen) => {
+      for (const aim of [CORNER, { kind: 'turret', angle: -2.3 } as const]) {
+        const settledShift = shiftOf(new FfaCamera().update(FOCUS, aim, screen, FRAME_MS), FOCUS);
+        const shifts = easedShifts(aim, screen, 200);
+        expect(Math.hypot(shifts[0]?.x ?? 0, shifts[0]?.y ?? 0)).toBeLessThan(1);
+        const last = shifts[shifts.length - 1] ?? { x: 0, y: 0 };
+        expect(last.x).toBeCloseTo(settledShift.x, 1);
+        expect(last.y).toBeCloseTo(settledShift.y, 1);
+      }
+    },
+  );
+
+  it('перестановка во время выхода — сразу полный сдвиг', () => {
+    const screen = { width: 1280, height: 720 };
+    const camera = new FfaCamera();
+    camera.easeIn();
+    for (let frame = 0; frame < 45; frame++) {
+      camera.update(FOCUS, RIGHT_EDGE, screen, FRAME_MS);
+    }
+    camera.snap();
+    expect(shiftOf(camera.update(FOCUS, RIGHT_EDGE, screen, FRAME_MS), FOCUS).x).toBeCloseTo(240, 9);
+  });
+
+  it('курсор перед выходом у левого края, после — у правого: сдвиг растёт вправо с нуля, без захода влево', () => {
+    const screen = { width: 1280, height: 720 };
+    const camera = new FfaCamera();
+    camera.update(FOCUS, { kind: 'mouse', cursor: { x: 0, y: 0.5 } }, screen, FRAME_MS);
+    camera.easeIn();
+    let previous = 0;
+    for (let frame = 0; frame < 200; frame++) {
+      const shiftX = shiftOf(camera.update(FOCUS, RIGHT_EDGE, screen, FRAME_MS), FOCUS).x;
+      expect(shiftX).toBeGreaterThanOrEqual(previous - EPSILON);
+      previous = shiftX;
+    }
+    expect(previous).toBeCloseTo(240, 1);
+  });
+});

@@ -71,7 +71,7 @@ const COUNTDOWN_NUMBER_SHRINK = 0.3;
 const COUNTDOWN_NUMBER_FADE = 0.7;
 const COUNTDOWN_GO_FONT_SIZE = 80;
 
-// Что панели дуэли знают о раунде.
+// Что панели дуэли знают о раунде. Пустой gameId — боя на сервере нет: строки «ИГРА · таймкод» нет.
 export interface DuelHudInfo {
   names: [string, string];
   score: [number, number];
@@ -125,9 +125,11 @@ export class DuelHud {
     ctx.font = `600 ${String(ROUND_FONT_SIZE * u)}px ${BODY_FONT}`;
     ctx.fillStyle = ROUND_COLOR;
     ctx.fillText(`РАУНД ${String(hud.roundIndex + 1)} · ${view.round.map.name.toUpperCase()}`, centerX, ROUND_Y * u);
-    ctx.font = `600 ${String(GAME_ID_FONT_SIZE * u)}px ui-monospace, monospace`;
-    ctx.fillStyle = GAME_ID_COLOR;
-    ctx.fillText(`ИГРА ${hud.gameId} · ${gameTimecode(hud.gameTick)}`, centerX, GAME_ID_Y * u);
+    if (hud.gameId !== '') {
+      ctx.font = `600 ${String(GAME_ID_FONT_SIZE * u)}px ui-monospace, monospace`;
+      ctx.fillStyle = GAME_ID_COLOR;
+      ctx.fillText(`ИГРА ${hud.gameId} · ${gameTimecode(hud.gameTick)}`, centerX, GAME_ID_Y * u);
+    }
     ctx.restore();
   }
 

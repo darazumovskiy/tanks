@@ -4,7 +4,7 @@ import type { Point } from './maps.js';
 
 const BULLET_SPEED = 550;
 
-// Формула упреждения Охотника (`packages/server/src/bots/hunter.ts`) при полном учёте скорости цели.
+// Формула упреждения Охотника (`packages/bots/src/hunter.ts`) при полном учёте скорости цели.
 function hunterLead(me: Point, enemy: Point & { vx: number; vy: number }, bulletSpeed: number): Point {
   let x = enemy.x;
   let y = enemy.y;

@@ -101,7 +101,7 @@ interface ParsedLine {
   body: string;
 }
 
-function parseLine(raw: string): ParsedLine | null {
+export function parseLine(raw: string): ParsedLine | null {
   const match = LINE_PATTERN.exec(raw);
   if (match === null) {
     return null;

@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@tanks/analysis": "*",
+    "@tanks/bots": "*",
     "@tanks/server": "*",
     "@tanks/shared": "*"
   }

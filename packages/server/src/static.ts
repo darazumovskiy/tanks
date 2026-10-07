@@ -17,12 +17,13 @@ const MIME: Readonly<Record<string, string>> = {
 };
 
 // Общий бой: `/ffa` — игра на 30 мест, `/ffa/<размер>` и приглашение `/ffa/<размер>/<номер игры>` — только размеры
-// из списка игр.
+// из списка игр. `/watch` — бой ботов, считается в браузере.
 const SPA_ROUTES = [
   /^\/$/,
   /^\/d\/[a-z0-9]+$/,
   /^\/ffa$/,
   new RegExp(`^/ffa/(${FFA_SIZES.join('|')})(/${FFA_PATH_GAME_ID})?$`),
+  /^\/watch$/,
 ];
 
 export const APK_ROUTE = '/app/tanks.apk';

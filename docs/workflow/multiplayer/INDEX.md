@@ -12,6 +12,7 @@
 | Что решили | [decisions.md](decisions.md) |
 | Что агент решил сам и ждёт подтверждения | [knowledge/pending-decisions.md](knowledge/pending-decisions.md) |
 | Замечания после игры: причины и требования к правкам | [knowledge/playtest-findings.md](knowledge/playtest-findings.md) |
+| Бой ботов `/watch`: два бойца лестницы в браузере без сервера, скорость, пауза, итог; план тестирования | [tech/impl/frontend/bot-watch.md](../../tech/impl/frontend/bot-watch.md) |
 | Почему игра RWV3 лагала: приступ потерь пакетов на пути от Mac, рой на том же Mac его усиливает; сервер и журнал каждого тика ни при чём | [knowledge/incident-rwv3.md](knowledge/incident-rwv3.md) |
 | Почему свёрнутый айфон заводил новую дуэль каждые 20 секунд и как это повторено тестом | [knowledge/incident-yct4.md](knowledge/incident-yct4.md) |
 | Правила боя: вход, матч, счёт, возрождение, зона и финал, бездействие, что видит игрок, карты, боты | [concept/ffa.md](../../concept/ffa.md) |
@@ -41,7 +42,7 @@
 | [ffa.ts](../../../packages/shared/src/engine/ffa.ts), [spawn.ts](../../../packages/shared/src/engine/spawn.ts), [ffaMaps.ts](../../../packages/shared/src/engine/ffaMaps.ts), [random.ts](../../../packages/shared/src/engine/random.ts) | Матч, выбор точки возрождения, расстановка на старте, карты 10/30/50, генератор с сидом |
 | [messages.ts](../../../packages/shared/src/protocol/messages.ts), [codec.ts](../../../packages/shared/src/protocol/codec.ts), [ffaRoom.ts](../../../packages/shared/src/protocol/ffaRoom.ts), [ffaEvents.ts](../../../packages/shared/src/protocol/ffaEvents.ts), [bullets.ts](../../../packages/shared/src/protocol/bullets.ts) | Сообщения и кодек v6, коды `ffa10/30/50`, события снимка, снаряды: разница на сервере и зеркало у клиента |
 | [ffaGame.ts](../../../packages/server/src/ffaGame.ts), [roomManager.ts](../../../packages/server/src/roomManager.ts), [inputs.ts](../../../packages/server/src/inputs.ts), [app.ts](../../../packages/server/src/app.ts) | Общая игра, подбор, очередь команд, маршрут кодов |
-| [server/src/bots/](../../../packages/server/src/bots/) | Лестница дуэли — заморожена, отпечаток в [ladder.test.ts](../../../packages/server/test/ladder.test.ts) |
+| [bots/src/](../../../packages/bots/src/), [server/src/bots/](../../../packages/server/src/bots/) | Лестница дуэли: мозги — общий пакет, связь с комнатой — сервер; заморожена, отпечаток в [ladder.test.ts](../../../packages/server/test/ladder.test.ts) |
 | [server/src/crowd/](../../../packages/server/src/crowd/) | Боты толпы: профили и пирамида, мозг, выбор цели, вид, бот без транспорта |
 | [server/src/swarm/](../../../packages/server/src/swarm/) | Сетевой рой: [swarm.ts](../../../packages/server/src/swarm/swarm.ts), точка входа [main.ts](../../../packages/server/src/swarm/main.ts) (`npm run swarm`) |
 | [crowdBrain.test.ts](../../../packages/server/test/crowdBrain.test.ts), [crowdStand.test.ts](../../../packages/server/test/crowdStand.test.ts), [swarm.test.ts](../../../packages/server/test/swarm.test.ts) | Мозг на крафтовых видах, стенд толпы на 30 ботов, рой через сокет |

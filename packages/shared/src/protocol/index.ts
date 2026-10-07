@@ -5,5 +5,6 @@ export { gameTimecode } from './timecode.js';
 export * from './botRoom.js';
 export * from './ffaRoom.js';
 export { toFfaSnapshotEvent } from './ffaEvents.js';
+export { duelSide, toSnapshotEvent } from './duelEvents.js';
 export * from './bullets.js';
 export * from './ffaJournal.js';

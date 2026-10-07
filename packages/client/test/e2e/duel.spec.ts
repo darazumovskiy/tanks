@@ -1,7 +1,7 @@
 import { expect, test, type Browser } from '@playwright/test';
 import { analyzeLogs } from '@tanks/analysis';
 import { botRoomCode, type BotLevel } from '@tanks/shared/protocol';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Player, sleep, until, type DebugState } from './player.js';
@@ -30,6 +30,7 @@ const NO_FIRE_CHECK_MS = 2_000;
 // Зажатая кнопка огня дольше перезарядки по умолчанию даёт не меньше двух выстрелов.
 const HOLD_FIRE_MS = 1_500;
 const SHOT_LINE_MARK = 'ev kind=shot side=0 ';
+const VISIT_SOURCE = 'e2e';
 // Касание правой половины экрана телефона 844×390 и протяжка вправо на весь радиус стика (40 px) — башня к 0,
 // вдоль оси появления.
 const PHONE_AIM_TOUCH = { x: 650, y: 200 };
@@ -616,6 +617,32 @@ test('анализатор журналов разбирает партию ст
   expect(summary?.shooting_human.shots).toBe(shotLines);
   expect(shotLines).toBeGreaterThanOrEqual(2);
   expect(existsSync(result.reportPath)).toBe(true);
+});
+
+test('визиты: главная и бой с ботом — две записи одного устройства, бой и метка склеены анализатором', async ({
+  browser,
+}) => {
+  const player = await Player.openAgainstBot(browser, server.baseUrl, 'Гость', 1, `?from=${VISIT_SOURCE}`);
+  await player.waitForBattle();
+  await player.close();
+  const outDir = mkdtempSync(join(tmpdir(), 'tanks-e2e-visitors-'));
+  const visitor = await until(
+    () => {
+      const { visitors } = analyzeLogs(server.logDir, { outDir, only: [] });
+      const found = visitors.find((entry) => entry.source === VISIT_SOURCE && entry.visits === 2);
+      return Promise.resolve(found?.battles_duel === 1 ? found : null);
+    },
+    LOG_TIMEOUT_MS,
+    'нет двух визитов устройства с меткой и боя с его номером',
+  );
+  expect(visitor.nicks).toEqual(['Гость']);
+  expect(visitor.ips).toEqual(['127.0.0.1']);
+  expect(visitor.device).toMatch(/Chrome/);
+  const pages = readdirSync(join(server.logDir, 'visits'))
+    .flatMap((file) => readFileSync(join(server.logDir, 'visits', file), 'utf8').split('\n'))
+    .filter((line) => line.includes(visitor.dev))
+    .map((line) => (JSON.parse(line.slice(line.indexOf('{'))) as { page: string }).page);
+  expect(pages).toEqual(['/', expect.stringMatching(/^\/d\/bot01/)]);
 });
 
 test('сервер отдаёт подтверждение домена для Android App Links', async ({ request }) => {

@@ -17,6 +17,7 @@ import {
   type SnapshotMessage,
 } from '@tanks/shared/protocol';
 import type { AimLine, AimLineState } from './aimLine.js';
+import { CountdownBeeper } from './countdownBeeper.js';
 import type { AimLineStyleId } from './render/aimLineStyles.js';
 import { DiagLog } from './diag.js';
 import { DuelPresenter, duelNames } from './duelPresenter.js';
@@ -28,7 +29,7 @@ import { Prediction, type InterpolatedTank, type PictureView } from './predictio
 import { hideRoundEnd, showRoundEnd, type RoundResult } from './roundEnd.js';
 import type { Camera } from './render/camera.js';
 import type { Effects } from './render/effects.js';
-import { createDuelEffects, Renderer, type Overlay } from './render/renderer.js';
+import { createDuelEffects, Renderer } from './render/renderer.js';
 import type { Settings } from './settings.js';
 import { Sfx } from './sfx.js';
 import { SpareInput } from './spareInput.js';
@@ -45,6 +46,7 @@ export interface GameOptions {
   onAutoFireChange: (isOn: boolean) => void;
   settings: Readonly<Settings>;
   isTouchDevice: boolean;
+  deviceId: string;
   telemetry: Telemetry;
 }
 
@@ -107,7 +109,7 @@ export class Game {
   private side: Side | null = null;
   private roundStart: RoundStartMessage | null = null;
   private roundStartedAt = 0;
-  private countdownBeeped = 0;
+  private readonly countdownBeeper: CountdownBeeper;
   private lastInputSeq = 0;
   private accumulator = 0;
   private lastFrame: number;
@@ -154,9 +156,10 @@ export class Game {
     this.worstFrameWindowStart = startedAt;
     this.summaryAt = startedAt;
     this.sfx = this.deps.createSfx();
+    this.countdownBeeper = new CountdownBeeper(this.sfx);
     this.diag = this.deps.createDiag(options.roomCode);
     this.diag.write(
-      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'}`,
+      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'} dev=${options.deviceId}`,
     );
     const effects = this.deps.createEffects(() => this.names());
     this.effects = effects;
@@ -204,7 +207,7 @@ export class Game {
           this.options.telemetry.event('net', 'roundstart', { idx: message.roundIndex, map: message.mapIndex });
           this.roundStart = message;
           this.roundStartedAt = this.deps.now();
-          this.countdownBeeped = 0;
+          this.countdownBeeper.reset();
           hideRoundEnd(this.options.roundEnd);
           // Забытый авто-огонь на старте раунда расстреливает стену перед собой и ловит рикошеты.
           this.setAutoFire(false);
@@ -579,22 +582,8 @@ export class Game {
       },
     });
     this.aimLine = drawn.aimLine;
-    this.beepCountdown(drawn.overlay);
+    this.countdownBeeper.update(drawn.overlay);
     this.logCamera(this.renderer.currentCamera, isSummaryDue);
-  }
-
-  private beepCountdown(overlay: Overlay): void {
-    if (overlay === null) {
-      return;
-    }
-    const secondsLeft = Math.ceil(overlay.totalS - overlay.elapsedS);
-    if (secondsLeft >= 1 && secondsLeft !== this.countdownBeeped) {
-      this.countdownBeeped = secondsLeft;
-      this.sfx.play('beep');
-    } else if (secondsLeft < 1 && this.countdownBeeped !== -1) {
-      this.countdownBeeped = -1;
-      this.sfx.play('go');
-    }
   }
 
   private showWaiting(): void {

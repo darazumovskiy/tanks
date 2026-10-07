@@ -8,7 +8,7 @@
 
 ```
 игра (node)  --счётчики в памяти-->  GET /metrics  <--раз в 15 с--  Vector  --> Grafana Cloud Metrics
-игра (node)  --appendFile-->  /opt/tanks-logs/*.log, journald  <--tail--  Vector  --> Grafana Cloud Logs
+игра (node)  --appendFile-->  /opt/tanks-logs/*.log, /opt/tanks-logs/visits/*.log, journald  <--tail--  Vector  --> Grafana Cloud Logs
 браузер  --sendBeacon-->  Caddy /telemetry  -->  Vector :8094  --> Grafana Cloud Logs
 ```
 
@@ -57,7 +57,9 @@ Vector читает `journalctl` юнитов `tanks`, `caddy` и `vector` це�
 
 Всё клиентское (соединение, видимость страницы, секундная сводка, ошибки) идёт потоком `client` через `/telemetry` — с описанием клиента, которого в файле нет.
 
-Метки Loki: `app=tanks`, `stream=server|game|client`; у `server` — `unit`, у `game` — `game=<gameId или room-код>`, у `client` — `kind`, `game`, `side`, `platform`, `shell`.
+Визиты страниц ([visitors.md](../backend/visitors.md)) — потоком `visit` из `/opt/tanks-logs/visits/*.log`: тело строки — JSON визита без времени и источника; страна, город, провайдер и устройство фильтруются в запросе (`{stream="visit"} | json | geo_country="RU"`).
+
+Метки Loki: `app=tanks`, `stream=server|game|client|visit`; у `server` — `unit`, у `game` — `game=<gameId или room-код>`, у `client` — `kind`, `game`, `side`, `platform`, `shell`; у `visit` других меток нет.
 
 ## Измерения (фильтры)
 
@@ -90,7 +92,7 @@ Vector читает `journalctl` юнитов `tanks`, `caddy` и `vector` це�
 
 Стек Grafana Cloud — `graylichen2028` (регион `prod-eu-west-2`), Grafana `https://graylichen2028.grafana.net`, источники данных `grafanacloud-prom` и `grafanacloud-logs`.
 
-- `deploy/vector/vector.yaml` — источники (`prometheus_scrape` на `127.0.0.1:8080/metrics`, `host_metrics`, `journald` юнитов `tanks`, `caddy`, `vector`, `file` по `/opt/tanks-logs/*.log` не старше часа, `http_server` на `127.0.0.1:8094/telemetry`), фильтр строк журнала, метки Loki объектом `.labels` на каждый поток, приёмники `prometheus_remote_write` (проверка здоровья выключена: на GET приёмник отвечает 405) и `loki`, очереди на диске по 256 МБ с выбрасыванием нового при переполнении.
+- `deploy/vector/vector.yaml` — источники (`prometheus_scrape` на `127.0.0.1:8080/metrics`, `host_metrics`, `journald` юнитов `tanks`, `caddy`, `vector`, `file` по `/opt/tanks-logs/*.log` и `/opt/tanks-logs/visits/*.log` не старше часа, `http_server` на `127.0.0.1:8094/telemetry`), фильтр строк журнала, JSON визита из строки файла визитов, метки Loki объектом `.labels` на каждый поток, приёмники `prometheus_remote_write` (проверка здоровья выключена: на GET приёмник отвечает 405) и `loki`, очереди на диске по 256 МБ с выбрасыванием нового при переполнении.
 - `deploy/vector/vector.conf` — drop-in `/etc/systemd/system/vector.service.d/tanks.conf` к юниту из пакета: `MemoryMax=150M`, `CPUWeight=20`, `Nice=5`, включение подстановки `${…}` из окружения (`VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION`).
 - Доступы — `/etc/default/vector` (root, 600; юнит пакета читает его как `EnvironmentFile`), кладутся с рабочей машины: `deploy/vector-secrets.sh root@<машина>` берёт строки `GRAFANA_CLOUD_*` из `~/.secrets-tank/grafana-cloud.env`. Адрес Loki в файле — без пути (`https://logs-prod-012.grafana.net`), адрес Prometheus — полный до `/api/prom/push`.
 - `deploy/setup.sh` ставит Vector из репозитория `setup.vector.dev` и добавляет пользователя `vector` в группу `systemd-journal`; `deploy-local.sh` при каждой выкладке переустанавливает `vector.yaml`, drop-in и `Caddyfile`, перезагружает Caddy и перезапускает Vector (без доступов Vector не стартует, игра от этого не зависит).

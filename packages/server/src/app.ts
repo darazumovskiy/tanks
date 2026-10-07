@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { DEFAULT_RULES, FFA_SIZES, TICK_RATE, type FfaSize, type RoundRules } from '@tanks/shared/engine';
 import {
@@ -17,13 +18,27 @@ import {
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { DEFAULT_FFA_OPTIONS, type FfaConnection, type FfaOptions } from './ffaGame.js';
 import { FileGameLog, LOG_ROUTE, NO_LOG, receiveClientLog, type GameLog } from './gameLog.js';
+import { NO_GEO, openGeo } from './geo.js';
 import { createMetrics, type Metrics } from './metrics.js';
 import { DEFAULT_ROOM_OPTIONS, type RoomOptions } from './room.js';
 import { isValidRoomCode, RoomManager } from './roomManager.js';
 import { APK_ROUTE, requestPath, serveApk, serveStatic } from './static.js';
 import { createSystemCpuReader } from './systemCpu.js';
+import {
+  DEFAULT_TRUSTED_PROXIES,
+  DEFAULT_VISIT_LIMITS,
+  receiveVisit,
+  VISIT_ROUTE,
+  VisitLimiter,
+  VISITS_DIR,
+  type VisitDeps,
+  type VisitLimits,
+} from './visits.js';
 
-// logDir — папка журналов игр; без неё журнал не ведётся и приёмщик строк клиента отключён.
+// logDir — папка журналов игр; без неё журнал не ведётся, приёмщики строк клиента и визитов отключены.
+// geoDir — папка баз DB-IP для страны, города и провайдера визита; без неё гео визита пустое.
+// trustedProxies — адреса соединений, которым верим в X-Forwarded-For; умолчание — Caddy на этой же машине.
+// visitLimits — визитов в минуту с адреса и в сутки на сервер; wallClock — часы визитов в мс от эпохи.
 // rules — правила движка для всех комнат процесса.
 // ffaEnv — переключатели общей игры строками окружения (ключ — имя переменной) поверх `ffa`; пусто — умолчание.
 // botClock — часы бюджета хода ботов в мс; умолчание — время процесса.
@@ -32,6 +47,10 @@ export interface AppOptions {
   staticRoot?: string;
   apkPath?: string;
   logDir?: string;
+  geoDir?: string;
+  trustedProxies?: readonly string[];
+  visitLimits?: VisitLimits;
+  wallClock?: () => number;
   rules?: RoundRules;
   room?: RoomOptions;
   ffa?: FfaOptions;
@@ -175,6 +194,14 @@ export function createApp(options: AppOptions = {}): App {
   const ffaOptions = ffaOptionsFromEnv(options.ffa ?? DEFAULT_FFA_OPTIONS, options.ffaEnv ?? {});
   const fileLog = options.logDir === undefined ? null : new FileGameLog(options.logDir);
   const log: GameLog = fileLog ?? NO_LOG;
+  const visitLog = options.logDir === undefined ? null : new FileGameLog(join(options.logDir, VISITS_DIR));
+  const visits: VisitDeps = {
+    log: visitLog ?? NO_LOG,
+    geo: options.geoDir === undefined ? NO_GEO : openGeo(options.geoDir),
+    trustedProxies: new Set(options.trustedProxies ?? DEFAULT_TRUSTED_PROXIES),
+    limiter: new VisitLimiter(options.visitLimits ?? DEFAULT_VISIT_LIMITS),
+    now: options.wallClock ?? ((): number => Date.now()),
+  };
   const metrics = createMetrics();
   const readSystemCpu = createSystemCpuReader(options.systemRoot ?? '/');
   const rooms = new RoomManager(
@@ -208,6 +235,10 @@ export function createApp(options: AppOptions = {}): App {
     }
     if (path === LOG_ROUTE && request.method === 'POST' && fileLog !== null) {
       receiveClientLog(fileLog, request, response);
+      return;
+    }
+    if (path === VISIT_ROUTE && request.method === 'POST' && visitLog !== null) {
+      receiveVisit(visits, request, response);
       return;
     }
     if (path === APK_ROUTE && options.apkPath !== undefined && serveApk(options.apkPath, request, response)) {
@@ -387,6 +418,7 @@ export function createApp(options: AppOptions = {}): App {
       clearInterval(silenceTimer);
       metrics.close();
       fileLog?.close();
+      visitLog?.close();
       for (const socket of connections.keys()) {
         socket.terminate();
       }

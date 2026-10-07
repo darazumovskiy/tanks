@@ -6,6 +6,7 @@ import { SECONDS_PER_DAY } from './logParser.js';
 import { AXIS_BUCKETS, type Axis } from './movement.js';
 import { median, pct, roundTo, sum } from './numbers.js';
 import { MOVING_SPEED, SHOT_KIND } from './shots.js';
+import type { VisitorSummary } from './visitors.js';
 
 const SECONDS_PER_MINUTE = 60;
 const SECONDS_PER_HOUR = 3600;
@@ -15,6 +16,7 @@ const CONTESTED_LEVEL_MIN = 4;
 const PER_THOUSAND = 1000;
 const EMPTY = '—';
 const DEVICE_SEPARATOR = ',';
+const DEVICE_ID_SHORT = 6;
 
 type Cell = string | number;
 
@@ -26,6 +28,7 @@ export const REPORT_SECTIONS = {
   wonLost: '## 5. Выигранные и проигранные раунды по устройствам (уровни ≥ 4)',
   quality: '## 6. Контроль качества разбора',
   ffa: '## 7. Бой толпы: прогон журнала движком',
+  visitors: '## 8. Кто играл',
 } as const;
 
 function fmt(value: number | null | undefined, suffix = ''): string {
@@ -36,10 +39,17 @@ function fmt(value: number | null | undefined, suffix = ''): string {
   return `${text}${suffix}`;
 }
 
+// Ник приходит от игрока: черта и перевод строки в ячейке развалили бы таблицу.
+function tableCell(cell: Cell): string {
+  return String(cell)
+    .replaceAll('|', '\\|')
+    .replace(/\s*\n\s*/g, ' ');
+}
+
 function mdTable(headers: readonly string[], rows: readonly Cell[][]): string {
   const lines = [`| ${headers.join(' | ')} |`, `|${'---|'.repeat(headers.length)}`];
   for (const row of rows) {
-    lines.push(`| ${row.map((cell) => String(cell)).join(' | ')} |`);
+    lines.push(`| ${row.map(tableCell).join(' | ')} |`);
   }
   return lines.join('\n');
 }
@@ -490,10 +500,80 @@ function ffaSection(ffaGames: readonly FfaGameSummary[]): string {
   );
 }
 
+function tally(values: readonly string[]): Cell[][] {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts].sort((a, b) => {
+    const byCount = b[1] - a[1];
+    return byCount === 0 ? a[0].localeCompare(b[0]) : byCount;
+  });
+}
+
+function listOrEmpty(values: readonly string[]): string {
+  return values.length === 0 ? EMPTY : values.join(', ');
+}
+
+function visitorsSection(visitors: readonly VisitorSummary[]): string {
+  if (visitors.length === 0) {
+    return 'Визитов нет.';
+  }
+  const visits = sum(visitors.map((visitor) => visitor.visits));
+  const returning = visitors.filter((visitor) => visitor.is_returning).length;
+  const fought = visitors.filter((visitor) => visitor.battles_duel + visitor.battles_ffa > 0).length;
+  const rows: Cell[][] = visitors.map((visitor) => [
+    visitor.dev.slice(0, DEVICE_ID_SHORT),
+    listOrEmpty(visitor.nicks),
+    visitor.first_visit ?? EMPTY,
+    visitor.last_visit ?? EMPTY,
+    visitor.visits,
+    visitor.days,
+    visitor.battles_duel,
+    visitor.battles_ffa,
+    listOrEmpty([visitor.country, visitor.city].filter((part): part is string => part !== null)),
+    visitor.org ?? EMPTY,
+    visitor.device ?? EMPTY,
+    visitor.langs ?? EMPTY,
+    visitor.tz ?? EMPTY,
+    visitor.source,
+  ]);
+  return [
+    `Устройств: ${String(visitors.length)}, визитов: ${String(visits)}, вернулись в другой день: ${String(returning)}, с боем: ${String(fought)}.`,
+    '',
+    'Бои считаются по журналам комнат, а сервер хранит их 7 дней: у давних устройств боёв в отчёте меньше, чем было.',
+    '',
+    mdTable(['Страна', 'Устройств'], tally(visitors.map((visitor) => visitor.country ?? EMPTY))),
+    '',
+    mdTable(['Источник', 'Устройств'], tally(visitors.map((visitor) => visitor.source))),
+    '',
+    mdTable(
+      [
+        'Устройство',
+        'Ники',
+        'Первый визит',
+        'Последний',
+        'Визитов',
+        'Дней',
+        'Дуэлей',
+        'Боёв толпы',
+        'Место',
+        'Провайдер',
+        'Система и браузер',
+        'Языки',
+        'Пояс',
+        'Источник',
+      ],
+      rows,
+    ),
+  ].join('\n');
+}
+
 export function buildReport(
   results: readonly GameAnalysis[],
   tzHours: number,
   ffaGames: readonly FfaGameSummary[],
+  visitors: readonly VisitorSummary[],
 ): string {
   const groups = groupByLevelDevice(results);
   return [
@@ -530,6 +610,10 @@ export function buildReport(
     REPORT_SECTIONS.ffa,
     '',
     ffaSection(ffaGames),
+    '',
+    REPORT_SECTIONS.visitors,
+    '',
+    visitorsSection(visitors),
     '',
   ].join('\n');
 }

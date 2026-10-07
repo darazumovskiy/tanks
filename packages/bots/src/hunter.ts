@@ -12,7 +12,7 @@ import {
   type Stats,
   type TankView,
 } from '@tanks/shared/engine';
-import type { BotBrain } from './arenaBot.js';
+import type { BotBrain } from './brain.js';
 import type { BotProfile } from './profile.js';
 import { isClear, isReturningShot } from './sight.js';
 

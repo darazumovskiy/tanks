@@ -1,6 +1,7 @@
 import { appendFile, appendFileSync, mkdirSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
+import { readBody } from './httpBody.js';
 
 // Строки журнала попадают в файл `<dir>/<key>.log`; key — идентификатор дуэли или `room-<код>` до её начала.
 export interface GameLog {
@@ -15,7 +16,6 @@ const LOG_BODY_LIMIT_BYTES = 256 * 1024;
 const FLUSH_INTERVAL_MS = 500;
 const HTTP_NO_CONTENT = 204;
 const HTTP_BAD_REQUEST = 400;
-const HTTP_PAYLOAD_TOO_LARGE = 413;
 
 export const NO_LOG: GameLog = {
   write(): void {
@@ -84,29 +84,7 @@ export function receiveClientLog(log: GameLog, request: IncomingMessage, respons
     response.end();
     return;
   }
-  const chunks: Buffer[] = [];
-  let size = 0;
-  let isRejected = false;
-  // Лишнее тело дочитывается впустую: разрыв соединения оставил бы клиента без ответа 413.
-  request.on('data', (chunk: Buffer) => {
-    if (isRejected) {
-      return;
-    }
-    size += chunk.byteLength;
-    if (size > LOG_BODY_LIMIT_BYTES) {
-      isRejected = true;
-      chunks.length = 0;
-      response.writeHead(HTTP_PAYLOAD_TOO_LARGE);
-      response.end();
-      return;
-    }
-    chunks.push(chunk);
-  });
-  request.on('end', () => {
-    if (isRejected) {
-      return;
-    }
-    const body = Buffer.concat(chunks).toString('utf8');
+  readBody(request, response, LOG_BODY_LIMIT_BYTES, (body) => {
     for (const text of body.split('\n')) {
       if (text !== '') {
         log.write(key, source, text);

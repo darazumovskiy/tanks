@@ -16,9 +16,10 @@ import {
   type ProfileSelection,
   type SelectedRounds,
 } from '@tanks/analysis';
+import { createBrain } from '@tanks/bots';
+import { createParallax } from '@tanks/server/bots/ladder';
 import { deriveStats, TICK_RATE } from '@tanks/shared/engine';
 import { BOT_LEVELS, type BotLevel } from '@tanks/shared/protocol';
-import { createBrain } from '@tanks/server/bots/ladder';
 
 export const TWIN_PROFILE_NAMES = ['phone', 'pc'] as const;
 export const TWIN_NICK = 'Двойник';
@@ -188,7 +189,7 @@ function noRandom(): number {
 function ladderBulletSpeeds(): Record<BotLevel, number> {
   const speeds = {} as Record<BotLevel, number>;
   for (const level of BOT_LEVELS) {
-    speeds[level] = deriveStats(createBrain(level, noRandom).stats).bulletSpeed;
+    speeds[level] = deriveStats(createBrain(level, noRandom, createParallax).stats).bulletSpeed;
   }
   return speeds;
 }

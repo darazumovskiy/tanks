@@ -47,7 +47,10 @@ export function createDuelEffects(names: () => readonly [string, string]): Effec
   return new Effects(new FieldDecals(ARENA), sideColor, (id) => names()[duelSide(id)]);
 }
 
-function sceneTank(view: WorldView, hud: HudInfo, side: Side): SceneTank {
+// Что сцена поля дуэли берёт из интерфейса: имена над танками, свою сторону, линию выстрела и предохранитель.
+type DuelSceneInfo = Pick<HudInfo, 'names' | 'mySide' | 'aimLine' | 'isShotGuarded'>;
+
+function sceneTank(view: WorldView, hud: DuelSceneInfo, side: Side): SceneTank {
   const tank = view.tanks[side];
   return {
     id: side,
@@ -66,7 +69,7 @@ function sceneTank(view: WorldView, hud: HudInfo, side: Side): SceneTank {
   };
 }
 
-function duelScene(view: WorldView, hud: HudInfo): FieldScene {
+export function duelScene(view: WorldView, hud: DuelSceneInfo): FieldScene {
   const { round } = view;
   return {
     field: ARENA,

@@ -1,0 +1,57 @@
+#!/bin/bash
+# Базы DB-IP Lite (страна, город, провайдер по IP) для визитов. Копия лежит в /etc/cron.monthly: обновилась база —
+# игра перезапускается, сервер читает базы только при старте. deploy-local.sh зовёт с --no-restart, если баз нет.
+set -euo pipefail
+
+GEO_DIR=/opt/tanks-files/geo
+BASE_URL=https://download.db-ip.com/free
+KINDS=(city asn)
+
+main() {
+  local restart=1
+  if [[ "${1:-}" == "--no-restart" ]]; then
+    restart=0
+  fi
+  install -d -o tanks -g tanks -m 755 "$GEO_DIR"
+  local changed=0
+  for kind in "${KINDS[@]}"; do
+    if fetch "$kind"; then
+      changed=1
+    fi
+  done
+  if [[ "$restart" == 1 && "$changed" == 1 ]]; then
+    systemctl restart tanks
+  fi
+}
+
+# Свежая база месяца выходит не в первый день: нет текущего месяца — берётся прошлый.
+# Код 0 — файл обновился, 1 — уже был тот же или скачать не удалось. Вызывается из if, где set -e не действует,
+# поэтому каждый шаг проверяется явно.
+fetch() {
+  local kind=$1
+  local target="$GEO_DIR/dbip-$kind-lite.mmdb"
+  local tmp
+  tmp=$(mktemp "$GEO_DIR/.dbip-$kind.XXXXXX") || return 1
+  local this_month last_month
+  this_month=$(date -u +%Y-%m)
+  last_month=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m)
+  for month in "$this_month" "$last_month"; do
+    if ! curl -fsSL "$BASE_URL/dbip-$kind-lite-$month.mmdb.gz" | gunzip > "$tmp"; then
+      continue
+    fi
+    if [[ -f "$target" ]] && cmp -s "$tmp" "$target"; then
+      rm -f "$tmp"
+      return 1
+    fi
+    if chmod 644 "$tmp" && mv "$tmp" "$target"; then
+      echo "geo: $kind $month"
+      return 0
+    fi
+    break
+  done
+  rm -f "$tmp"
+  echo "geo: не удалось обновить $kind" >&2
+  return 1
+}
+
+main "$@"

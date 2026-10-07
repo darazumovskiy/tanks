@@ -24,6 +24,7 @@
 | [frontend/mobile-screen.md](frontend/mobile-screen.md) | Экран боя под телефон: панели в экранных координатах, стрелка на противника, резкость |
 | [frontend/duel-camera.md](frontend/duel-camera.md) | Камера дуэли: стратегии «за своим», «за своим + отдаление», «оба в кадре», разрешённая область танка, кромка, инварианты и лаборатория |
 | [frontend/fx-lab.md](frontend/fx-lab.md) | Лаборатория эффектов `/?lab=fx`: стиль как токен, детерминированные сцены, варианты с якорями, ползунки, контактные листы, доступ из консоли, план тестирования |
+| [frontend/bot-watch.md](frontend/bot-watch.md) | Бой ботов `/watch`: два бойца лестницы дерутся в браузере без сервера, матч чистым модулем, шаг кадра и скорость, отрисовка частями рендера дуэли, список бойцов под будущего двойника, план тестирования |
 | [frontend/invite-link.md](frontend/invite-link.md) | Приглашение по ссылке: «Копировать» и «Поделиться», открытие ссылки Android-приложением (App Links, `assetlinks.json`), плашка «Открыть в приложении» |
 | [infra/deploy-proto.md](infra/deploy-proto.md) | Выкладка пробы на машину в Милане: Caddy, systemd, скрипты |
 | [infra/android-app.md](infra/android-app.md) | Android-приложение: оболочка Capacitor, сборка APK в Docker, раздача по QR |

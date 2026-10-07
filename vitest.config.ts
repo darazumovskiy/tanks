@@ -7,7 +7,7 @@ export default defineConfig({
         test: {
           name: 'node',
           include: [
-            'packages/{shared,server,analysis,twin}/src/**/*.test.ts',
+            'packages/{shared,bots,server,analysis,twin}/src/**/*.test.ts',
             'packages/{shared,server}/test/**/*.test.ts',
           ],
           globalSetup: ['packages/twin/test/buildDist.ts'],
@@ -30,6 +30,7 @@ export default defineConfig({
       provider: 'v8',
       include: [
         'packages/server/src/**/*.ts',
+        'packages/bots/src/**/*.ts',
         'packages/shared/src/protocol/**/*.ts',
         'packages/shared/src/engine/{trajectory,lead,ffa,ffaMaps,ffaView,spawn,random}.ts',
         'packages/client/src/steering.ts',
@@ -52,7 +53,10 @@ export default defineConfig({
         'packages/client/src/fxLab/{scenes,styleParams,paramPanel,contactSheet}.ts',
         'packages/client/src/clientInfo.ts',
         'packages/client/src/telemetry.ts',
+        'packages/client/src/visitor.ts',
+        'packages/client/src/privacyNote.ts',
         'packages/client/src/freshBuild.ts',
+        'packages/client/src/watch/{botMatch,stepClock,watchView}.ts',
         'packages/analysis/src/**/*.ts',
         'packages/twin/src/**/*.ts',
       ],
@@ -68,6 +72,7 @@ export default defineConfig({
       ],
       thresholds: {
         'packages/server/src/**': { statements: 100, branches: 100, functions: 100, lines: 100 },
+        'packages/bots/src/**': { statements: 100, branches: 100, functions: 100, lines: 100 },
         'packages/analysis/src/**': { statements: 90, branches: 90, functions: 90, lines: 90 },
         'packages/twin/src/**': { statements: 90, branches: 90, functions: 90, lines: 90 },
         'packages/shared/src/protocol/**': { statements: 95, branches: 85, functions: 95, lines: 95 },
@@ -77,12 +82,13 @@ export default defineConfig({
           functions: 95,
           lines: 95,
         },
-        'packages/client/src/{steering,flick,touch,input,clientInfo,telemetry,aimLine,zoneFire,admin,freshBuild}.ts': {
-          statements: 95,
-          branches: 90,
-          functions: 95,
-          lines: 95,
-        },
+        'packages/client/src/{steering,flick,touch,input,clientInfo,telemetry,visitor,privacyNote,aimLine,zoneFire,admin,freshBuild}.ts':
+          {
+            statements: 95,
+            branches: 90,
+            functions: 95,
+            lines: 95,
+          },
         'packages/client/src/{render/fxEvent,duelPresenter}.ts': {
           statements: 95,
           branches: 90,

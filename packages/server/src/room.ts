@@ -3,6 +3,7 @@ import {
   createRound,
   DEFAULT_RULES,
   DEFAULT_STATS,
+  DUEL_COUNTDOWN_TICKS,
   roundPlan,
   stepRound,
   TICK_RATE,
@@ -13,10 +14,12 @@ import {
   type Stats,
 } from '@tanks/shared/engine';
 import {
+  duelSide,
   encode,
   gameTimecode,
   MessageType,
   rulesToByte,
+  toSnapshotEvent,
   type RoomStateMessage,
   type RoundStartMessage,
   type ServerMessage,
@@ -24,7 +27,6 @@ import {
   type SnapshotMessage,
 } from '@tanks/shared/protocol';
 import { randomInt } from 'node:crypto';
-import { duelSide, toSnapshotEvent } from './events.js';
 import {
   clearInput,
   createInputChannel,
@@ -54,7 +56,11 @@ export interface RoomOptions {
   maxInputsPerSecond: number;
 }
 
-export const DEFAULT_ROOM_OPTIONS: RoomOptions = { countdownTicks: 90, roundEndTicks: 90, maxInputsPerSecond: 90 };
+export const DEFAULT_ROOM_OPTIONS: RoomOptions = {
+  countdownTicks: DUEL_COUNTDOWN_TICKS,
+  roundEndTicks: 90,
+  maxInputsPerSecond: 90,
+};
 
 type DuelPhase = 'countdown' | 'fight' | 'roundEnd';
 

@@ -16,8 +16,10 @@ import { showFxLab } from './fxLab/fxLab.js';
 import { showCameraLab } from './lab.js';
 import { defaultSettings, SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
+import { mountPrivacyNote } from './privacyNote.js';
 import { mountStatsPicker, statsLeft } from './statsPicker.js';
 import { Telemetry } from './telemetry.js';
+import { startVisit } from './visitor.js';
 
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
@@ -25,12 +27,14 @@ const BOT_LEVEL_KEY = 'tanks.botLevel';
 const DEFAULT_BOT_LEVEL: BotLevel = 1;
 const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const APK_ROUTE = '/app/tanks.apk';
+const WATCH_PATH = '/watch';
 const SETTINGS_KEY_CODE = 'KeyO';
 const AUTOFIRE_ACTIVE_CLASS = 'is-active';
 const LEVEL_INFO_OPEN_CLASS = 'is-open';
 const isTouchDevice = (): boolean => matchMedia('(pointer: coarse)').matches;
+const clientInfo = readClientInfo();
 // Один на страницу: ошибки главной и боя уходят с одинаковым описанием клиента.
-const telemetry = new Telemetry(readClientInfo());
+const telemetry = new Telemetry(clientInfo);
 telemetry.installErrorHandlers();
 // `?admin=1` на любой странице запоминается на устройстве и открывает админские настройки в бою.
 const isAdmin = resolveAdminMode(location.search, localStorage);
@@ -126,6 +130,8 @@ function showHome(): void {
   const createBot = byId('create-bot', HTMLButtonElement);
   home.hidden = false;
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
+  startVisit(localStorage, nickname.value, clientInfo);
+  mountPrivacyNote(byId('privacy-note', HTMLElement), byId('privacy-note-close', HTMLButtonElement), localStorage);
   // Ник на устройстве сразу: главная перезагружается сама, когда выходит новая сборка.
   nickname.addEventListener('input', () => {
     localStorage.setItem(NICKNAME_KEY, nickname.value);
@@ -190,6 +196,9 @@ function showHome(): void {
   });
   createBot.addEventListener('click', () => {
     startDuelWith(botRoomCode(levels.selected(), randomCode()));
+  });
+  byId('watch-open', HTMLButtonElement).addEventListener('click', () => {
+    goToFight(WATCH_PATH);
   });
   void showAndroidDownload();
 }
@@ -256,6 +265,7 @@ function bindAndroidBrowser(): void {
 function startDuel(roomCode: string): void {
   const nickname = localStorage.getItem(NICKNAME_KEY) ?? '';
   const stats = parseStats(localStorage.getItem(STATS_KEY));
+  const visit = startVisit(localStorage, nickname, clientInfo);
   const canvas = byId('stage', HTMLCanvasElement);
   canvas.hidden = false;
   document.body.classList.add('duel');
@@ -273,6 +283,7 @@ function startDuel(roomCode: string): void {
     onAutoFireChange: autoFire.reflect,
     settings: store.value,
     isTouchDevice: hasTouch,
+    deviceId: visit.dev,
     telemetry,
   });
   const settingsToggle = byId('settings-toggle', HTMLButtonElement);
@@ -311,15 +322,18 @@ async function startFfa(route: FfaRoute): Promise<void> {
   const store = new SettingsStore(localStorage, defaultSettings(), { isAdmin });
   const autoFireButton = byId('autofire', HTMLButtonElement);
   const autoFire = bindAutoFire(autoFireButton, hasTouch);
+  const nickname = localStorage.getItem(NICKNAME_KEY) ?? '';
+  const visit = startVisit(localStorage, nickname, clientInfo);
   const game = new ffaModule.FfaGame({
     size: route.size,
     inviteGameId: route.gameId,
-    nickname: localStorage.getItem(NICKNAME_KEY) ?? '',
+    nickname,
     stats: parseStats(localStorage.getItem(STATS_KEY)),
     canvas,
     hud: byId('ffa-hud', HTMLElement),
     settings: store.value,
     isTouchDevice: hasTouch,
+    deviceId: visit.dev,
     telemetry,
     onAutoFireChange: autoFire.reflect,
     onFieldControlsChange: (isVisible) => {
@@ -356,6 +370,31 @@ async function startFfa(route: FfaRoute): Promise<void> {
   });
 }
 
+// Бой ботов считается в браузере: холст над панелью управления. Код боя ботов и мозги — отдельный кусок сборки.
+async function startWatch(): Promise<void> {
+  const watchModule = await import('./watch/watchPage.js');
+  const canvas = byId('stage', HTMLCanvasElement);
+  document.body.classList.add('duel', 'watch');
+  watchModule.applyWatchStyle(document.body);
+  canvas.hidden = false;
+  byId('watch', HTMLElement).hidden = false;
+  const game = watchModule.mountWatch(
+    {
+      left: { toggle: byId('watch-left-toggle', HTMLButtonElement), list: byId('watch-left-list', HTMLElement) },
+      right: { toggle: byId('watch-right-toggle', HTMLButtonElement), list: byId('watch-right-list', HTMLElement) },
+      speeds: byId('watch-speeds', HTMLElement),
+      pause: byId('watch-pause', HTMLButtonElement),
+      restart: byId('watch-restart', HTMLButtonElement),
+      sound: byId('watch-sound', HTMLButtonElement),
+      result: byId('watch-result', HTMLElement),
+    },
+    localStorage,
+    watchModule.browserWatchDeps(canvas),
+  );
+  bindRotateHint(byId('rotate', HTMLElement));
+  Object.assign(window, { tanksGame: game });
+}
+
 const duelMatch = /^\/d\/([a-z0-9]{3,16})$/.exec(location.pathname);
 const ffaRoute = ffaRouteOf(location.pathname);
 const query = new URLSearchParams(location.search);
@@ -364,6 +403,8 @@ if (duelMatch?.[1] !== undefined) {
   startDuel(duelMatch[1]);
 } else if (ffaRoute !== null) {
   void startFfa(ffaRoute);
+} else if (location.pathname === WATCH_PATH) {
+  void startWatch();
 } else if (labKind === 'camera') {
   showCameraLab(byId('lab', HTMLElement));
 } else if (labKind === 'fx') {

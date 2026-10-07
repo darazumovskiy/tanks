@@ -858,6 +858,45 @@ input {
   cursor: pointer;
 }
 
+.privacy-note {
+  position: fixed;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: min(440px, calc(100vw - 20px));
+  box-sizing: border-box;
+  padding: 6px 6px 6px 14px;
+  background: rgba(11, 15, 13, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+/* Пока плашка видна, главная прокручивается так, чтобы последняя кнопка вышла из-под неё. */
+body:has(.privacy-note:not([hidden])) .home {
+  padding-bottom: 96px;
+}
+
+.privacy-note-text {
+  font-size: 12px;
+  line-height: 1.35;
+  opacity: 0.75;
+}
+
+.privacy-note-text a {
+  color: #e8825a;
+}
+
+.privacy-note .open-app-close {
+  flex: none;
+}
+
 .home {
   max-width: 480px;
   margin: 0 auto;
@@ -2452,4 +2491,360 @@ body.ffa .menu-toggle {
 
 .android canvas {
   border-radius: 8px;
+}
+
+/* Вход в бой ботов на главной — тихая кнопка под «В бой»: не спорит с основными действиями. */
+.watch-open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(244, 241, 232, 0.85);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.12s ease-out;
+}
+
+.watch-open svg {
+  width: 16px;
+  height: 16px;
+  fill: #e8825a;
+}
+
+.watch-open:hover {
+  color: #f4f1e8;
+  border-color: rgba(232, 130, 90, 0.8);
+}
+
+.watch-open:active {
+  transform: scale(0.98);
+}
+
+.watch-open:focus-visible {
+  outline: 2px solid #f4f1e8;
+  outline-offset: 2px;
+}
+
+/* Бой ботов: холст над нижней панелью управления. Размеры, переходы и цвета сторон — из токена WATCH_STYLE
+   (CSS-переменные `--watch-*` ставит страница). */
+body.watch {
+  --watch-bar: var(--watch-bar-height, 56px);
+  --watch-bar-under: env(safe-area-inset-bottom, 0px);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+body.watch #stage {
+  height: calc(100vh - var(--watch-bar) - var(--watch-bar-under));
+  height: calc(100dvh - var(--watch-bar) - var(--watch-bar-under));
+  cursor: default;
+}
+
+.watch-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: calc(var(--watch-bar) + var(--watch-bar-under));
+  padding: 0 max(12px, env(safe-area-inset-right)) var(--watch-bar-under) max(12px, env(safe-area-inset-left));
+  background: linear-gradient(180deg, #101513, #0b0f0d);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Цель касания — не меньше 44 точек: кнопки, скорости, списки бойцов. */
+.watch-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  color: #f4f1e8;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  cursor: pointer;
+  touch-action: manipulation;
+  text-decoration: none;
+  transition:
+    background-color var(--watch-transition, 160ms) ease,
+    border-color var(--watch-transition, 160ms) ease,
+    transform 0.12s ease-out;
+}
+
+.watch-icon svg {
+  grid-area: 1 / 1;
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.watch-icon .watch-icon-stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.watch-icon:hover {
+  border-color: rgba(232, 130, 90, 0.8);
+}
+
+.watch-icon:active {
+  transform: scale(0.92);
+}
+
+.watch-icon:focus-visible,
+.watch-speed:focus-visible {
+  outline: 2px solid #e8825a;
+  outline-offset: 2px;
+}
+
+/* Пауза: кнопка показывает «продолжить» и горит акцентом — бой стоит. */
+.watch-pause .watch-icon-play,
+.watch-pause.is-paused .watch-icon-pause {
+  display: none;
+}
+
+.watch-pause.is-paused .watch-icon-play {
+  display: block;
+}
+
+.watch-pause.is-paused {
+  color: #0b0f0d;
+  background: #e8825a;
+  border-color: #e8825a;
+}
+
+.watch-sound .watch-icon-cross,
+.watch-sound.is-muted .watch-icon-waves {
+  display: none;
+}
+
+.watch-sound.is-muted .watch-icon-cross {
+  display: block;
+}
+
+.watch-sound.is-muted {
+  color: rgba(244, 241, 232, 0.5);
+}
+
+.watch-pick {
+  position: relative;
+  flex: 0 1 220px;
+  min-width: 0;
+}
+
+.watch-toggle {
+  width: 100%;
+  min-height: 44px;
+  gap: 8px;
+  padding: 5px 8px 5px 5px;
+}
+
+.watch-toggle .level-badge {
+  min-width: 28px;
+  height: 28px;
+  font-size: 14px;
+  border-radius: 8px;
+}
+
+.watch-toggle .level-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Цвет бойца — цвет его танка: слева оранжевый, справа бирюзовый, и в кнопке, и в выбранной строке списка. */
+.watch-pick-right .watch-toggle .level-badge {
+  background: var(--watch-right);
+}
+
+.watch-pick-right .watch-toggle:hover,
+.watch-pick-right .watch-toggle.is-open {
+  border-color: rgba(79, 195, 201, 0.8);
+}
+
+.watch-pick-right .watch-toggle:focus-visible,
+.watch-pick-right .level:focus-visible {
+  outline-color: var(--watch-right);
+}
+
+.watch-pick-right .level.is-selected {
+  background: rgba(79, 195, 201, 0.14);
+  border-color: rgba(79, 195, 201, 0.6);
+}
+
+.watch-pick-right .level.is-selected .level-badge {
+  background: var(--watch-right);
+}
+
+.watch-list {
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(70vh, 440px);
+}
+
+.watch-pick-right .watch-list {
+  left: auto;
+  right: 0;
+}
+
+.watch-list .level-tagline {
+  font-size: 12px;
+}
+
+.watch-vs {
+  flex: none;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: rgba(244, 241, 232, 0.45);
+}
+
+.watch-speeds {
+  flex: none;
+  display: flex;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+}
+
+.watch-speed {
+  min-width: 44px;
+  height: 44px;
+  padding: 0 8px;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 13px;
+  color: rgba(244, 241, 232, 0.7);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    color var(--watch-transition, 160ms) ease,
+    background-color var(--watch-transition, 160ms) ease;
+}
+
+.watch-speed:hover {
+  color: #f4f1e8;
+}
+
+.watch-speed.is-selected {
+  color: #0b0f0d;
+  background: #e8825a;
+}
+
+/* Итог раунда — карточка в центре поля: появляется плавно, не ловит касания. */
+.watch-result {
+  position: fixed;
+  left: 50%;
+  top: calc((100vh - var(--watch-bar) - var(--watch-bar-under)) / 2);
+  top: calc((100dvh - var(--watch-bar) - var(--watch-bar-under)) / 2);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 12px 24px 14px;
+  text-align: center;
+  background: rgba(11, 15, 13, 0.85);
+  border: 1px solid rgba(244, 241, 232, 0.25);
+  border-radius: 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.94);
+  transition:
+    opacity var(--watch-result, 200ms) ease-out,
+    transform var(--watch-result, 200ms) ease-out;
+  pointer-events: none;
+}
+
+.watch-result.is-shown {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.watch-result.is-left {
+  border-color: var(--watch-left);
+}
+
+.watch-result.is-right {
+  border-color: var(--watch-right);
+}
+
+.watch-result-title {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 26px;
+  line-height: 1.15;
+  color: #f4f1e8;
+}
+
+.watch-result.is-left .watch-result-title {
+  color: var(--watch-left);
+}
+
+.watch-result.is-right .watch-result-title {
+  color: var(--watch-right);
+}
+
+.watch-result-note {
+  font-size: 13px;
+  color: rgba(244, 241, 232, 0.65);
+}
+
+/* Компьютер: панель выше, итог и подписи крупнее. */
+@media (min-width: 1000px) and (min-height: 600px) {
+  body.watch {
+    --watch-bar: var(--watch-bar-wide-height, 64px);
+  }
+
+  .watch-bar {
+    gap: 12px;
+  }
+
+  .watch-pick {
+    flex-basis: 260px;
+  }
+
+  .watch-toggle {
+    padding: 6px 10px 6px 6px;
+  }
+
+  .watch-toggle .level-name {
+    font-size: 15px;
+  }
+
+  .watch-speed {
+    font-size: 14px;
+  }
+
+  .watch-result-title {
+    font-size: 36px;
+  }
+
+  .watch-result-note {
+    font-size: 15px;
+  }
 }

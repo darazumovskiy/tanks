@@ -8,6 +8,7 @@ const SHIFT_SMOOTHING: CameraSmoothing = {
   zoomOutLagMs: 0,
   maxSpeed: CAMERA_MAX_SPEED,
 };
+const SHIFT_EASE_IN_MS = 1500;
 const NO_SHIFT: Point = { x: 0, y: 0 };
 
 export interface ScreenSize {
@@ -74,23 +75,34 @@ function pointCamera(point: Point): Camera {
 }
 
 // Камера боя толпы: окно пропорций экрана внутри окна обзора, центр — фокус плюс сглаженный сдвиг, умноженный
-// по осям на долю видимого окна. Фокус камера ведёт без отставания; сдвиг переставляется сразу после `snap`.
+// по осям на долю видимого окна. Фокус камера ведёт без отставания; после `snap` сдвиг сразу полный; после `easeIn`
+// камера показывает растущую долю сдвига — от нуля до полного.
 export class FfaCamera {
-  private shift: Point | null = null;
+  private smoothed: Point | null = null;
+  private easeInMs: number | null = null;
 
   snap(): void {
-    this.shift = null;
+    this.smoothed = null;
+    this.easeInMs = null;
+  }
+
+  // Пока игрок ищет, где держать мышь, полный сдвиг уводил бы танк по экрану за каждым её движением.
+  easeIn(): void {
+    this.smoothed = null;
+    this.easeInMs = 0;
   }
 
   update(focus: Point, aim: FfaAim, screen: ScreenSize, dtMs: number): FfaFraming {
     const view = ffaCameraWindow(screen);
     const target = ffaAimShift(aim, focus, view);
-    const previous = this.shift;
-    const shift =
+    const previous = this.smoothed;
+    const smoothed =
       previous === null
         ? target
         : centerOf(smoothCamera(pointCamera(previous), pointCamera(target), SHIFT_SMOOTHING, dtMs));
-    this.shift = shift;
+    this.smoothed = smoothed;
+    const share = this.advanceEaseIn(dtMs);
+    const shift = { x: smoothed.x * share, y: smoothed.y * share };
     const centerX = focus.x + (view.width / FFA.viewWidth) * shift.x;
     const centerY = focus.y + (view.height / FFA.viewHeight) * shift.y;
     return {
@@ -103,6 +115,19 @@ export class FfaCamera {
       },
       viewCenter: { x: focus.x + shift.x, y: focus.y + shift.y },
     };
+  }
+
+  // Кривая без скачка скорости на концах: камера трогается и встаёт мягко.
+  private advanceEaseIn(dtMs: number): number {
+    if (this.easeInMs === null) {
+      return 1;
+    }
+    this.easeInMs += dtMs;
+    const progress = Math.min(1, this.easeInMs / SHIFT_EASE_IN_MS);
+    if (progress === 1) {
+      this.easeInMs = null;
+    }
+    return progress * progress * (3 - 2 * progress);
   }
 }
 
