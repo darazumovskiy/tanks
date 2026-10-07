@@ -296,7 +296,7 @@ export class FfaGame {
     const mouseWorld = this.input.mouseWorld;
     return {
       mode: 'ffa',
-      screen: session.screen(),
+      screen: session.screen(this.deps.now()),
       playerId: session.playerId,
       gameId: session.gameId,
       size: this.options.size,
@@ -589,7 +589,7 @@ export class FfaGame {
       return me;
     }
     const target = this.frameView.tanks.find((tank) => tank.id === this.session.spectating);
-    if (this.session.screen() === 'spectator' && target !== undefined) {
+    if (this.session.screen(this.deps.now()) === 'spectator' && target !== undefined) {
       return target;
     }
     return this.framing?.viewCenter ?? { x: this.map.width / 2, y: this.map.height / 2 };
@@ -702,7 +702,7 @@ export class FfaGame {
 
   // Касание или клик по полю у зрителя — следующий живой по таблице.
   private switchSpectator(): void {
-    if (this.session.screen() !== 'spectator') {
+    if (this.session.screen(this.deps.now()) !== 'spectator') {
       return;
     }
     const aliveIds = this.frameView.tanks.filter((tank) => tank.isAlive).map((tank) => tank.id);
@@ -724,7 +724,7 @@ export class FfaGame {
     this.countFrame(now, elapsed);
     this.stepInput(elapsed);
     const view = this.prediction?.view(now) ?? EMPTY_VIEW;
-    const screen = this.session.screen();
+    const screen = this.session.screen(now);
     const hasFieldControls = this.ownTankInPlay() !== null;
     this.showFieldControls(hasFieldControls);
     const framing = this.frameCamera(view, screen, elapsed);
@@ -767,10 +767,11 @@ export class FfaGame {
     this.writeSummary(now);
   }
 
-  // Стрелки и линия — только в бою, пока свой танк на поле; упреждение в толпе не показывается.
+  // Стрелки и линия — только в бою, пока свой танк на поле и в игре: на доигрывании конца матча их нет; упреждение
+  // в толпе не показывается.
   private fieldHelpers(view: FfaFrameView, screen: SessionScreen, camera: Camera): FieldHelpers {
-    const me = this.prediction?.me ?? null;
-    if (me === null || !me.isAlive || screen !== 'fight') {
+    const me = this.ownTankInPlay();
+    if (me === null || screen !== 'fight') {
       return NO_HELPERS;
     }
     const myId = this.session.playerId;

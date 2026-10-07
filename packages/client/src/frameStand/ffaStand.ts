@@ -345,7 +345,7 @@ function enterFfaPage(root: HTMLElement, frame: FfaHudFrame, isTouchDevice: bool
 // Интерфейс кадра: сессия из сообщений сервера; зритель смотрит за целью среди живых танков поля.
 function renderHud(hud: FfaHud, frame: FfaHudFrame): void {
   const { session, now } = frame.build();
-  if (session.screen() === 'spectator') {
+  if (session.screen(now) === 'spectator') {
     session.followSpectator(frame.scene.tanks.filter((tank) => tank.isAlive !== false).map((tank) => tank.id));
   }
   hud.render(session.hud(now, hud.layout), now);

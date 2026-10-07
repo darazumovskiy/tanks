@@ -1,9 +1,8 @@
 #!/bin/bash
 # Первичная настройка машины под игровой сервер: Node 22, Caddy с автоматическим HTTPS, systemd-юнит.
-# Запускается на машине от root:  TANKS_HOST=172-232-212-157.sslip.io bash setup.sh
+# Запускается на машине от root:  bash setup.sh
 set -euo pipefail
 
-: "${TANKS_HOST:?задай TANKS_HOST — имя, на которое Caddy выпустит сертификат}"
 REPO=https://github.com/darazumovskiy/tanks.git
 
 if ! command -v node >/dev/null; then
@@ -35,10 +34,8 @@ chown -R tanks:tanks /opt/tanks
 
 install -m 644 /opt/tanks/deploy/tanks.service /etc/systemd/system/tanks.service
 install -m 644 /opt/tanks/deploy/Caddyfile /etc/caddy/Caddyfile
-mkdir -p /etc/systemd/system/caddy.service.d
-printf '[Service]\nEnvironment=TANKS_HOST=%s\n' "$TANKS_HOST" > /etc/systemd/system/caddy.service.d/tanks.conf
 
 systemctl daemon-reload
 systemctl enable tanks caddy vector >/dev/null
 bash /opt/tanks/deploy/deploy-local.sh
-echo "готово: https://$TANKS_HOST"
+echo "готово: https://tankbattle.io"

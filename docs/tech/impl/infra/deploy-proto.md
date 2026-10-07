@@ -1,10 +1,10 @@
 # Выкладка пробы
 
-Одна машина Akamai (Linode) G7 Dedicated 4x2 в Милане, `172.232.212.157`: 2 выделенных ядра AMD EPYC 7713, 4 ГБ памяти, диск 80 ГБ, 4000 ГБ трафика в месяц, $43 в месяц. Адрес игры — `https://172-232-212-157.sslip.io` (sslip.io — бесплатный DNS, превращающий IP в имя; Let's Encrypt выдал на него сертификат). Код — `deploy/`.
+Одна машина Akamai (Linode) G7 Dedicated 4x2 в Милане, `172.232.212.157`: 2 выделенных ядра AMD EPYC 7713, 4 ГБ памяти, диск 80 ГБ, 4000 ГБ трафика в месяц, $43 в месяц. Адрес игры — `https://tankbattle.io`: домен куплен у регистратора Porkbun, в его DNS записи `A` для `tankbattle.io` и `www` указывают на `172.232.212.157`. Тот же сервер отвечает и по старому имени `https://172-232-212-157.sslip.io` (sslip.io — бесплатный DNS, превращающий IP в имя): Android-приложения до версии 0.5 открывают только его. Сертификаты на все имена Caddy получает у Let's Encrypt сам. Код — `deploy/`.
 
 | Файл | Роль |
 |---|---|
-| `setup.sh` | Первичная настройка машины от root: Node 22, Caddy, Vector, пользователь `tanks`, клон репозитория в `/opt/tanks`, systemd-юниты, первая выкладка. Параметр `TANKS_HOST` — имя для сертификата |
+| `setup.sh` | Первичная настройка машины от root: Node 22, Caddy, Vector, пользователь `tanks`, клон репозитория в `/opt/tanks`, systemd-юниты, первая выкладка |
 | `deploy-local.sh` | На машине: `git reset --hard origin/main`, `npm ci`, `npm run build`, папка журналов `/opt/tanks-logs`, задачи по расписанию `tanks-logs-cleanup` и `geo-update`, базы гео при первой выкладке, установка `tanks.service`, `Caddyfile`, конфига и drop-in Vector, `systemctl restart tanks`, `reload caddy`, `restart vector`, проверка `/healthz` |
 | `deploy.sh user@host` | С рабочей машины: запускает `deploy-local.sh` по SSH ключом `~/.ssh/tanks_probe_ed25519` |
 | `vector-secrets.sh user@host` | С рабочей машины: кладёт доступы Grafana Cloud из `~/.secrets-tank/grafana-cloud.env` в `/etc/default/vector` |
@@ -17,7 +17,7 @@
 | `vector/` | Конфиг Vector и drop-in с лимитами — [monitoring.md](monitoring.md) |
 | `tanks-logs-cleanup` | Ежедневный cron (`/etc/cron.daily`): удаляет журналы игр старше 7 дней и визиты (`/opt/tanks-logs/visits/`) старше 90 |
 | `geo-update` | Базы DB-IP Lite (страна, город, провайдер по IP) в `/opt/tanks-files/geo`; ежемесячный cron (`/etc/cron.monthly/tanks-geo-update`) перезапускает игру, если база обновилась — [visitors.md](../backend/visitors.md) |
-| `Caddyfile` | HTTPS на `TANKS_HOST`, сжатие; `/metrics` → 404, `/telemetry` → Vector, остальное (включая WebSocket) → 8080 |
+| `Caddyfile` | HTTPS на `tankbattle.io` и старом имени sslip.io, `www.tankbattle.io` → постоянная переадресация на `tankbattle.io`; сжатие; `/metrics` → 404, `/telemetry` → Vector, остальное (включая WebSocket) → 8080 |
 | `android/` | Сборка и загрузка Android-приложения — [android-app.md](android-app.md) |
 
 Выкладка берёт код только из `origin/main` на GitHub: сначала коммит и пуш, потом `deploy/deploy.sh root@172.232.212.157`. Перезапуск рвёт активные дуэли.

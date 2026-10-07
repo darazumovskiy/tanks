@@ -59,6 +59,7 @@ const FRAME_MS = 1000 / 60;
 const TICK_MS = 1000 / 30;
 // Кадров, за которые картинка чужих (отставание два тика) доходит до тика последнего снимка.
 const PICTURE_FRAMES = 6;
+const SECOND_FRAMES = 60;
 // Кадров, за которые сдвиг камеры после выхода в бой выходит из центра и успокаивается.
 const CAMERA_SETTLE_FRAMES = 210;
 const ZONE = { startRadius: 9000, finalRadius: 9000, startShrink: 1000, endShrink: 1001 };
@@ -1153,16 +1154,23 @@ describe('экран в толпе не трясётся', () => {
 });
 
 describe('экраны вокруг боя', () => {
-  it('итоги: окно камеры стоит, где было в бою', () => {
+  it('F8 итоги после 2 с доигрывания на поле; на итогах окно камеры стоит', () => {
     const harness = makeGame();
     const world = arena([tank(ME, 600, 650), tank(ENEMY, 1400, 650)]);
     enterFight(harness, world);
     harness.frames(30);
-    const cameraBefore = harness.state().camera;
+    const inputs = (): number => harness.socket().sent.filter((message) => message.type === MessageType.Input).length;
     harness.socket().receive(state(FfaPhase.Results, 300));
+    harness.frames(1);
+    const inputsAtEnd = inputs();
     harness.frames(30);
+    expect(harness.state()).toMatchObject({ screen: 'fight', aimLine: null, arrows: [] });
+    expect(inputs()).toBe(inputsAtEnd);
+    harness.frames(2 * SECOND_FRAMES);
     expect(harness.state().screen).toBe('results');
-    expect(harness.state().camera).toEqual(cameraBefore);
+    const cameraAtResults = harness.state().camera;
+    harness.frames(30);
+    expect(harness.state().camera).toEqual(cameraAtResults);
   });
 
   it('отсчёт: «Высаживаемся с началом боя», пока свой танк не жив на поле, даже если он уже в снимке', () => {
@@ -1235,8 +1243,6 @@ describe('свой снаряд', () => {
 });
 
 describe('интерфейс матча', () => {
-  const SECOND_FRAMES = 60;
-
   function hudPart(harness: Harness, selector: string): HTMLElement {
     const found = harness.hud.querySelector<HTMLElement>(selector);
     if (found === null) {
@@ -1598,7 +1604,7 @@ describe('интерфейс матча', () => {
     expect(isShown(late, '.ffa-final')).toBe(false);
     socket.receive(score([[ENEMY, 1]]));
     socket.receive(state(FfaPhase.Results, 300));
-    late.frames(1);
+    late.frames(2 * SECOND_FRAMES + 1);
     expect(partText(late, '.ffa-results-title')).toBe('СЛЕДУЮЩИЙ МАТЧ — ТВОЙ');
     expect([...late.hud.querySelectorAll('.ffa-results-row')].map((row) => shownText(row))).toEqual(['1 Вася 1 0 —']);
   });
@@ -1708,8 +1714,10 @@ describe('интерфейс матча', () => {
     );
     step(world);
     socket.receive(snapshotOf(world, { events: [event('death', 6, 9, 9, ME)] }));
-    socket.receive(state(FfaPhase.Results, 150, 1, 7));
+    socket.receive(state(FfaPhase.Results, 210, 1, 7));
     harness.frames(1);
+    expect(harness.state().screen).toBe('fight');
+    harness.frames(2 * SECOND_FRAMES);
     expect(partText(harness, '.ffa-results-title')).toBe('В СЛЕДУЮЩИЙ РАЗ');
     expect(partText(harness, '.ffa-results-next')).toBe('Следующий матч через 5');
     harness.frames(3 * SECOND_FRAMES);
@@ -1741,7 +1749,7 @@ describe('интерфейс матча', () => {
     const harness = makeGame();
     enterFight(harness, arena([tank(ME, 600, 650)]));
     harness.socket().receive(state(FfaPhase.Results, 450, 1, 3));
-    harness.frames(1);
+    harness.frames(2 * SECOND_FRAMES + 1);
     expect(partText(harness, '.ffa-results-next')).toBe('Ждём, пока соберёмся');
     harness.socket().receive(state(FfaPhase.Lobby, null, 1, 3));
     harness.frames(1);
@@ -2125,6 +2133,33 @@ describe('картинка совпадает с сервером', () => {
     }
     expect(onEvent.mock.calls.map(([fx, options]) => [fx.kind, options.ownKillCount])).toEqual([['death', 1]]);
   });
+
+  it.each([
+    ['в 400', 700],
+    ['в упор', 380],
+  ])(
+    'последнее убийство матча %s: снимок с гибелью и сразу итоги — эффекты получают гибель с номером фрага',
+    (_, enemyX) => {
+      const harness = makeGame();
+      const world = arena([tank(ME, 300, 1000), tank(ENEMY, enemyX, 1000)]);
+      enterFight(harness, world);
+      const socket = harness.socket();
+      for (let index = 0; index < 10; index++) {
+        step(world);
+        socket.receive(snapshotOf(world));
+        harness.frames(2);
+      }
+      const onEvent = vi.spyOn(harness.effects, 'onEvent');
+      const enemy = world.tanks.find((candidate) => candidate.id === ENEMY) ?? tank(ENEMY, 0, 0);
+      enemy.isAlive = false;
+      enemy.hp = 0;
+      step(world);
+      socket.receive(snapshotOf(world, { events: [event('death', ENEMY, enemy.x, enemy.y, ME)] }));
+      socket.receive(state(FfaPhase.Results, 150));
+      harness.frames(PICTURE_FRAMES * 2);
+      expect(onEvent.mock.calls.map(([fx, options]) => [fx.kind, options.ownKillCount])).toEqual([['death', 1]]);
+    },
+  );
 
   it('попадание по своему танку — в первом же кадре', () => {
     const harness = makeGame();

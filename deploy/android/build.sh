@@ -6,7 +6,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 SECRETS=${TANKS_ANDROID_SECRETS:-$HOME/.secrets-tank/android}
 IMAGE=tanks-android-build
 
-: "${TANKS_SERVER_URL:=https://172-232-212-157.sslip.io}"
+: "${TANKS_SERVER_URL:=https://tankbattle.io}"
 [ -f "$SECRETS/keystore.jks" ] || { echo "нет ключа подписи, запусти deploy/android/keystore.sh" >&2; exit 1; }
 # shellcheck disable=SC1091
 source "$SECRETS/env"

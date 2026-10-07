@@ -23,6 +23,8 @@ const DESKTOP = { feedRows: 4, resultsTop: 10 };
 const SUDDEN_DEATH_AT = 85;
 // Зритель с момента 0: вводная карточка гаснет к 4 с, дальше видна плашка «Смотришь за».
 const SPECTATOR_INTRO_END = 4000;
+// Минута спустя: доигрывание конца матча давно кончилось.
+const LATER = 60_000;
 
 function welcome(playerId = ME, gameId = 'K7QX', inviteMiss: FfaInviteMiss = FfaInviteMiss.None): FfaWelcomeMessage {
   return {
@@ -135,11 +137,11 @@ function hud(session: FfaSession, now = 0, layout = PHONE): FfaHudModel {
 describe('экран сессии', () => {
   it('до приветствия и состояния — подключение; лобби — игроки, места, минимум, старт по местным часам', () => {
     const session = new FfaSession(10);
-    expect(session.screen()).toBe('connecting');
+    expect(session.screen(LATER)).toBe('connecting');
     session.onWelcome(welcome(), 0);
-    expect(session.screen()).toBe('connecting');
+    expect(session.screen(LATER)).toBe('connecting');
     session.onState(state(FfaPhase.Lobby, null, 0), 1000);
-    expect(session.screen()).toBe('lobby');
+    expect(session.screen(LATER)).toBe('lobby');
     expect(hud(session, 1000).lobby).toMatchObject({ players: 3, capacity: 10, minimum: 7, startInS: null });
     session.onState(state(FfaPhase.Lobby, 300, 0, 7), 2000);
     expect(hud(session, 4500).lobby?.startInS).toBeCloseTo(7.5, 9);
@@ -150,15 +152,15 @@ describe('экран сессии', () => {
     const session = new FfaSession(10);
     session.onWelcome(welcome(), 0);
     session.onState(state(FfaPhase.Countdown, 90, 1), 0);
-    expect(session.screen()).toBe('connecting');
+    expect(session.screen(LATER)).toBe('connecting');
     session.onMatchStart(matchStart(1));
-    expect(session.screen()).toBe('countdown');
+    expect(session.screen(LATER)).toBe('countdown');
     session.onState(state(FfaPhase.Results, 450, 1), 0);
-    expect(session.screen()).toBe('results');
+    expect(session.screen(LATER)).toBe('results');
     session.onState(state(FfaPhase.Countdown, 90, 2), 0);
-    expect(session.screen()).toBe('results');
+    expect(session.screen(LATER)).toBe('results');
     expect(session.onMatchStart(matchStart(2))).toBe('new');
-    expect(session.screen()).toBe('countdown');
+    expect(session.screen(LATER)).toBe('countdown');
   });
 
   it('отсчёт неизвестного матча держит экран прошлой фазы: после лобби — лобби, итоги → лобби → отсчёт — лобби', () => {
@@ -166,22 +168,22 @@ describe('экран сессии', () => {
     session.onWelcome(welcome(), 0);
     session.onState(state(FfaPhase.Lobby, 300, 0, 7), 0);
     session.onState(state(FfaPhase.Countdown, 90, 1, 7), 0);
-    expect(session.screen()).toBe('lobby');
+    expect(session.screen(LATER)).toBe('lobby');
     session.onMatchStart(matchStart(1));
     session.onState(state(FfaPhase.Fight, 3600, 1, 7), 0);
     session.onState(state(FfaPhase.Results, 450, 1, 7), 0);
     session.onState(state(FfaPhase.Lobby, null, 1, 3), 0);
     session.onState(state(FfaPhase.Lobby, 300, 1, 7), 0);
     session.onState(state(FfaPhase.Countdown, 90, 2, 7), 0);
-    expect(session.screen()).toBe('lobby');
+    expect(session.screen(LATER)).toBe('lobby');
     expect(hud(session).results).toBeNull();
     session.onMatchStart(matchStart(2));
-    expect(session.screen()).toBe('countdown');
+    expect(session.screen(LATER)).toBe('countdown');
   });
 
   it('бой: на поле — бой; подбит и ждёт — «подбит»; зритель — зритель; до снимка — подключение', () => {
     const session = inFight();
-    expect(session.screen()).toBe('connecting');
+    expect(session.screen(LATER)).toBe('connecting');
     for (const [own, screen] of [
       ['alive', 'fight'],
       ['wreck', 'dead'],
@@ -189,7 +191,7 @@ describe('экран сессии', () => {
       ['spectator', 'spectator'],
     ] as const) {
       session.acceptSnapshot(snapshot(10, self(own)), 0);
-      expect(session.screen()).toBe(screen);
+      expect(session.screen(LATER)).toBe(screen);
     }
   });
 
@@ -203,7 +205,7 @@ describe('экран сессии', () => {
     const session = inFight();
     session.onError(code);
     session.onDisconnect();
-    expect(session.screen()).toBe(screen);
+    expect(session.screen(LATER)).toBe(screen);
     expect(hud(session).connection).toBeNull();
   });
 });
@@ -216,11 +218,11 @@ describe('возврат, повторы и устаревшие сообщен�
     expect(hud(session).connection).toBe('lost');
     expect(session.onWelcome(welcome(), 1000)).toBe('returned');
     expect(session.isConnectionLost).toBe(false);
-    expect(session.screen()).toBe('fight');
+    expect(session.screen(LATER)).toBe('fight');
     expect(hud(session, 2999).connection).toBe('returned');
     expect(hud(session, 3000).connection).toBeNull();
     expect(session.onWelcome(welcome(9), 5000)).toBe('lost');
-    expect(session.screen()).toBe('connecting');
+    expect(session.screen(LATER)).toBe('connecting');
     expect(session.match).toBeNull();
     expect(hud(session, 6000).connection).toBe('late');
     expect(hud(session, 7000).connection).toBeNull();
@@ -469,7 +471,7 @@ describe('подбит и возрождение', () => {
     const session = inFight();
     session.onWelcome(welcome(), 0);
     session.acceptSnapshot(snapshot(6, self('wreck', 5)), 0);
-    expect(session.screen()).toBe('dead');
+    expect(session.screen(LATER)).toBe('dead');
     expect(hud(session).death).toMatchObject({ kind: 'killed', killerName: 'Вася', isRicochet: false });
     const zoned = inFight();
     score(zoned, row(ME, 0, 1));
@@ -500,7 +502,7 @@ describe('подбит и возрождение', () => {
     session.acceptSnapshot(snapshot(SUDDEN_DEATH_AT * 30, self('wreck', 5, 50, null, true), [suddenDeath()]), 100);
     expect(hud(session, 100).death).toEqual({ kind: 'out' });
     session.acceptSnapshot(snapshot(SUDDEN_DEATH_AT * 30 + 50, self('spectator', 5, 0)), 2000);
-    expect(session.screen()).toBe('spectator');
+    expect(session.screen(LATER)).toBe('spectator');
     expect(hud(session, 5999).death).toEqual({ kind: 'out' });
     expect(hud(session, 6000).death).toBeNull();
     const waiting = inFight();
@@ -753,7 +755,36 @@ describe('итоги', () => {
     session.acceptSnapshot(snapshot(120 * 30, last), 900);
     score(session, row(ME, 2, 1), row(5, 1, 2));
     session.onState(state(FfaPhase.Results, 450), 1000);
-    expect(hud(session, 1000).results?.hasSurvived).toBe(hasSurvived);
+    expect(hud(session, LATER).results?.hasSurvived).toBe(hasSurvived);
+  });
+
+  it('F8 конец матча вживую: 2 с поля — бой, лента с последним убийством, без «Ты тут?»; затем итоги', () => {
+    const session = inFight();
+    score(session, row(ME, 1), row(5, 0, 1));
+    session.acceptSnapshot(snapshot(120 * 30, self('alive', null, 30, 3), [death(5, ME)]), 900);
+    session.onState(state(FfaPhase.Results, 210), 1000);
+    expect(hud(session, 1000)).toMatchObject({ screen: 'fight', results: null, idleInS: null });
+    expect(hud(session, 1000).feed.map(feedText)).toEqual(['Дима ✕ Вася']);
+    expect(hud(session, 2999).screen).toBe('fight');
+    expect(hud(session, 3000)).toMatchObject({ screen: 'results', results: { place: 1 } });
+  });
+
+  it('F8 подбит последним ботом — 2 с карточка «выбыл», затем итоги; давний снимок или возврат после обрыва — итоги сразу', () => {
+    const killed = inFight();
+    killed.acceptSnapshot(snapshot(120 * 30, self('wreck', 6, 30, null, true), [death(ME, 6)]), 900);
+    killed.onState(state(FfaPhase.Results, 210), 1000);
+    expect(hud(killed, 1500)).toMatchObject({ screen: 'dead', death: { kind: 'out' } });
+    expect(hud(killed, 3000).screen).toBe('results');
+    const stale = inFight();
+    stale.acceptSnapshot(snapshot(100 * 30), 0);
+    stale.onState(state(FfaPhase.Results, 210), 2000);
+    expect(hud(stale, 2000).screen).toBe('results');
+    const returned = inFight();
+    returned.acceptSnapshot(snapshot(120 * 30), 900);
+    returned.onDisconnect();
+    returned.onWelcome(welcome(), 1200);
+    returned.onState(state(FfaPhase.Results, 210), 1300);
+    expect(hud(returned, 1300).screen).toBe('results');
   });
 
   it('F5 матч кончился до финала, вошёл или вернулся после обрыва на итоги без снимка, не играл — «выжил» нет', () => {
@@ -761,7 +792,7 @@ describe('итоги', () => {
     early.acceptSnapshot(snapshot((SUDDEN_DEATH_AT - 1) * 30), 900);
     score(early, row(ME, 2), row(5, 1));
     early.onState(state(FfaPhase.Results, 450), 1000);
-    expect(hud(early, 1000).results?.hasSurvived).toBe(false);
+    expect(hud(early, LATER).results?.hasSurvived).toBe(false);
     expect(hud(results(2, 6), 1000).results?.hasSurvived).toBe(false);
     const returned = inFight();
     returned.acceptSnapshot(snapshot((SUDDEN_DEATH_AT + 5) * 30, self('alive')), 900);
@@ -774,7 +805,7 @@ describe('итоги', () => {
     late.acceptSnapshot(snapshot(120 * 30, self('alive')), 900);
     score(late, row(5, 1), row(6, 0));
     late.onState(state(FfaPhase.Results, 450), 1000);
-    expect(hud(late, 1000).results).toMatchObject({ place: null, hasSurvived: false });
+    expect(hud(late, LATER).results).toMatchObject({ place: null, hasSurvived: false });
   });
 
   it('итоги держатся до старта следующего матча; новый матч — нулевой счёт, лента и табло пусты', () => {
