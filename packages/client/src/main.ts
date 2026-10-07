@@ -27,6 +27,7 @@ const BOT_LEVEL_KEY = 'tanks.botLevel';
 const DEFAULT_BOT_LEVEL: BotLevel = 1;
 const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const APK_ROUTE = '/app/tanks.apk';
+const WATCH_PATH = '/watch';
 const SETTINGS_KEY_CODE = 'KeyO';
 const AUTOFIRE_ACTIVE_CLASS = 'is-active';
 const LEVEL_INFO_OPEN_CLASS = 'is-open';
@@ -195,6 +196,9 @@ function showHome(): void {
   });
   createBot.addEventListener('click', () => {
     startDuelWith(botRoomCode(levels.selected(), randomCode()));
+  });
+  byId('watch-open', HTMLButtonElement).addEventListener('click', () => {
+    goToFight(WATCH_PATH);
   });
   void showAndroidDownload();
 }
@@ -366,6 +370,31 @@ async function startFfa(route: FfaRoute): Promise<void> {
   });
 }
 
+// Бой ботов считается в браузере: холст над панелью управления. Код боя ботов и мозги — отдельный кусок сборки.
+async function startWatch(): Promise<void> {
+  const watchModule = await import('./watch/watchPage.js');
+  const canvas = byId('stage', HTMLCanvasElement);
+  document.body.classList.add('duel', 'watch');
+  watchModule.applyWatchStyle(document.body);
+  canvas.hidden = false;
+  byId('watch', HTMLElement).hidden = false;
+  const game = watchModule.mountWatch(
+    {
+      left: { toggle: byId('watch-left-toggle', HTMLButtonElement), list: byId('watch-left-list', HTMLElement) },
+      right: { toggle: byId('watch-right-toggle', HTMLButtonElement), list: byId('watch-right-list', HTMLElement) },
+      speeds: byId('watch-speeds', HTMLElement),
+      pause: byId('watch-pause', HTMLButtonElement),
+      restart: byId('watch-restart', HTMLButtonElement),
+      sound: byId('watch-sound', HTMLButtonElement),
+      result: byId('watch-result', HTMLElement),
+    },
+    localStorage,
+    watchModule.browserWatchDeps(canvas),
+  );
+  bindRotateHint(byId('rotate', HTMLElement));
+  Object.assign(window, { tanksGame: game });
+}
+
 const duelMatch = /^\/d\/([a-z0-9]{3,16})$/.exec(location.pathname);
 const ffaRoute = ffaRouteOf(location.pathname);
 const query = new URLSearchParams(location.search);
@@ -374,6 +403,8 @@ if (duelMatch?.[1] !== undefined) {
   startDuel(duelMatch[1]);
 } else if (ffaRoute !== null) {
   void startFfa(ffaRoute);
+} else if (location.pathname === WATCH_PATH) {
+  void startWatch();
 } else if (labKind === 'camera') {
   showCameraLab(byId('lab', HTMLElement));
 } else if (labKind === 'fx') {

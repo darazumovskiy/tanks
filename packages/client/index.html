@@ -35,6 +35,84 @@
     </button>
     <aside id="settings" class="settings" hidden></aside>
     <section id="lab" class="lab" hidden></section>
+    <section id="watch" class="watch" hidden>
+      <div id="watch-result" class="watch-result" aria-live="polite"></div>
+      <nav class="watch-bar" aria-label="Бой ботов">
+        <a class="watch-icon" href="/" aria-label="На главную">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 11.5 12 5l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1z" />
+          </svg>
+        </a>
+        <div class="watch-pick watch-pick-left">
+          <button
+            id="watch-left-toggle"
+            class="dropdown-toggle watch-toggle"
+            type="button"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-label="Левый боец"
+          ></button>
+          <div
+            id="watch-left-list"
+            class="dropdown-list watch-list"
+            role="listbox"
+            aria-label="Левый боец"
+            hidden
+          ></div>
+        </div>
+        <span class="watch-vs" aria-hidden="true">VS</span>
+        <div class="watch-pick watch-pick-right">
+          <button
+            id="watch-right-toggle"
+            class="dropdown-toggle watch-toggle"
+            type="button"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-label="Правый боец"
+          ></button>
+          <div
+            id="watch-right-list"
+            class="dropdown-list watch-list"
+            role="listbox"
+            aria-label="Правый боец"
+            hidden
+          ></div>
+        </div>
+        <div id="watch-speeds" class="watch-speeds" role="group" aria-label="Скорость"></div>
+        <button id="watch-pause" class="watch-icon watch-pause" type="button" aria-label="Пауза" aria-pressed="false">
+          <svg class="watch-icon-pause" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="6.5" y="5" width="4" height="14" rx="1" />
+            <rect x="13.5" y="5" width="4" height="14" rx="1" />
+          </svg>
+          <svg class="watch-icon-play" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 5.5v13a.8.8 0 0 0 1.2.7l10-6.5a.8.8 0 0 0 0-1.4l-10-6.5A.8.8 0 0 0 8 5.5z" />
+          </svg>
+        </button>
+        <button id="watch-restart" class="watch-icon" type="button" aria-label="Заново">
+          <svg class="watch-icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 12a7 7 0 1 1-2.05-4.95" />
+            <path d="M19 4.5V9h-4.5" />
+          </svg>
+        </button>
+        <button
+          id="watch-sound"
+          class="watch-icon watch-sound"
+          type="button"
+          aria-label="Выключить звук"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" /></svg>
+          <svg class="watch-icon-stroke watch-icon-waves" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 9.5a3.5 3.5 0 0 1 0 5" />
+            <path d="M17.5 7a7 7 0 0 1 0 10" />
+          </svg>
+          <svg class="watch-icon-stroke watch-icon-cross" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m15.5 9.5 5 5" />
+            <path d="m20.5 9.5-5 5" />
+          </svg>
+        </button>
+      </nav>
+    </section>
     <section id="home" class="home" hidden>
       <h1>Танки</h1>
       <div class="home-lead">
@@ -99,6 +177,12 @@
           </div>
           <p id="level-hint" class="level-hint" hidden></p>
           <button id="create-bot" class="action secondary">В бой</button>
+          <button id="watch-open" class="watch-open" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 5.5v13a.8.8 0 0 0 1.2.7l10-6.5a.8.8 0 0 0 0-1.4l-10-6.5A.8.8 0 0 0 8 5.5z" />
+            </svg>
+            Смотреть бой ботов
+          </button>
         </section>
         <section id="android" class="android" hidden>
           <h2>Приложение для Android</h2>
@@ -116,10 +200,11 @@
           друга» в лобби.
         </p>
         <p class="help">
-          «Создать дуэль» — ссылка для второго игрока; «Против бота» — тренировка с ботом выбранного уровня. Управление:
-          W A S D или стрелки — корпус, мышь — башня, левая кнопка или пробел — выстрел, M — звук. На телефоне: палец на
-          левой половине экрана — куда повёл, туда едет; на правой — башня, пока касаешься — огонь; кнопка «АВТО» у
-          правого края — огонь без остановки. Шестерёнка в углу (или O) — настройки управления и камеры прямо в бою.
+          «Создать дуэль» — ссылка для второго игрока; «Против бота» — тренировка с ботом выбранного уровня; «Смотреть
+          бой ботов» — выбери двух ботов и смотри, кто кого. Управление: W A S D или стрелки — корпус, мышь — башня,
+          левая кнопка или пробел — выстрел, M — звук. На телефоне: палец на левой половине экрана — куда повёл, туда
+          едет; на правой — башня, пока касаешься — огонь; кнопка «АВТО» у правого края — огонь без остановки.
+          Шестерёнка в углу (или O) — настройки управления и камеры прямо в бою.
         </p>
       </div>
     </section>

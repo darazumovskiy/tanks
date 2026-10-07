@@ -156,6 +156,14 @@ describe('HTTP', () => {
     }
   });
 
+  it('отдаёт index.html на странице боя ботов и только на ней', async () => {
+    const base = `http://127.0.0.1:${String(port)}`;
+    expect(await (await fetch(`${base}/watch`)).text()).toBe('<html>tanks</html>');
+    for (const route of ['/watch/', '/watch/x', '/watchx']) {
+      expect((await fetch(`${base}${route}`)).status, route).toBe(404);
+    }
+  });
+
   it('не принимает WebSocket на чужом пути', async () => {
     await expect(TestClient.connect(port, '/other')).rejects.toThrow();
   });

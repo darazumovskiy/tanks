@@ -56,6 +56,7 @@ export default defineConfig({
         'packages/client/src/visitor.ts',
         'packages/client/src/privacyNote.ts',
         'packages/client/src/freshBuild.ts',
+        'packages/client/src/watch/{botMatch,stepClock,watchView}.ts',
         'packages/analysis/src/**/*.ts',
         'packages/twin/src/**/*.ts',
       ],
