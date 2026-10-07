@@ -59,6 +59,8 @@ const FRAME_MS = 1000 / 60;
 const TICK_MS = 1000 / 30;
 // Кадров, за которые картинка чужих (отставание два тика) доходит до тика последнего снимка.
 const PICTURE_FRAMES = 6;
+// Кадров, за которые сдвиг камеры после выхода в бой выходит из центра и успокаивается.
+const CAMERA_SETTLE_FRAMES = 210;
 const ZONE = { startRadius: 9000, finalRadius: 9000, startShrink: 1000, endShrink: 1001 };
 const SUDDEN_DEATH_AT = 85;
 const AIM_TOLERANCE = 0.05;
@@ -542,6 +544,151 @@ describe('мышь в бою толпы на 1280 × 720', () => {
   });
 });
 
+describe('камера на старте и после появления, курсор в углу экрана', () => {
+  const EASE_IN_FRAMES = 90;
+  const MAX_SHIFT_STEP = 800 / 60 + 1e-6;
+
+  function shiftOf(harness: Harness): { x: number; y: number } {
+    const me = meOf(harness);
+    const center = harness.state().viewCenter as { x: number; y: number };
+    return { x: center.x - me.x, y: center.y - me.y };
+  }
+
+  function aimAtCorner(harness: Harness): void {
+    harness.canvas.dispatchEvent(pointer('pointermove', 1200, 60, 'mouse'));
+  }
+
+  // Сдвиг по кадрам выхода из центра: с нуля, без рывков и откатов, к концу выхода — полный.
+  function expectEaseIn(harness: Harness): void {
+    const lengths: number[] = [];
+    for (let frame = 0; frame < CAMERA_SETTLE_FRAMES; frame++) {
+      harness.frames(1);
+      const shift = shiftOf(harness);
+      lengths.push(Math.hypot(shift.x, shift.y));
+    }
+    const full = lengths[lengths.length - 1] ?? 0;
+    expect(full).toBeGreaterThan(150);
+    expect(lengths[0]).toBeLessThan(1);
+    for (let frame = 1; frame < lengths.length; frame++) {
+      const step = (lengths[frame] ?? 0) - (lengths[frame - 1] ?? 0);
+      expect(step).toBeGreaterThanOrEqual(-1e-6);
+      expect(step).toBeLessThanOrEqual(MAX_SHIFT_STEP);
+    }
+    const middle = lengths[EASE_IN_FRAMES / 2 - 1] ?? 0;
+    expect(middle).toBeGreaterThan(full / 3);
+    expect(middle).toBeLessThan((full * 2) / 3);
+    expect(lengths[EASE_IN_FRAMES]).toBeCloseTo(full, 1);
+  }
+
+  it('отсчёт — свой танк точно в центре экрана; старт боя — сдвиг к курсору выходит из нуля за 1,5 с', () => {
+    const harness = makeGame();
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster());
+    socket.receive(state(FfaPhase.Countdown, 90));
+    socket.receive(matchStart());
+    socket.receive(snapshotOf(arena([tank(ME, 1100, 650), tank(ENEMY, 2000, 1200)])));
+    aimAtCorner(harness);
+    for (let frame = 0; frame < 60; frame++) {
+      harness.frames(1);
+      const camera = harness.state().camera as { x: number; y: number; width: number; height: number };
+      expect(shiftOf(harness)).toEqual({ x: 0, y: 0 });
+      expect(camera.x + camera.width / 2).toBeCloseTo(1100, 9);
+      expect(camera.y + camera.height / 2).toBeCloseTo(650, 9);
+    }
+    socket.receive(state(FfaPhase.Fight, 3600));
+    expectEaseIn(harness);
+    expect(harness.state().aimSource).toBe('mouse');
+  });
+
+  it('возрождение: сдвиг снова выходит из нуля на новом месте', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 1100, 650), tank(ENEMY, 2000, 1200)]);
+    enterFight(harness, world);
+    aimAtCorner(harness);
+    harness.frames(CAMERA_SETTLE_FRAMES);
+    expect(Math.hypot(shiftOf(harness).x, shiftOf(harness).y)).toBeGreaterThan(150);
+    const own = world.tanks.find((candidate) => candidate.id === ME);
+    if (own === undefined) {
+      throw new Error('своего танка нет');
+    }
+    own.isAlive = false;
+    own.hp = 0;
+    step(world);
+    harness.socket().receive(snapshotOf(world, { state: 'wreck', killerId: ENEMY }));
+    harness.frames(30);
+    expect(harness.state().screen).toBe('dead');
+    own.isAlive = true;
+    own.hp = own.stats.maxHp;
+    own.x = 600;
+    own.y = 1100;
+    step(world);
+    harness.socket().receive(snapshotOf(world, { events: [event('spawn', ME, 600, 1100)] }));
+    expectEaseIn(harness);
+    expect(meOf(harness)).toMatchObject({ x: 600, y: 1100 });
+  });
+
+  it('гибель и появление без кадра между ними (вкладка была скрыта): сдвиг выходит из нуля', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 1100, 650), tank(ENEMY, 2000, 1200)]);
+    enterFight(harness, world);
+    aimAtCorner(harness);
+    harness.frames(CAMERA_SETTLE_FRAMES);
+    const own = world.tanks.find((candidate) => candidate.id === ME);
+    if (own === undefined) {
+      throw new Error('своего танка нет');
+    }
+    own.isAlive = false;
+    own.hp = 0;
+    step(world);
+    harness.socket().receive(snapshotOf(world, { state: 'wreck', killerId: ENEMY }));
+    own.isAlive = true;
+    own.hp = own.stats.maxHp;
+    own.x = 600;
+    own.y = 1100;
+    step(world);
+    harness.socket().receive(snapshotOf(world, { events: [event('spawn', ME, 600, 1100)] }));
+    expectEaseIn(harness);
+  });
+
+  it('следующий матч без кадра между боем и новым боем: сдвиг выходит из нуля', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 1100, 650), tank(ENEMY, 2000, 1200)]);
+    enterFight(harness, world);
+    aimAtCorner(harness);
+    harness.frames(CAMERA_SETTLE_FRAMES);
+    const socket = harness.socket();
+    socket.receive(state(FfaPhase.Results, 150));
+    socket.receive(state(FfaPhase.Countdown, 90, 2));
+    socket.receive(matchStart(2));
+    const next = arena([tank(ME, 600, 1100), tank(ENEMY, 2000, 1200)]);
+    socket.receive(snapshotOf(next));
+    socket.receive(state(FfaPhase.Fight, 3600, 2));
+    expectEaseIn(harness);
+    expect(meOf(harness)).toMatchObject({ x: 600, y: 1100 });
+  });
+
+  it('вход в идущий матч: сдвиг выходит из нуля с появлением своего танка', () => {
+    const harness = makeGame();
+    const socket = harness.socket();
+    socket.open();
+    socket.receive(welcome());
+    socket.receive(roster());
+    socket.receive(state(FfaPhase.Fight, 3000));
+    socket.receive(matchStart());
+    const world = arena([tank(ENEMY, 2000, 1200)]);
+    world.tick = 300;
+    socket.receive(snapshotOf(world, { state: 'waiting' }));
+    aimAtCorner(harness);
+    harness.frames(4);
+    world.tanks.push(tank(ME, 1100, 650));
+    step(world);
+    socket.receive(snapshotOf(world, { events: [event('spawn', ME, 1100, 650)] }));
+    expectEaseIn(harness);
+  });
+});
+
 describe('обрыв и возврат', () => {
   function fighting(): { harness: Harness; world: World } {
     const harness = makeGame();
@@ -830,7 +977,7 @@ describe('повторные и устаревшие сообщения', () => 
     }
     const socket = harness.socket();
     socket.receive(snapshotOf(world));
-    harness.frames(30);
+    harness.frames(CAMERA_SETTLE_FRAMES);
     const reset = vi.spyOn(harness.effects, 'reset');
     const cameraBefore = harness.state().camera;
     socket.receive(matchStart(1));
@@ -1841,6 +1988,7 @@ describe('звук толпы', () => {
     const harness = unlockedGame();
     const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1200)]);
     enterFight(harness, world);
+    harness.frames(CAMERA_SETTLE_FRAMES);
     const own = world.tanks.find((candidate) => candidate.id === ME);
     if (own !== undefined) {
       own.isAlive = false;

@@ -176,6 +176,8 @@ export class FfaGame {
   private isHidden = false;
   private isClosed = false;
   private hasFieldControls: boolean | null = null;
+  // Свой живой танк в бою был в прошлом кадре камеры.
+  private isOwnFightFramed = false;
 
   constructor(
     private readonly options: FfaGameOptions,
@@ -461,7 +463,7 @@ export class FfaGame {
     );
     for (const event of message.events) {
       if (event.kind === 'spawn' && event.tank === myId) {
-        this.camera.snap();
+        this.camera.easeIn();
         this.setAutoFire(false);
       }
       const tank = message.tanks.find((candidate) => candidate.id === event.tank) ?? null;
@@ -510,6 +512,7 @@ export class FfaGame {
     this.effects.reset();
     this.events.clear();
     this.camera.snap();
+    this.isOwnFightFramed = false;
   }
 
   private setAutoFire(isOn: boolean): void {
@@ -655,14 +658,22 @@ export class FfaGame {
     return { kind: 'turret', angle: me.turret };
   }
 
-  // Свой танк на поле — камера на нём; подбит и на итогах — окно стоит, где было; зритель — за целью; иначе центр
-  // карты.
+  // Свой танк на отсчёте — камера на нём без сдвига; в бою — со сдвигом, который после выхода в бой нарастает
+  // с нуля; подбит и на итогах — окно стоит, где было; зритель — за целью; иначе центр карты.
   private frameCamera(view: FfaFrameView, screen: SessionScreen, elapsed: number): FfaFraming {
     const size = this.renderer.screen;
     const me = this.prediction?.me ?? null;
-    const isOwnOnField = me !== null && me.isAlive && (screen === 'fight' || screen === 'countdown');
-    if (isOwnOnField) {
+    const isOwnAlive = me?.isAlive === true;
+    const isOwnFighting = isOwnAlive && screen === 'fight';
+    if (isOwnFighting && !this.isOwnFightFramed) {
+      this.camera.easeIn();
+    }
+    this.isOwnFightFramed = isOwnFighting;
+    if (isOwnFighting) {
       return this.camera.update(me, this.aimOf(me), size, elapsed);
+    }
+    if (isOwnAlive && screen === 'countdown') {
+      return this.camera.update(me, { kind: 'none' }, size, elapsed);
     }
     if ((screen === 'dead' || screen === 'results') && this.framing !== null) {
       return this.framing;
