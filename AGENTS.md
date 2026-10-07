@@ -40,7 +40,7 @@
 | Пакет | Роль |
 |---|---|
 | `packages/shared` | Движок (`engine/`) и протокол (`protocol/`) — общие для сервера и клиента; импорт `@tanks/shared/engine`, `@tanks/shared/protocol` |
-| `packages/bots` | Мозги ботов дуэли — лестница и двойник игрока — и задержка реакции; общие для сервера и браузера (бой ботов `/watch`), без платформы, как `shared`; импорт `@tanks/bots`, мозг двойника — `@tanks/bots/twin`; скрипт бота уровня 10 — `@tanks/bots/parallax.js`, профиль двойника-соперника — `@tanks/bots/twin-rival.json` (сервер читает файл, Vite — `?raw`); см. [bot-ladder.md](docs/tech/impl/backend/bot-ladder.md), [bot-watch.md](docs/tech/impl/frontend/bot-watch.md), [twin-bot.md](docs/tech/impl/backend/twin-bot.md) |
+| `packages/bots` | Мозги ботов дуэли — лестница и двойник автора игры — и задержка реакции; общие для сервера и браузера (бой ботов `/watch`), без платформы, как `shared`; импорт `@tanks/bots`, мозг двойника — `@tanks/bots/twin`; скрипт бота уровня 10 — `@tanks/bots/parallax.js`, профиль двойника-соперника — `@tanks/bots/twin-rival.json` (сервер читает файл, Vite — `?raw`); см. [bot-ladder.md](docs/tech/impl/backend/bot-ladder.md), [bot-watch.md](docs/tech/impl/frontend/bot-watch.md), [twin-bot.md](docs/tech/impl/backend/twin-bot.md) |
 | `packages/server` | Игровой сервер: комнаты, тик, WebSocket (`ws`) |
 | `packages/client` | Браузерный клиент: Vite, Canvas 2D |
 | `packages/mobile` | Оболочка Capacitor (Android, iOS): открывает клиент с игрового сервера; APK собирается в Docker — `deploy/android/build.sh`, см. [android-app.md](docs/tech/impl/infra/android-app.md) |
