@@ -16,7 +16,7 @@ export const WATCH_STYLE: WatchStyle = {
   fieldTopInset: 62,
   fieldSideInset: 10,
   fieldBottomInset: 6,
-  barHeightPx: 52,
+  barHeightPx: 56,
   barWideHeightPx: 64,
   transitionMs: 160,
   resultMs: 200,

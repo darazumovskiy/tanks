@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { BotBrain } from '@tanks/bots';
-import { DEFAULT_STATS, IDLE_ACTION, MAPS, ROUND_SECONDS, TICK_RATE, type Action } from '@tanks/shared/engine';
-import { BotMatch, COUNTDOWN_TICKS, ROUND_END_TICKS, type MatchFighter } from './botMatch.js';
+import {
+  DEFAULT_STATS,
+  DUEL_COUNTDOWN_TICKS,
+  IDLE_ACTION,
+  MAPS,
+  ROUND_SECONDS,
+  TICK_RATE,
+  type Action,
+} from '@tanks/shared/engine';
+import { BotMatch, ROUND_END_TICKS, type MatchFighter } from './botMatch.js';
 import { fighterById, type Fighter } from './fighters.js';
 
 // Предел тиков на раунд: серия без конца раунда — ошибка, а не зависание теста.
-const MAX_ROUND_TICKS = COUNTDOWN_TICKS + ROUND_SECONDS * TICK_RATE + ROUND_END_TICKS + 1;
+const MAX_ROUND_TICKS = DUEL_COUNTDOWN_TICKS + ROUND_SECONDS * TICK_RATE + ROUND_END_TICKS + 1;
 const FNV_OFFSET = 0x811c9dc5;
 const FNV_PRIME = 0x01000193;
 const SPY_REACTION_TICKS = 5;
@@ -89,7 +97,7 @@ describe('бой ботов', () => {
     const match = new BotMatch([fighter('bot10'), fighter('bot1')], 3);
     const spawn = { x: match.round.tanks[0].x, y: match.round.tanks[0].y };
     expect(match.phase).toBe('countdown');
-    for (let tick = 0; tick < COUNTDOWN_TICKS; tick++) {
+    for (let tick = 0; tick < DUEL_COUNTDOWN_TICKS; tick++) {
       expect(match.step()).toEqual({ events: [], isNewRound: false, hasRoundStepped: false });
     }
     expect({ x: match.round.tanks[0].x, y: match.round.tanks[0].y }).toEqual(spawn);

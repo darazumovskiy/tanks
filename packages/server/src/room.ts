@@ -3,6 +3,7 @@ import {
   createRound,
   DEFAULT_RULES,
   DEFAULT_STATS,
+  DUEL_COUNTDOWN_TICKS,
   roundPlan,
   stepRound,
   TICK_RATE,
@@ -55,7 +56,11 @@ export interface RoomOptions {
   maxInputsPerSecond: number;
 }
 
-export const DEFAULT_ROOM_OPTIONS: RoomOptions = { countdownTicks: 90, roundEndTicks: 90, maxInputsPerSecond: 90 };
+export const DEFAULT_ROOM_OPTIONS: RoomOptions = {
+  countdownTicks: DUEL_COUNTDOWN_TICKS,
+  roundEndTicks: 90,
+  maxInputsPerSecond: 90,
+};
 
 type DuelPhase = 'countdown' | 'fight' | 'roundEnd';
 

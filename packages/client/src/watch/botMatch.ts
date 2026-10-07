@@ -4,6 +4,7 @@ import {
   createRandom,
   createRound,
   DEFAULT_RULES,
+  DUEL_COUNTDOWN_TICKS,
   nextRandom,
   roundPlan,
   stepRound,
@@ -17,9 +18,7 @@ import { toSnapshotEvent, type SnapshotEvent } from '@tanks/shared/protocol';
 
 export type MatchPhase = 'countdown' | 'fight' | 'roundEnd';
 
-// Отсчёт — «2» и «1» по секунде, затем полсекунды «БОЙ!»; итог раунда держится две секунды боя.
-export const GO_TICKS = TICK_RATE / 2;
-export const COUNTDOWN_TICKS = 2 * TICK_RATE + GO_TICKS;
+// Итог раунда держится две секунды боя.
 export const ROUND_END_TICKS = 2 * TICK_RATE;
 
 export interface MatchFighter {
@@ -118,7 +117,7 @@ export class BotMatch {
     // На отсчёте мозги видят поле и думают, как бот на сервере над снимками отсчёта; их команды выбрасываются.
     const actions: [Action, Action] = [this.actionOf(0), this.actionOf(1)];
     if (this.currentPhase === 'countdown') {
-      if (this.ticksInPhase >= COUNTDOWN_TICKS) {
+      if (this.ticksInPhase >= DUEL_COUNTDOWN_TICKS) {
         this.enter('fight');
       }
       return QUIET_STEP;

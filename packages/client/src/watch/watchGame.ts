@@ -1,12 +1,13 @@
-import { DT, type Side } from '@tanks/shared/engine';
+import { DT, DUEL_COUNTDOWN_TICKS, TICK_RATE, type Side } from '@tanks/shared/engine';
 import type { SnapshotEvent, TankSnapshot } from '@tanks/shared/protocol';
+import { CountdownBeeper } from '../countdownBeeper.js';
 import type { WorldView } from '../prediction.js';
 import type { Effects } from '../render/effects.js';
 import { DuelFxPolicy, duelFxEvent } from '../render/fxEvent.js';
 import type { Overlay } from '../render/renderer.js';
 import type { WatchHudInfo } from '../render/watchRenderer.js';
 import type { Sfx } from '../sfx.js';
-import { BotMatch, COUNTDOWN_TICKS, GO_TICKS, type MatchPhase, type RoundOutcome } from './botMatch.js';
+import { BotMatch, type MatchPhase, type RoundOutcome } from './botMatch.js';
 import type { Fighter } from './fighters.js';
 import { StepClock, type WatchSpeed } from './stepClock.js';
 import { posesOf, worldViewAt, type Poses } from './watchView.js';
@@ -49,7 +50,7 @@ export interface WatchDebugState {
   isHidden: boolean;
   isMuted: boolean;
   fps: number;
-  worstStepMs: number;
+  worstFrameStepsMs: number;
 }
 
 const MS_PER_S = 1000;
@@ -58,9 +59,9 @@ const STATS_WINDOW_MS = 1000;
 const NO_GAME_ID = '';
 // Левый боец рисуется своим, как сторона 0 дуэли: оранжевый слева, бирюзовый справа.
 const LEFT_SIDE: Side = 0;
-const COUNTDOWN_DIGITS_S = (COUNTDOWN_TICKS - GO_TICKS) * DT;
-// Метка в countdownBeeped (там — последняя прозвучавшая цифра): «БОЙ!» уже прозвучал, второй раз не звучит.
-const GO_BEEPED = -1;
+const COUNTDOWN_S = DUEL_COUNTDOWN_TICKS * DT;
+// «БОЙ!» держится первые полсекунды боя: картинка не отстаёт от движка, как в дуэли по сети, иначе надписи не было бы.
+const GO_SHOWN_TICKS = TICK_RATE / 2;
 
 function tankSnapshot(tank: WorldView['round']['tanks'][number]): TankSnapshot {
   return {
@@ -94,9 +95,9 @@ export class WatchGame {
   private framesInWindow = 0;
   private windowStart: number;
   private fps = 0;
-  private worstStepMs = 0;
-  private worstStepCandidate = 0;
-  private countdownBeeped = 0;
+  private worstFrameStepsMs = 0;
+  private worstFrameStepsMsInWindow = 0;
+  private readonly countdownBeeper: CountdownBeeper;
 
   constructor(
     private readonly options: WatchGameOptions,
@@ -109,6 +110,7 @@ export class WatchGame {
     this.effects = deps.createEffects(() => this.match.names);
     this.renderer = deps.createRenderer(this.effects);
     this.sfx = deps.createSfx();
+    this.countdownBeeper = new CountdownBeeper(this.sfx);
     const startedAt = deps.now();
     this.lastFrame = startedAt;
     this.windowStart = startedAt;
@@ -171,7 +173,7 @@ export class WatchGame {
       isHidden: this.isHiddenNow,
       isMuted: this.sfx.isMuted,
       fps: this.fps,
-      worstStepMs: this.worstStepMs,
+      worstFrameStepsMs: this.worstFrameStepsMs,
     };
   }
 
@@ -185,7 +187,7 @@ export class WatchGame {
     this.effects.reset();
     this.fxPolicy.reset();
     this.poses = null;
-    this.countdownBeeped = 0;
+    this.countdownBeeper.reset();
     this.options.onOutcome(null, this.match.names);
   }
 
@@ -210,9 +212,9 @@ export class WatchGame {
       return;
     }
     this.fps = (this.framesInWindow * MS_PER_S) / (now - this.windowStart);
-    this.worstStepMs = this.worstStepCandidate;
+    this.worstFrameStepsMs = this.worstFrameStepsMsInWindow;
     this.framesInWindow = 0;
-    this.worstStepCandidate = 0;
+    this.worstFrameStepsMsInWindow = 0;
     this.windowStart = now;
   }
 
@@ -222,13 +224,13 @@ export class WatchGame {
     for (let step = 0; step < steps; step++) {
       this.stepOnce();
     }
-    this.worstStepCandidate = Math.max(this.worstStepCandidate, this.deps.now() - startedAt);
+    this.worstFrameStepsMsInWindow = Math.max(this.worstFrameStepsMsInWindow, this.deps.now() - startedAt);
     const view = worldViewAt(this.match.round, this.poses, this.clock.fraction);
     this.effects.update(frameMs / MS_PER_S, [
       { ...view.tanks[0], id: 0 },
       { ...view.tanks[1], id: 1 },
     ]);
-    this.beepCountdown();
+    this.countdownBeeper.update(this.overlay());
   }
 
   private stepOnce(): void {
@@ -240,6 +242,7 @@ export class WatchGame {
       return;
     }
     if (!step.hasRoundStepped) {
+      this.poses = null;
       return;
     }
     this.poses = poses;
@@ -259,27 +262,14 @@ export class WatchGame {
   }
 
   private overlay(): Overlay {
-    if (this.match.phase !== 'countdown') {
-      return null;
+    const { phase, phaseTicks } = this.match;
+    if (phase === 'countdown') {
+      return { kind: 'countdown', elapsedS: phaseTicks * DT, totalS: COUNTDOWN_S };
     }
-    return { kind: 'countdown', elapsedS: this.match.phaseTicks * DT, totalS: COUNTDOWN_DIGITS_S };
-  }
-
-  private beepCountdown(): void {
-    const overlay = this.overlay();
-    if (overlay === null) {
-      return;
+    if (phase === 'fight' && phaseTicks < GO_SHOWN_TICKS) {
+      return { kind: 'countdown', elapsedS: COUNTDOWN_S + phaseTicks * DT, totalS: COUNTDOWN_S };
     }
-    const secondsLeft = Math.ceil(overlay.totalS - overlay.elapsedS);
-    if (secondsLeft >= 1 && secondsLeft !== this.countdownBeeped) {
-      this.countdownBeeped = secondsLeft;
-      this.sfx.play('beep');
-      return;
-    }
-    if (secondsLeft < 1 && this.countdownBeeped !== GO_BEEPED) {
-      this.countdownBeeped = GO_BEEPED;
-      this.sfx.play('go');
-    }
+    return null;
   }
 
   private draw(frameMs: number): void {

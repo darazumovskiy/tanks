@@ -2538,13 +2538,14 @@ body.ffa .menu-toggle {
 /* Бой ботов: холст над нижней панелью управления. Размеры, переходы и цвета сторон — из токена WATCH_STYLE
    (CSS-переменные `--watch-*` ставит страница). */
 body.watch {
-  --watch-bar: var(--watch-bar-height, 52px);
+  --watch-bar: var(--watch-bar-height, 56px);
+  --watch-bar-under: env(safe-area-inset-bottom, 0px);
   font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
 
 body.watch #stage {
-  height: calc(100vh - var(--watch-bar));
-  height: calc(100dvh - var(--watch-bar));
+  height: calc(100vh - var(--watch-bar) - var(--watch-bar-under));
+  height: calc(100dvh - var(--watch-bar) - var(--watch-bar-under));
   cursor: default;
 }
 
@@ -2558,18 +2559,19 @@ body.watch #stage {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  height: var(--watch-bar);
-  padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+  height: calc(var(--watch-bar) + var(--watch-bar-under));
+  padding: 0 max(12px, env(safe-area-inset-right)) var(--watch-bar-under) max(12px, env(safe-area-inset-left));
   background: linear-gradient(180deg, #101513, #0b0f0d);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+/* Цель касания — не меньше 44 точек: кнопки, скорости, списки бойцов. */
 .watch-icon {
   flex: none;
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   color: #f4f1e8;
   background: rgba(255, 255, 255, 0.06);
@@ -2650,6 +2652,7 @@ body.watch #stage {
 
 .watch-toggle {
   width: 100%;
+  min-height: 44px;
   gap: 8px;
   padding: 5px 8px 5px 5px;
 }
@@ -2719,15 +2722,15 @@ body.watch #stage {
 .watch-speeds {
   flex: none;
   display: flex;
-  padding: 3px;
+  padding: 2px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
 }
 
 .watch-speed {
-  min-width: 38px;
-  height: 30px;
+  min-width: 44px;
+  height: 44px;
   padding: 0 8px;
   font-family: 'Russo One', 'Arial Black', sans-serif;
   font-size: 13px;
@@ -2755,8 +2758,8 @@ body.watch #stage {
 .watch-result {
   position: fixed;
   left: 50%;
-  top: calc((100vh - var(--watch-bar)) / 2);
-  top: calc((100dvh - var(--watch-bar)) / 2);
+  top: calc((100vh - var(--watch-bar) - var(--watch-bar-under)) / 2);
+  top: calc((100dvh - var(--watch-bar) - var(--watch-bar-under)) / 2);
   z-index: 2;
   display: flex;
   flex-direction: column;
@@ -2811,7 +2814,7 @@ body.watch #stage {
   color: rgba(244, 241, 232, 0.65);
 }
 
-/* Компьютер: панель выше, кнопки и итог крупнее. */
+/* Компьютер: панель выше, итог и подписи крупнее. */
 @media (min-width: 1000px) and (min-height: 600px) {
   body.watch {
     --watch-bar: var(--watch-bar-wide-height, 64px);
@@ -2819,11 +2822,6 @@ body.watch #stage {
 
   .watch-bar {
     gap: 12px;
-  }
-
-  .watch-icon {
-    width: 44px;
-    height: 44px;
   }
 
   .watch-pick {
@@ -2839,8 +2837,6 @@ body.watch #stage {
   }
 
   .watch-speed {
-    min-width: 44px;
-    height: 36px;
     font-size: 14px;
   }
 

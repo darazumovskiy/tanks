@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { WorldView } from '../prediction.js';
 import { Effects } from '../render/effects.js';
 import type { Overlay } from '../render/renderer.js';
 import { StampDecals } from '../render/stampDecals.js';
@@ -19,6 +20,7 @@ const LEFT_KEY = 'tanks.watch.left';
 const RIGHT_KEY = 'tanks.watch.right';
 
 interface Drawn {
+  view: WorldView;
   hud: WatchHudInfo;
   overlay: Overlay;
 }
@@ -66,8 +68,8 @@ describe('экран боя ботов', () => {
       },
       {
         createRenderer: () => ({
-          draw: (_view, hud, overlay) => {
-            drawn.push({ hud, overlay });
+          draw: (view, hud, overlay) => {
+            drawn.push({ view, hud, overlay });
           },
         }),
         createEffects: (names) =>
@@ -257,6 +259,39 @@ describe('экран боя ботов', () => {
     expect(result.classList.contains('is-shown')).toBe(false);
     expect(drawn.at(-1)?.overlay?.kind).toBe('countdown');
     expect(drawn.at(-1)?.hud.score).toEqual([0, 1]);
+  });
+
+  it('итог раунда: движок стоит — танки и снаряды на картинке стоят кадр в кадр', () => {
+    stored.set(LEFT_KEY, 'bot1');
+    mount();
+    speedButton(4).click();
+    framesUntil(() => game.debugState().phase === 'roundEnd');
+    speedButton(1).click();
+    frames(1);
+    const shown = drawn.length;
+    frames(FRAMES_PER_S);
+    expect(game.debugState().phase).toBe('roundEnd');
+    const poses = drawn.slice(shown).map(({ view }) =>
+      JSON.stringify({
+        tanks: view.tanks.map(({ x, y, heading, turret }) => ({ x, y, heading, turret })),
+        bullets: view.bullets.map(({ id, x, y }) => ({ id, x, y })),
+      }),
+    );
+    expect(new Set(poses).size).toBe(1);
+  });
+
+  it('отсчёт как в дуэли: «3, 2, 1» за три секунды, «БОЙ!» — первые полсекунды боя', () => {
+    mount();
+    frames(1);
+    expect(game.debugState().phase).toBe('countdown');
+    expect(drawn.at(-1)?.overlay).toMatchObject({ kind: 'countdown', totalS: 3 });
+    framesUntil(() => game.debugState().phase === 'fight');
+    const go = drawn.at(-1)?.overlay;
+    expect(go?.kind).toBe('countdown');
+    expect(go !== null && go !== undefined && go.elapsedS >= go.totalS).toBe(true);
+    expect(game.debugState().totalTicks).toBe(3 * TICKS_PER_S);
+    frames(FRAMES_PER_S / 2);
+    expect(drawn.at(-1)?.overlay).toBeNull();
   });
 
   it('итог раунда словами: победа, победа по времени, ничьи', () => {

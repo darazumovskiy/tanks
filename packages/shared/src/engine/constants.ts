@@ -2,6 +2,8 @@ export const TICK_RATE = 30;
 export const DT = 1 / TICK_RATE;
 export const ARENA = { width: 1600, height: 900 } as const;
 export const ROUND_SECONDS = 120;
+// Отсчёт перед раундом дуэли: «3, 2, 1» по секунде.
+export const DUEL_COUNTDOWN_TICKS = 3 * TICK_RATE;
 export const TANK_RADIUS = 24;
 export const BULLET_RADIUS = 5;
 export const BULLET_LIFETIME = 4;

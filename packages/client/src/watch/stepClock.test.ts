@@ -42,6 +42,16 @@ describe('шаги движка за кадр', () => {
     expect(clock.advance(MS_PER_S, 1)).toBe(0);
   });
 
+  it('отрицательный промежуток — кадр с отметкой раньше старта: ни шага, ни лишней доли', () => {
+    const clock = new StepClock();
+    expect(clock.advance(-40, 4)).toBe(0);
+    expect(clock.fraction).toBe(0);
+    expect(clock.advance(20, 1)).toBe(0);
+    expect(clock.advance(-10, 1)).toBe(0);
+    expect(clock.fraction).toBeCloseTo(0.6);
+    expect(clock.advance(14, 1)).toBe(1);
+  });
+
   it('сброс обнуляет накопленное', () => {
     const clock = new StepClock();
     clock.advance(30, 1);
