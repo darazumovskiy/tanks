@@ -8,7 +8,7 @@
 
 ```
 npm run build
-npm run swarm -- --url wss://172-232-212-157.sslip.io/ws --size 30 --count 28
+npm run swarm -- --url wss://tankbattle.io/ws --size 30 --count 28
 ```
 
 | Параметр | Умолчание | Что |

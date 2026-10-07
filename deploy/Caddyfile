@@ -1,4 +1,5 @@
-{$TANKS_HOST} {
+# Старое имя остаётся навсегда: установленные APK открывают именно его и на другой адрес не переходят.
+tankbattle.io, 172-232-212-157.sslip.io {
 	encode zstd gzip
 
 	# Метрики игры читает только Vector с этой же машины.
@@ -17,4 +18,8 @@
 	handle {
 		reverse_proxy 127.0.0.1:8080
 	}
+}
+
+www.tankbattle.io {
+	redir https://tankbattle.io{uri} permanent
 }

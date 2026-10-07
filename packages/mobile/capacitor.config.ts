@@ -7,7 +7,7 @@ const config: CapacitorConfig = {
   appName: 'Танки',
   webDir: 'www',
   server: {
-    url: process.env.TANKS_SERVER_URL ?? 'https://172-232-212-157.sslip.io',
+    url: process.env.TANKS_SERVER_URL ?? 'https://tankbattle.io',
     cleartext: false,
   },
   android: {

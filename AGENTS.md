@@ -55,7 +55,7 @@
 
 Локальный запуск: `npm run build && PORT=8080 STATIC_ROOT=$PWD/packages/client/dist node packages/server/dist/main.js`, открыть `http://localhost:8080/`. Разработка клиента — `npm run dev -w @tanks/client` (Vite проксирует `/ws` на 8080).
 
-Боевая проба: `https://172-232-212-157.sslip.io` (Akamai, Милан). Выкладка — `deploy/deploy.sh root@172.232.212.157` после пуша в `main`; выкладывать можно в любой момент: перезапуск сервера и оборванные бои допустимы, пустых боёв не ждать. Подробности — [docs/tech/impl/infra/deploy-proto.md](docs/tech/impl/infra/deploy-proto.md). Android-приложение ставится с главной страницы по QR (`/app/tanks.apk`); оболочка грузит игру с сервера, выкладка обновляет и телефоны.
+Боевая проба: `https://tankbattle.io` (Akamai, Милан; старое имя `172-232-212-157.sslip.io` живо для Android-приложений до версии 0.5). Выкладка — `deploy/deploy.sh root@172.232.212.157` после пуша в `main`; выкладывать можно в любой момент: перезапуск сервера и оборванные бои допустимы, пустых боёв не ждать. Подробности — [docs/tech/impl/infra/deploy-proto.md](docs/tech/impl/infra/deploy-proto.md). Android-приложение ставится с главной страницы по QR (`/app/tanks.apk`); оболочка грузит игру с сервера, выкладка обновляет и телефоны.
 
 ## Текущая задача
 
