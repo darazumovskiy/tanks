@@ -560,7 +560,8 @@ export class FfaGame {
     const me = this.prediction?.me ?? null;
     const phase = this.session.phase;
     const isMatchRunning = phase === FfaPhase.Countdown || phase === FfaPhase.Fight;
-    const isOnline = this.net.isConnected && !this.session.hasFatalError;
+    // До FfaWelcome нового соединения команды не уходят: сервер начинает их счёт с нуля и запомнил бы старый номер.
+    const isOnline = this.net.isConnected && !this.session.isConnectionLost && !this.session.hasFatalError;
     if (me === null || !me.isAlive || !isMatchRunning || !isOnline) {
       return null;
     }

@@ -714,7 +714,9 @@ describe('обрыв и возврат', () => {
     const second = harness.socket();
     expect(second).not.toBe(first);
     second.open();
+    harness.frames(10);
     expect(second.sent[0]).toMatchObject({ type: MessageType.Join, token: 'пропуск' });
+    expect(second.inputs).toHaveLength(0);
     second.receive(welcome());
     second.receive(roster());
     second.receive(state(FfaPhase.Fight, 3000));

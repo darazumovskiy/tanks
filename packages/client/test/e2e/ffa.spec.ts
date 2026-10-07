@@ -1,7 +1,7 @@
 import { expect, test, type Browser } from '@playwright/test';
 import { deriveStats, ffaMap, isTraceReturning, STAT_KEYS, traceShot, type Point } from '@tanks/shared/engine';
 import { FfaPhase } from '@tanks/shared/protocol';
-import { NetProxy } from './netProxy.js';
+import { NetProxy, type NetProxyOptions } from './netProxy.js';
 import { Player, sleep, type FfaDebugState, type PlayerOptions } from './player.js';
 import { GameServer } from './server.js';
 import { SwarmProcess } from './swarm.js';
@@ -15,6 +15,7 @@ const TOUGH = { armor: 5, engine: 3, gun: 2, reload: 0 };
 const TOUGH_STATS = STAT_KEYS.map((key) => String(TOUGH[key])).join('');
 const TOKEN_KEY = `tanks.ffaToken.${String(SIZE)}`;
 const KEY_FORWARD = 'KeyW';
+const KEY_BACKWARD = 'KeyS';
 const DRIVE_MS = 800;
 const MIN_DRIVE_DISTANCE = 20;
 // Лобби затихает за секунду, отсчёт — 3 с, плюс загрузка страницы и пола.
@@ -33,6 +34,8 @@ const RICOCHET_AIM_PRECISION = 0.005;
 const RESPAWN_MS = 4_000;
 const RESPAWN_SLACK_MS = 1_500;
 const REFUSE_MS = 1_500;
+// Ответ на вход идёт дольше шага ввода: команда, ушедшая до приветствия нового соединения, обязательно случается.
+const RECONNECT_PROXY_DELAY_MS = 30;
 // Детектор молчания клиента срабатывает через 4 с без единого сообщения сервера.
 const SILENCE_EARLY_MS = 3_500;
 const SILENCE_LATE_MS = 7_000;
@@ -98,8 +101,8 @@ function startSwarm(server: GameServer, count: number): SwarmProcess {
   return swarm;
 }
 
-async function startProxy(server: GameServer): Promise<NetProxy> {
-  const proxy = await NetProxy.start(server.listenPort);
+async function startProxy(server: GameServer, options: NetProxyOptions = {}): Promise<NetProxy> {
+  const proxy = await NetProxy.start(server.listenPort, options);
   proxies.push(proxy);
   return proxy;
 }
@@ -126,14 +129,14 @@ function isFighting(state: FfaDebugState): boolean {
   return state.screen === 'fight' && state.me !== null;
 }
 
-// Едет вперёд и возвращает, на сколько сдвинулся свой танк, когда сдвиг стал заметен.
-async function driveForward(player: Player): Promise<number> {
+// Едет клавишей key и возвращает, на сколько сдвинулся свой танк, когда сдвиг стал заметен.
+async function drive(player: Player, key: string): Promise<number> {
   const before = ownTank(await player.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой'));
   const distanceOf = (state: FfaDebugState): number => {
     const me = ownTank(state);
     return Math.hypot(me.x - before.x, me.y - before.y);
   };
-  await player.holdKey(KEY_FORWARD, DRIVE_MS);
+  await player.holdKey(key, DRIVE_MS);
   const after = await player.waitForFfa(
     (state) => isFighting(state) && distanceOf(state) > MIN_DRIVE_DISTANCE,
     SCREEN_TIMEOUT_MS,
@@ -267,7 +270,7 @@ test('компьютер и телефон в лобби, затем рой из
   const desktopId = fightA.playerId;
   const seenBefore = (await phone.ffaState())?.others.find((tank) => tank.id === desktopId);
   expect(seenBefore).toBeDefined();
-  expect(await driveForward(desktop)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
+  expect(await drive(desktop, KEY_FORWARD)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
   await phone.waitForFfa(
     (state) => {
       const seen = state.others.find((tank) => tank.id === desktopId);
@@ -326,7 +329,7 @@ test('обрыв через посредника: разрыв и молчани
   browser,
 }) => {
   const server = await startServer({ FFA_MINIMUM: '1' });
-  const proxy = await startProxy(server);
+  const proxy = await startProxy(server, { delayMs: RECONNECT_PROXY_DELAY_MS });
   const player = await openFfa(browser, proxy.baseUrl, 'Связь');
   const { playerId } = await player.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой');
 
@@ -337,7 +340,7 @@ test('обрыв через посредника: разрыв и молчани
   proxy.isRefusing = false;
   await expect(player.ffaLayer('ffa-connection')).toContainText('ВЕРНУЛИСЬ!', { timeout: SCREEN_TIMEOUT_MS });
   expect((await player.waitForFfa(isFighting, SCREEN_TIMEOUT_MS, 'бой после разрыва')).playerId).toBe(playerId);
-  expect(await driveForward(player)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
+  expect(await drive(player, KEY_FORWARD)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
 
   await expect(player.ffaLayer('ffa-connection')).toHaveCount(0, { timeout: SCREEN_TIMEOUT_MS });
   const mutedAt = Date.now();
@@ -346,7 +349,8 @@ test('обрыв через посредника: разрыв и молчани
   expect(Date.now() - mutedAt).toBeGreaterThan(SILENCE_EARLY_MS);
   await expect(player.ffaLayer('ffa-connection')).toContainText('ВЕРНУЛИСЬ!', { timeout: SCREEN_TIMEOUT_MS });
   expect((await player.waitForFfa(isFighting, SCREEN_TIMEOUT_MS, 'бой после молчания')).playerId).toBe(playerId);
-  expect(await driveForward(player)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
+  // Назад, откуда приехал: вперёд танк мог уже упереться в стену.
+  expect(await drive(player, KEY_BACKWARD)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
 });
 
 test('вторая страница с пропуском первой: у первой «Занято», вторая на том же месте; «Играть здесь» возвращает место', async ({
@@ -362,7 +366,7 @@ test('вторая страница с пропуском первой: у пе�
   await first.waitForScreen('replaced', SCREEN_TIMEOUT_MS);
   await expect(first.ffaLayer('ffa-fatal')).toContainText('ТЫ ИГРАЕШЬ В ДРУГОМ МЕСТЕ');
   expect((await second.waitForFfa(isFighting, FIGHT_TIMEOUT_MS, 'бой на второй')).playerId).toBe(playerId);
-  expect(await driveForward(second)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
+  expect(await drive(second, KEY_FORWARD)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
   await sleep(1_000);
   expect((await first.ffaState())?.screen).toBe('replaced');
 
@@ -468,7 +472,7 @@ test('короткий матч с роем: вход посреди боя, в�
     SCREEN_TIMEOUT_MS,
     'отсчёт второго матча',
   );
-  expect(await driveForward(fighter)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
+  expect(await drive(fighter, KEY_FORWARD)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
 });
 
 test('вход в финал без ботов в матче — зритель: клик меняет цель, на итогах «СЛЕДУЮЩИЙ МАТЧ — ТВОЙ»', async ({
@@ -566,7 +570,7 @@ test('серверные боты: человек в лобби — боты с 
     'бой с ботами',
   );
   expect(fight.players).toBe(7);
-  expect(await driveForward(player)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
+  expect(await drive(player, KEY_FORWARD)).toBeGreaterThan(MIN_DRIVE_DISTANCE);
 });
 
 test('серверные боты: второй браузер входит в полную игру с ботами — та же игра, бот ушёл, оба в бою', async ({
