@@ -14,10 +14,12 @@ import {
   type ParsedGame,
 } from './logParser.js';
 import { buildReport, localSortKey } from './report.js';
+import { readVisits, summarizeVisitors, type VisitorSummary } from './visitors.js';
 
 export type { FfaGameSummary, FfaMatchSummary } from './ffaGames.js';
 export type { GameAnalysis, GameSummary, RoundSummary } from './game.js';
 export type { ParsedGame, ParsedRound, Pose, Tick } from './logParser.js';
+export type { VisitorSummary } from './visitors.js';
 export * from './profile/index.js';
 export { wallClearance } from './geometry.js';
 export {
@@ -34,6 +36,7 @@ const DEFAULT_TZ_HOURS = 3;
 const DEFAULT_OUT_DIR_NAME = 'analysis';
 const REPORT_FILE = 'report.md';
 const JSON_FILE = 'games.json';
+const VISITORS_FILE = 'visitors.json';
 const JSON_INDENT = 1;
 const LINE_SEPARATOR = '\n';
 
@@ -46,8 +49,10 @@ export interface AnalyzeOptions {
 export interface AnalyzeResult {
   reportPath: string;
   jsonPath: string;
+  visitorsPath: string;
   games: GameAnalysis[];
   ffaGames: FfaGameSummary[];
+  visitors: VisitorSummary[];
   skipped: string[];
 }
 
@@ -100,7 +105,8 @@ export function analyzeLogs(logDir: string, options: AnalyzeOptions = {}): Analy
   const tzHours = options.tzHours ?? DEFAULT_TZ_HOURS;
   const only = options.only === undefined ? null : new Set(options.only);
   mkdirSync(outDir, { recursive: true });
-  const devices = deviceIndexOf(readRoomLogs(logDir));
+  const rooms = readRoomLogs(logDir);
+  const devices = deviceIndexOf(rooms);
   const games: GameAnalysis[] = [];
   const ffaGames: FfaGameSummary[] = [];
   const skipped: string[] = [];
@@ -126,8 +132,11 @@ export function analyzeLogs(logDir: string, options: AnalyzeOptions = {}): Analy
       JSON_INDENT,
     ),
   );
-  writeFileSync(reportPath, buildReport(games, tzHours, ffaGames));
-  return { reportPath, jsonPath, games, ffaGames, skipped };
+  const visitors = summarizeVisitors(readVisits(logDir), rooms, tzHours);
+  const visitorsPath = join(outDir, VISITORS_FILE);
+  writeFileSync(visitorsPath, JSON.stringify(visitors, null, JSON_INDENT));
+  writeFileSync(reportPath, buildReport(games, tzHours, ffaGames, visitors));
+  return { reportPath, jsonPath, visitorsPath, games, ffaGames, visitors, skipped };
 }
 
 function collectDuels(sources: Iterable<GameSource>, devices: DeviceIndex, options: LoadOptions): LoggedGame[] {

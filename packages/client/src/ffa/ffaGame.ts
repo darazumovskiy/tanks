@@ -62,6 +62,7 @@ export interface FfaGameOptions {
   hud: HTMLElement;
   settings: Readonly<Settings>;
   isTouchDevice: boolean;
+  deviceId: string;
   telemetry: Telemetry;
   onAutoFireChange: (isOn: boolean) => void;
   // Кнопки управления боем нужны, только пока свой танк на поле.
@@ -219,7 +220,7 @@ export class FfaGame {
     this.summaryAt = now;
     this.diag = this.deps.createDiag(this.roomCode);
     this.diag.write(
-      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'} mode=ffa size=${String(options.size)}`,
+      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'} mode=ffa size=${String(options.size)} dev=${options.deviceId}`,
     );
     this.effects = this.deps.createEffects(
       (id) => (id === this.session.playerId ? FFA_OWN_COLOR : FFA_OTHER_COLOR),

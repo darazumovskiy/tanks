@@ -45,6 +45,7 @@ export interface GameOptions {
   onAutoFireChange: (isOn: boolean) => void;
   settings: Readonly<Settings>;
   isTouchDevice: boolean;
+  deviceId: string;
   telemetry: Telemetry;
 }
 
@@ -156,7 +157,7 @@ export class Game {
     this.sfx = this.deps.createSfx();
     this.diag = this.deps.createDiag(options.roomCode);
     this.diag.write(
-      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'}`,
+      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'} dev=${options.deviceId}`,
     );
     const effects = this.deps.createEffects(() => this.names());
     this.effects = effects;

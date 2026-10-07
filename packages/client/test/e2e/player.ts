@@ -209,8 +209,14 @@ export class Player {
     return new Player(context, page, name);
   }
 
-  // Игрок заходит с главной: выбирает уровень бота и жмёт «Против бота».
-  static async openAgainstBot(browser: Browser, baseUrl: string, name: string, botLevel: number): Promise<Player> {
+  // Игрок заходит с главной: выбирает уровень бота и жмёт «Против бота». query — параметры адреса главной (`?from=…`).
+  static async openAgainstBot(
+    browser: Browser,
+    baseUrl: string,
+    name: string,
+    botLevel: number,
+    query = '',
+  ): Promise<Player> {
     const context = await browser.newContext();
     await context.addInitScript(
       (entries: Record<string, string>) => {
@@ -221,7 +227,7 @@ export class Player {
       { [NICKNAME_KEY]: name },
     );
     const page = await context.newPage();
-    await page.goto(`${baseUrl}/`);
+    await page.goto(`${baseUrl}/${query}`);
     await page.locator(BOT_LEVEL_TOGGLE).click();
     await page.locator(levelCardSelector(botLevel)).click();
     await page.locator(CREATE_BOT_BUTTON).click();

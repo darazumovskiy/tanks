@@ -52,6 +52,7 @@ import { EVENT_MAX_WAIT_MS } from '../pictureTime.js';
 const ME = 4;
 const ENEMY = 5;
 const SIZE = 10;
+const DEVICE_ID = 'abcdefghjk23456789mnpqrs';
 const MAP = ffaMap(SIZE);
 const SCREEN = { width: 1280, height: 720, pixelRatio: 1 };
 const FRAME_MS = 1000 / 60;
@@ -188,6 +189,7 @@ function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings>
       hud,
       settings: { ...defaultSettings(), hasRicochetGuard: false, ...settings },
       isTouchDevice: isTouch,
+      deviceId: DEVICE_ID,
       telemetry: new Telemetry(CLIENT_INFO, { beacon: () => true }),
       onAutoFireChange: (isOn) => autoFire.push(isOn),
       onFieldControlsChange: (isVisible) => fieldControls.push(isVisible),
@@ -712,6 +714,17 @@ describe('журнал клиента', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(sentWith(harness, ' device ').url).toBe(`/log?key=room-ffa${String(SIZE)}&src=C${String(ME)}`);
     expect(sentWith(harness, ' net welcome id=4 ').url).toBe(`/log?key=K7QX&src=C${String(ME)}`);
+  });
+
+  it('строка устройства кончается номером устройства', async () => {
+    const harness = makeGame();
+    harness.socket().open();
+    harness.socket().receive(welcome());
+    await vi.advanceTimersByTimeAsync(1000);
+    const line = sentWith(harness, ' device ')
+      .body.split('\n')
+      .find((text) => text.includes(' device '));
+    expect(line).toMatch(new RegExp(` mode=ffa size=${String(SIZE)} dev=${DEVICE_ID}$`));
   });
 
   it('возврат тем же номером — источник прежний; место ушло — строки идут под новым номером до закрытия', async () => {

@@ -35,6 +35,7 @@ const TICK_MS = 1000 / 30;
 // Кадров, за которые картинка противника (отставание два тика) доходит до тика последнего снимка.
 const PICTURE_FRAMES = 6;
 const MAP_INDEX = 0;
+const DEVICE_ID = 'abcdefghjk23456789mnpqrs';
 const CLIENT_INFO = {
   platform: 'desktop' as const,
   shell: 'browser' as const,
@@ -178,6 +179,7 @@ function startDuel(): Harness {
       onAutoFireChange: () => undefined,
       settings: { ...defaultSettings(), hasRicochetGuard: false },
       isTouchDevice: false,
+      deviceId: DEVICE_ID,
       telemetry: new Telemetry(CLIENT_INFO, { beacon: () => true }),
     },
     {
@@ -275,6 +277,13 @@ afterEach(() => {
 });
 
 describe('проводка дуэли', () => {
+  it('строка устройства в журнале кончается номером устройства', () => {
+    const write = vi.spyOn(DiagLog.prototype, 'write');
+    startDuel();
+    const device = write.mock.calls.map(([line]) => line).find((line) => line.startsWith('device '));
+    expect(device).toMatch(new RegExp(` touch=0 dev=${DEVICE_ID}$`));
+  });
+
   it('снимок с запасом команд — один шаг ввода пропущен: команда не уходит, в журнале `in skip`', () => {
     const inputsOver = (hasSpareInput: boolean): { inputs: number; skips: string[] } => {
       const harness = startDuel();

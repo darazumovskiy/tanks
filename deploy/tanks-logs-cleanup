@@ -1,5 +1,7 @@
 #!/bin/bash
-# Ежедневная чистка журналов игр: deploy-local.sh кладёт этот файл в /etc/cron.daily.
+# Ежедневная чистка журналов: deploy-local.sh кладёт этот файл в /etc/cron.daily.
 set -euo pipefail
-KEEP_DAYS=7
-find /opt/tanks-logs -type f -name '*.log' -mtime +"$KEEP_DAYS" -delete
+GAME_KEEP_DAYS=7
+VISIT_KEEP_DAYS=90
+find /opt/tanks-logs -maxdepth 1 -type f -name '*.log' -mtime +"$GAME_KEEP_DAYS" -delete
+find /opt/tanks-logs/visits -type f -name '*.log' -mtime +"$VISIT_KEEP_DAYS" -delete 2>/dev/null || true

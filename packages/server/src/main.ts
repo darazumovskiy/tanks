@@ -21,11 +21,13 @@ const host = process.env.HOST ?? '0.0.0.0';
 const staticRoot = process.env.STATIC_ROOT;
 const apkPath = process.env.APK_PATH;
 const logDir = process.env.LOG_DIR;
+const geoDir = process.env.GEO_DIR;
 const wallSlidePercent = wallSlidePercentFromEnv(process.env.WALL_SLIDE);
 const app = createApp({
   ...(staticRoot === undefined ? {} : { staticRoot }),
   ...(apkPath === undefined ? {} : { apkPath }),
   ...(logDir === undefined ? {} : { logDir }),
+  ...(geoDir === undefined ? {} : { geoDir }),
   rules: { wallSlidePercent },
   ffaEnv: process.env,
 });

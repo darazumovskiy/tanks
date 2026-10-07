@@ -2,7 +2,7 @@ import { DT, MUZZLE_OFFSET, TICK_RATE, type Side } from '@tanks/shared/engine';
 import { gameTimecode } from '@tanks/shared/protocol';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { analyzeLogLines, type LogFile } from './index.js';
 import type { LogAction, Pose } from './logParser.js';
 import { selectProfileRounds, type ProfileRound, type ProfileSelection } from './profile/index.js';
@@ -162,8 +162,19 @@ export const ANDROID_USER_AGENT =
 export const MAC_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36';
 
-export function deviceLine(userAgent: string, isTouch: boolean): string {
-  return `device ua=${userAgent} screen=792x375 dpr=3 touch=${isTouch ? '1' : '0'}`;
+// dev — номер устройства в конце строки, как пишет клиент; tail — признаки боя толпы перед ним (` mode=ffa size=30`).
+export function deviceLine(userAgent: string, isTouch: boolean, dev?: string, tail = ''): string {
+  const device = dev === undefined ? '' : ` dev=${dev}`;
+  return `device ua=${userAgent} screen=792x375 dpr=3 touch=${isTouch ? '1' : '0'}${tail}${device}`;
+}
+
+// Время суток `HH:MM:SS.mmm` внутри ISO-даты `ГГГГ-ММ-ДДTHH:MM:SS.mmmZ`.
+const ISO_TIME_START = 11;
+const ISO_TIME_END = 23;
+
+// Строка файла визитов: `HH:MM:SS.mmm V {JSON}`, время строки — из `at`.
+export function visitLine(fields: { at: string; dev: string } & Record<string, unknown>): string {
+  return `${fields.at.slice(ISO_TIME_START, ISO_TIME_END)} V ${JSON.stringify(fields)}`;
 }
 
 // Журнал комнаты: строки клиента до первого раунда.
@@ -184,6 +195,7 @@ export function makeLogDir(files: Record<string, string>, subdir?: string): stri
   const dir = subdir === undefined ? root : join(root, subdir);
   mkdirSync(dir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, name)), { recursive: true });
     writeFileSync(join(dir, name), content);
   }
   return dir;
