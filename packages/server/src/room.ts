@@ -13,10 +13,12 @@ import {
   type Stats,
 } from '@tanks/shared/engine';
 import {
+  duelSide,
   encode,
   gameTimecode,
   MessageType,
   rulesToByte,
+  toSnapshotEvent,
   type RoomStateMessage,
   type RoundStartMessage,
   type ServerMessage,
@@ -24,7 +26,6 @@ import {
   type SnapshotMessage,
 } from '@tanks/shared/protocol';
 import { randomInt } from 'node:crypto';
-import { duelSide, toSnapshotEvent } from './events.js';
 import {
   clearInput,
   createInputChannel,

@@ -1,5 +1,5 @@
-import type { DuelEvent, Side } from '@tanks/shared/engine';
-import { EventFlag, type SnapshotEvent } from '@tanks/shared/protocol';
+import type { DuelEvent, Side } from '../engine/index.js';
+import { EventFlag, type SnapshotEvent } from './messages.js';
 
 // Номер танка дуэли — его сторона: движок создаёт танки дуэли с номерами 0 и 1.
 export function duelSide(id: number): Side {

@@ -1,4 +1,4 @@
-import type { BotBrain } from '@tanks/bots';
+import { ReactionDelay, type BotBrain } from '@tanks/bots';
 import { botView, createRound, DT, type Round, type Side } from '@tanks/shared/engine';
 import {
   decode,
@@ -17,12 +17,13 @@ export class ArenaBot implements Connection {
   private side: Side = 0;
   private seq = 0;
   private round: Round | null = null;
-  private recent: SnapshotMessage[] = [];
+  private delay: ReactionDelay;
 
   constructor(
     private readonly brain: BotBrain,
     takeSeat: (connection: Connection) => Seat,
   ) {
+    this.delay = new ReactionDelay(brain.reactionTicks);
     this.seat = takeSeat(this);
   }
 
@@ -50,25 +51,15 @@ export class ArenaBot implements Connection {
       ],
       message.rules,
     );
-    this.recent = [];
+    this.delay = new ReactionDelay(this.brain.reactionTicks);
     this.brain.init?.(botView(this.round, this.side));
   }
 
-  // Задержка реакции — на восприятие противника и снарядов: их мозг видит снимком reactionTicks назад (пока
-  // истории меньше — самым старым из имеющихся). Свой танк, зону и аптечки — по свежему: где ты сам, ты знаешь.
   private react(round: Round, message: SnapshotMessage): void {
-    this.recent.push(message);
-    if (this.recent.length > this.brain.reactionTicks + 1) {
-      this.recent.shift();
-    }
-    for (const seen of this.recent.slice(0, 1)) {
-      mirrorSnapshot(round, seen);
-      const delayed = botView(round, this.side);
-      mirrorSnapshot(round, message);
-      const view = { ...botView(round, this.side), enemy: delayed.enemy, bullets: delayed.bullets };
-      this.seq++;
-      this.seat.input(this.seq, this.brain.tick(view));
-    }
+    mirrorSnapshot(round, message);
+    const view = this.delay.perceive(botView(round, this.side));
+    this.seq++;
+    this.seat.input(this.seq, this.brain.tick(view));
   }
 }
 
