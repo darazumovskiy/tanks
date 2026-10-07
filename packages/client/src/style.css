@@ -969,11 +969,19 @@ body:has(.privacy-note:not([hidden])) .home {
 }
 
 .home-credits {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
   margin-top: 16px;
   font-size: 11px;
   letter-spacing: 0.04em;
   text-align: center;
   opacity: 0.4;
+}
+
+.home-credits a {
+  color: #e8825a;
 }
 
 .home h1 {

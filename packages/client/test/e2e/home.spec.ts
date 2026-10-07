@@ -9,6 +9,9 @@ const MAIN_SCRIPT = /\/assets\/index-[^"]+\.js/;
 const NEXT_BUILD_SCRIPT = '/assets/index-nextbuild.js';
 const LOCKED_TEXT = 'Раздай танку все очки — и в бой';
 const CREDITS_TEXT = 'Производство: Разумовский Дмитрий и Claude';
+const ENGINE_AUTHOR = 'Павел Гансон';
+const ENGINE_CREDIT_TEXT = `Специальная благодарность — ${ENGINE_AUTHOR}`;
+const ENGINE_VIDEO_URL = 'https://www.youtube.com/watch?v=wguBNzeBfTA';
 const PHONE = { isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 const SCREENS: readonly { id: string; options: BrowserContextOptions }[] = [
   { id: 'телефон 834 × 375', options: { ...PHONE, viewport: { width: 834, height: 375 } } },
@@ -142,7 +145,10 @@ for (const screen of SCREENS) {
     const credits = page.locator('.home-credits');
     await credits.scrollIntoViewIfNeeded();
     await expect(credits).toBeVisible();
-    await expect(credits).toHaveText(CREDITS_TEXT);
+    await expect(credits.locator('span')).toHaveText([CREDITS_TEXT, ENGINE_CREDIT_TEXT]);
+    const video = credits.getByRole('link', { name: ENGINE_AUTHOR });
+    await expect(video).toHaveAttribute('href', ENGINE_VIDEO_URL);
+    await expect(video).toHaveAttribute('target', '_blank');
     const top = await topOf(page, '.home-credits');
     expect(top).toBeGreaterThanOrEqual(await bottomOf(page, '.home-help'));
     expect(top).toBeGreaterThanOrEqual(await bottomOf(page, '.home-more'));
