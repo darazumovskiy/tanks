@@ -112,6 +112,11 @@ test.afterAll(async () => {
 
 const requestLogs = new Map<BrowserContext, { urls: string[]; fontStatuses: number[] }>();
 
+// Плашку о сборе данных проверяет home.spec.ts; эталоны главной — без неё.
+function hidePrivacyNote(): void {
+  localStorage.setItem('tanks.privacyNoteClosed', '1');
+}
+
 async function openContext(browser: Browser, options: BrowserContextOptions): Promise<BrowserContext> {
   const context = await browser.newContext(options);
   const log = { urls: [] as string[], fontStatuses: [] as number[] };
@@ -197,6 +202,7 @@ test('итоги раунда поверх боя совпадают с этал
 for (const screen of SCREENS) {
   test(`главная совпадает с эталоном: ${screen.id}`, async ({ browser }) => {
     const context = await openContext(browser, screen.options);
+    await context.addInitScript(hidePrivacyNote);
     const page = await context.newPage();
     await page.goto(`${server.baseUrl}/`);
     // Секцию и справку общего боя охраняет свой эталон главной в ffaFrames.spec.ts; здесь — главная без них.

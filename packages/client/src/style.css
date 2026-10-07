@@ -858,6 +858,45 @@ input {
   cursor: pointer;
 }
 
+.privacy-note {
+  position: fixed;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: min(440px, calc(100vw - 20px));
+  box-sizing: border-box;
+  padding: 6px 6px 6px 14px;
+  background: rgba(11, 15, 13, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+/* Пока плашка видна, главная прокручивается так, чтобы последняя кнопка вышла из-под неё. */
+body:has(.privacy-note:not([hidden])) .home {
+  padding-bottom: 96px;
+}
+
+.privacy-note-text {
+  font-size: 12px;
+  line-height: 1.35;
+  opacity: 0.75;
+}
+
+.privacy-note-text a {
+  color: #e8825a;
+}
+
+.privacy-note .open-app-close {
+  flex: none;
+}
+
 .home {
   max-width: 480px;
   margin: 0 auto;

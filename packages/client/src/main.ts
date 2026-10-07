@@ -16,6 +16,7 @@ import { showFxLab } from './fxLab/fxLab.js';
 import { showCameraLab } from './lab.js';
 import { defaultSettings, SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
+import { mountPrivacyNote } from './privacyNote.js';
 import { mountStatsPicker, statsLeft } from './statsPicker.js';
 import { Telemetry } from './telemetry.js';
 import { startVisit } from './visitor.js';
@@ -129,6 +130,7 @@ function showHome(): void {
   home.hidden = false;
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
   startVisit(localStorage, nickname.value, clientInfo);
+  mountPrivacyNote(byId('privacy-note', HTMLElement), byId('privacy-note-close', HTMLButtonElement), localStorage);
   // Ник на устройстве сразу: главная перезагружается сама, когда выходит новая сборка.
   nickname.addEventListener('input', () => {
     localStorage.setItem(NICKNAME_KEY, nickname.value);

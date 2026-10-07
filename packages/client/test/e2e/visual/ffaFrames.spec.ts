@@ -169,6 +169,10 @@ test('пол кусками: кусок дважды одинаков, стык 
 for (const { id: screenId, options } of SCREENS) {
   test(`главная с секцией общего боя совпадает с эталоном: ${screenId}`, async ({ browser }) => {
     const context = await browser.newContext(options);
+    // Плашку о сборе данных проверяет home.spec.ts; эталон главной — без неё.
+    await context.addInitScript(() => {
+      localStorage.setItem('tanks.privacyNoteClosed', '1');
+    });
     const page = await context.newPage();
     await page.goto(`${server.baseUrl}/`);
     await page.evaluate(async () => {
