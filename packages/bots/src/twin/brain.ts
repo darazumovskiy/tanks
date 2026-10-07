@@ -1,4 +1,4 @@
-import { switchProbability } from '@tanks/analysis';
+import { switchProbability } from '@tanks/analysis/ruler';
 import {
   createRandom,
   isShotReturning,
@@ -10,7 +10,7 @@ import {
   type Point,
   type Random,
 } from '@tanks/shared/engine';
-import type { TwinCalibration, TwinProfile } from '../profile.js';
+import type { TwinCalibration, TwinProfile } from './profile.js';
 import { Ambush, hasLineOfSight } from './cover.js';
 import { FireIntent, fireContextOf } from './fire.js';
 import { Hand } from './hand.js';
@@ -236,8 +236,8 @@ export class TwinBrain {
     if (hasLostSight || hasDecided || hasLeftCover) {
       hiddenAim.pick();
     }
-    if (this.modeState === 'cover') {
-      return ambush?.exit(grid, view.enemy, view.tick) ?? null;
+    if (this.modeState === 'cover' && ambush !== null) {
+      return ambush.exit(grid, view.enemy, view.tick);
     }
     return hiddenAim.point(this.map, view.me, view.enemy, view.tick);
   }

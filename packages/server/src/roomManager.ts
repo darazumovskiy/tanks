@@ -1,6 +1,8 @@
 import { DEFAULT_RULES, type FfaSize, type RoundRules, type Stats } from '@tanks/shared/engine';
-import { botLevelOf, FfaInviteMiss, isBotRoomCode } from '@tanks/shared/protocol';
+import { botLevelOf, FfaInviteMiss, isBotRoomCode, isTwinRoomCode } from '@tanks/shared/protocol';
+import type { ArenaBot } from './bots/arenaBot.js';
 import { createBot } from './bots/ladder.js';
+import { createTwin } from './bots/twin.js';
 import { BotTurns, type BotTurnReport } from './crowd/botTurns.js';
 import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaConnection, type FfaOptions, type FfaSeat } from './ffaGame.js';
 import { NO_LOG, type GameLog } from './gameLog.js';
@@ -68,7 +70,7 @@ export class RoomManager {
     return this.rooms.size + this.games.length;
   }
 
-  // Комната бота создаётся с ботом на месте 0; код уже проверен isValidRoomCode.
+  // Комната бота лестницы или двойника создаётся с ботом на месте 0; код уже проверен isValidRoomCode.
   getOrCreate(code: string): Room {
     const existing = this.rooms.get(code);
     if (existing !== undefined) {
@@ -76,11 +78,8 @@ export class RoomManager {
     }
     const room = new Room(code, this.options, this.log, this.dropCounter, this.rules);
     this.rooms.set(code, room);
-    const level = botLevelOf(code);
-    if (level !== null) {
-      const bot = createBot(level, this.random, (connection, nickname, stats) =>
-        room.join(0, connection, nickname, stats),
-      );
+    const bot = this.botFor(code, room);
+    if (bot !== null) {
       this.botSeats.set(room, bot.seat);
     }
     return room;
@@ -214,6 +213,19 @@ export class RoomManager {
     const game = new FfaGame(size, this.ffaOptions, this.log, this.dropCounter, this.rules);
     this.games.push(game);
     return game;
+  }
+
+  private botFor(code: string, room: Room): ArenaBot | null {
+    const join = (connection: Connection, nickname: string, stats: Stats): Seat =>
+      room.join(0, connection, nickname, stats);
+    const level = botLevelOf(code);
+    if (level !== null) {
+      return createBot(level, this.random, join);
+    }
+    if (isTwinRoomCode(code)) {
+      return createTwin(this.random, join);
+    }
+    return null;
   }
 
   // В комнате с ботом один человек: ушёл он — бот снимается; пустая комната удаляется.

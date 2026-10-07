@@ -20,8 +20,9 @@ const SCREENS: readonly { id: string; options: BrowserContextOptions }[] = [
 ];
 const LEFT_ID = 'bot1';
 const RIGHT_ID = 'bot10';
+const TWIN_ID = 'twin';
 const MAX_SPEED = 4;
-// Параллакс разбирает Манекена за несколько секунд боя; на ×4 с отсчётом — заведомо быстрее.
+// Раунд кончается не позже лимита времени раунда: на ×4 с отсчётом — заведомо быстрее минуты.
 const ROUND_TIMEOUT_MS = 60_000;
 const PAUSE_CHECK_MS = 1_000;
 
@@ -114,6 +115,30 @@ for (const screen of SCREENS) {
     expect(paused.isPaused).toBe(true);
     await page.waitForTimeout(PAUSE_CHECK_MS);
     expect((await watchState(page)).totalTicks).toBe(paused.totalTicks);
+    await context.close();
+  });
+}
+
+for (const screen of SCREENS) {
+  test(`бой ботов: двойник против Манекена доигрывает раунд на ×4 — ${screen.id}`, async ({ browser }) => {
+    const context = await browser.newContext(screen.options);
+    const page = await context.newPage();
+    await page.goto(`${server.baseUrl}/watch`);
+    await expect(page.locator('.watch-bar')).toBeVisible();
+
+    await pick(page, 'left', TWIN_ID);
+    await pick(page, 'right', LEFT_ID);
+    await page.locator(`[data-speed="${String(MAX_SPEED)}"]`).click();
+    await expect.poll(async () => (await watchState(page)).fighterIds).toEqual([TWIN_ID, LEFT_ID]);
+    await expect
+      .poll(
+        async () => {
+          const { score } = await watchState(page);
+          return score[0] + score[1];
+        },
+        { timeout: ROUND_TIMEOUT_MS },
+      )
+      .toBeGreaterThan(0);
     await context.close();
   });
 }

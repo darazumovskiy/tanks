@@ -8,8 +8,8 @@ import {
   type Wall,
 } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
-import { COURSE_BAND_LABELS } from '@tanks/analysis';
-import { byCourseBand, courseWith, craftView, profileWith, type ViewSpec } from '../fixture.js';
+import { COURSE_BAND_LABELS } from '@tanks/analysis/ruler';
+import { byCourseBand, courseWith, craftView, profileWith, type ViewSpec } from './fixture.js';
 import { TwinBrain } from './brain.js';
 import {
   courseAngleAt,

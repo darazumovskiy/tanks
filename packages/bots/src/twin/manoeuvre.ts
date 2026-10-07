@@ -10,8 +10,8 @@ import {
   type Random,
   type TankView,
 } from '@tanks/shared/engine';
-import type { SightKey } from '../profile.js';
-import { COURSE_BANDS, type CourseBandLabel, type KitSide } from '@tanks/analysis';
+import type { SightKey } from './profile.js';
+import { COURSE_BANDS, type CourseBandLabel, type KitSide } from '@tanks/analysis/ruler';
 import { findPath, isFreeAt, nearestFree, PathFollower, WAYPOINT_REACHED, type Grid } from './path.js';
 import { chance, fromDeciles, sampleDeciles, sampleExponential } from './sampling.js';
 import { IDLE_HULL, keysToward, steerHull, type HullSteering } from './steering.js';
@@ -63,7 +63,17 @@ const DEFLECT_STEPS = 12;
 const COURSE_PAD = TANK_RADIUS;
 const SIDE_LEFT_CHANCE = 0.5;
 // Угол хода корзины относится к её середине, у последней корзины без верхней границы — к нижней.
-const BAND_ANCHORS = COURSE_BANDS.map((band) => (Number.isFinite(band.high) ? (band.low + band.high) / 2 : band.low));
+interface BandAnchor {
+  label: CourseBandLabel;
+  at: number;
+}
+
+const BAND_ANCHORS: readonly BandAnchor[] = COURSE_BANDS.map((band) => ({
+  label: band.label,
+  at: Number.isFinite(band.high) ? (band.low + band.high) / 2 : band.low,
+}));
+// Корзин угла хода не меньше одной.
+const [LAST_ANCHOR] = BAND_ANCHORS.slice(-1) as [BandAnchor];
 
 interface TrackPoint {
   x: number;
@@ -142,17 +152,14 @@ export function freeCourse(grid: Grid, me: Point, bearing: number, angle: number
 // Угол хода к линии на дистанции distance для доли u распределения: значения по децилям корзин дистанции,
 // между опорами соседних корзин — линейно, ближе первой и дальше последней опоры — как у крайней корзины.
 export function courseAngleAt(deciles: CourseDeciles[SightKey], distance: number, u: number): number {
-  const valueAt = (band: (typeof COURSE_BANDS)[number]): number => fromDeciles(deciles[band.label], u);
-  const above = BAND_ANCHORS.findIndex((anchor) => anchor > distance);
-  const upper = COURSE_BANDS[above];
-  const lower = COURSE_BANDS[above - 1];
+  const valueAt = (anchor: BandAnchor): number => fromDeciles(deciles[anchor.label], u);
+  const above = BAND_ANCHORS.findIndex((anchor) => anchor.at > distance);
+  const upper = BAND_ANCHORS[above];
+  const lower = BAND_ANCHORS[above - 1];
   if (upper === undefined || lower === undefined) {
-    const edge = above === 0 ? COURSE_BANDS[0] : COURSE_BANDS.at(-1);
-    return edge === undefined ? 0 : valueAt(edge) * DEGREES_TO_RADIANS;
+    return valueAt(upper ?? LAST_ANCHOR) * DEGREES_TO_RADIANS;
   }
-  const from = BAND_ANCHORS[above - 1] ?? 0;
-  const to = BAND_ANCHORS[above] ?? 0;
-  const position = (distance - from) / (to - from);
+  const position = (distance - lower.at) / (upper.at - lower.at);
   return (valueAt(lower) + (valueAt(upper) - valueAt(lower)) * position) * DEGREES_TO_RADIANS;
 }
 

@@ -1,7 +1,7 @@
 import { EXCLUSION_REASONS, type ProfileRound } from '@tanks/analysis';
+import type { TwinProfile } from '@tanks/bots/twin';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
-import type { TwinProfile } from '../profile.js';
 import { emptyExclusionCounts, mixPrint, playGame, type ExclusionCounts, type GameResult } from './match.js';
 import type { GamePlan } from './plan.js';
 

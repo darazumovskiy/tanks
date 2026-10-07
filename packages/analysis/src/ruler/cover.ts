@@ -1,5 +1,5 @@
 import { clamp, TANK_RADIUS, type BattleMap, type Point, type Wall } from '@tanks/shared/engine';
-import { isClear } from '../geometry.js';
+import { isClear } from './geometry.js';
 
 // Укрытие рядом — свободная клетка сетки в пределах пути 300, из которой стена закрывает противника.
 // Сетка — как у Охотника: клетка 25, отступ от стен и краёв на радиус танка с запасом.

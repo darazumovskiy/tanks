@@ -1,3 +1,4 @@
+import { TWIN_INFO, twinRoomCode } from '@tanks/shared/protocol';
 import { describe, expect, it } from 'vitest';
 import { analyzeLogLines } from '../index.js';
 import {
@@ -21,12 +22,14 @@ import {
 import { profileMetrics, selectProfileRounds, type ExclusionReason, type ProfileSelection } from './index.js';
 
 const BOT_POSE = pose(1400, LANE_Y, Math.PI, Math.PI);
+const NICK = FIXTURE_SELECTION.nick;
 const HUMAN_POSE = pose(200, LANE_Y);
 const LONG_FIGHT = 200;
 const SHORT_FIGHT = 100;
 
 interface RoundSpec {
   room?: string;
+  botName?: string;
   flags?: string;
   settings?: string;
   fightTicks?: number;
@@ -38,7 +41,8 @@ interface RoundSpec {
 
 // Раунд, нарушающий только правила из spec: по умолчанию — бой 200 тиков, человек едет, один выстрел, бот победил.
 function roundLog(spec: RoundSpec): string {
-  const builder = startDuel({ room: spec.room ?? 'bot05test' });
+  const room = spec.room ?? 'bot05test';
+  const builder = spec.botName === undefined ? startDuel({ room }) : startDuel({ room, names: [spec.botName, NICK] });
   if (spec.flags !== undefined) {
     builder.client(HUMAN, `flags ${spec.flags}`);
   }
@@ -137,6 +141,16 @@ describe('правило выборки профиля', () => {
       LOW: 'idle',
       EDGE: null,
     });
+  });
+
+  it('игра против двойника в комнате twin… — без уровня бота, в выборку профиля не входит', () => {
+    const files = filesOf({ TWIN: { room: twinRoomCode('k7m2px'), botName: TWIN_INFO.name, winner: HUMAN } });
+    const [game] = analyzeLogLines(files);
+    const selected = selectProfileRounds(analyzeLogLines(files), FIXTURE_SELECTION);
+
+    expect(game?.analysis.summary.level).toBeNull();
+    expect(selected.total).toBe(0);
+    expect(selected.kept).toEqual([]);
   });
 
   it('число раундов и периоды: раунд вне ника не считается', () => {

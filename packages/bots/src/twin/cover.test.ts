@@ -1,8 +1,8 @@
-import { wallClearance, type Coefficients } from '@tanks/analysis';
+import { wallClearance, type Coefficients } from '@tanks/analysis/ruler';
 import { mapByIndex, type Point } from '@tanks/shared/engine';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { calibrationWith, craftView, profileWith, type ViewSpec } from '../fixture.js';
-import type { Band } from '../profile.js';
+import { calibrationWith, craftView, profileWith, type ViewSpec } from './fixture.js';
+import type { Band } from './profile.js';
 import { TwinBrain } from './brain.js';
 import { Ambush, hasLineOfSight } from './cover.js';
 import { HiddenAim } from './hiddenAim.js';
@@ -100,6 +100,32 @@ describe('позиция за укрытием', () => {
     expect(brain.mode).toBe('cover');
     expect(decision.action.throttle).toBe(0);
     expect(decision.action.turretTurn).toBeCloseTo(aimTurret(0, Math.PI / 2), 9);
+  });
+
+  it('поток выхода не сработал — танк держит позицию секунду за секундой', () => {
+    const brain = coverBrain();
+    for (let tick = 0; tick <= 90; tick++) {
+      brain.tick(craftView({ ...START, tick }));
+    }
+
+    expect(brain.mode).toBe('cover');
+  });
+
+  it('точка выхода: места засады нет или пути противника к засаде нет — сам противник', () => {
+    expect(new Ambush(COVER).exit(GRID, START.enemy, 0)).toEqual(START.enemy);
+
+    const enemy = { x: 1100, y: 750 };
+    const box = [
+      { x: enemy.x - 100, y: enemy.y - 100, w: 200, h: 20 },
+      { x: enemy.x - 100, y: enemy.y + 80, w: 200, h: 20 },
+      { x: enemy.x - 100, y: enemy.y - 100, w: 20, h: 200 },
+      { x: enemy.x + 80, y: enemy.y - 100, w: 20, h: 200 },
+    ];
+    const boxed = gridOf({ ...POLYGON, walls: [...POLYGON.walls, ...box] });
+    const ambush = new Ambush(COVER);
+    expect(ambush.choose(boxed, START.me, enemy)).toBe(true);
+
+    expect(ambush.exit(boxed, enemy, 0)).toEqual(enemy);
   });
 
   it('укрытия нет — режим «позиция» не включается', () => {

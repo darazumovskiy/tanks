@@ -68,7 +68,7 @@ export default defineConfig({
         'packages/analysis/src/logFixture.ts',
         'packages/twin/src/main.ts',
         'packages/twin/src/stand/worker.ts',
-        'packages/twin/src/fixture.ts',
+        'packages/bots/src/twin/fixture.ts',
       ],
       thresholds: {
         'packages/server/src/**': { statements: 100, branches: 100, functions: 100, lines: 100 },

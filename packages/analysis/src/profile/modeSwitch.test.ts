@@ -17,9 +17,9 @@ import {
   type LogBuilder,
   type Pose,
 } from '../logFixture.js';
-import { profileMetrics, type Coefficients } from './index.js';
+import { switchProbability, type Coefficients, type ModeFeatures } from '../ruler/modeSwitch.js';
+import { profileMetrics } from './index.js';
 import { fitSwitchCoefficients, modeSamples, type ModeSample } from './modeSwitch.js';
-import type { ModeFeatures } from './rounds.js';
 
 const ENEMY = pose(1460, 450, Math.PI, Math.PI);
 // На Полигоне из левой точки появления до стены рукой подать, из правого верхнего угла — укрыться негде.
@@ -220,7 +220,7 @@ describe('обучение коэффициентов выбора режима'
     );
   });
 
-  it('переход после урона с известной частотой: частоты восстановлены с точностью 10 %', () => {
+  it('переход после урона с известной частотой: частоты восстановлены с точностью 10 %; вероятность линейки — та же модель', () => {
     const perGroup = 4000;
     const calmRate = 0.02;
     const hurtRate = 0.08;
@@ -244,6 +244,10 @@ describe('обучение коэффициентов выбора режима'
 
     expect(logistic(coefficients, base) / calmRate).toBeCloseTo(1, 1);
     expect(logistic(coefficients, { ...base, recentDamageShare: hurt }) / hurtRate).toBeCloseTo(1, 1);
+    expect(switchProbability(coefficients, sample(hurt, false).features, 0)).toBeCloseTo(
+      logistic(coefficients, { ...base, recentDamageShare: hurt }),
+      12,
+    );
   });
 
   it('без переходов или с переходом в каждом отсчёте коэффициентов нет', () => {

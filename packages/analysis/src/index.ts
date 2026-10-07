@@ -21,16 +21,6 @@ export type { GameAnalysis, GameSummary, RoundSummary } from './game.js';
 export type { ParsedGame, ParsedRound, Pose, Tick } from './logParser.js';
 export type { VisitorSummary } from './visitors.js';
 export * from './profile/index.js';
-export { wallClearance } from './geometry.js';
-export {
-  COURSE_BAND_LABELS,
-  COURSE_BANDS,
-  courseBandOf,
-  DISTANCE_BUCKET_LABELS,
-  distanceBucketOf,
-  type CourseBandLabel,
-  type DistanceBucketLabel,
-} from './shots.js';
 
 const DEFAULT_TZ_HOURS = 3;
 const DEFAULT_OUT_DIR_NAME = 'analysis';

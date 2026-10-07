@@ -1,6 +1,5 @@
 import { Capacitor } from '@capacitor/core';
 import { DEFAULT_STATS, STAT_KEYS, STAT_POINTS, type Stats } from '@tanks/shared/engine';
-import { BOT_LEVEL_INFO, BOT_LEVELS, botRoomCode, type BotLevel } from '@tanks/shared/protocol';
 import QRCode from 'qrcode';
 import { resolveAdminMode } from './admin.js';
 import { androidIntentUrl, isAndroidBrowser, showOpenInApp } from './appLink.js';
@@ -17,6 +16,7 @@ import { showCameraLab } from './lab.js';
 import { defaultSettings, SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
 import { mountPrivacyNote } from './privacyNote.js';
+import { RIVALS, rivalBadge, rivalInfo, rivalOf, rivalRoomCode, type Rival } from './rival.js';
 import { mountStatsPicker, statsLeft } from './statsPicker.js';
 import { Telemetry } from './telemetry.js';
 import { startVisit } from './visitor.js';
@@ -24,7 +24,7 @@ import { startVisit } from './visitor.js';
 const NICKNAME_KEY = 'tanks.nickname';
 const STATS_KEY = 'tanks.stats';
 const BOT_LEVEL_KEY = 'tanks.botLevel';
-const DEFAULT_BOT_LEVEL: BotLevel = 1;
+const DEFAULT_RIVAL: Rival = 1;
 const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const APK_ROUTE = '/app/tanks.apk';
 const WATCH_PATH = '/watch';
@@ -63,18 +63,12 @@ function parseStats(raw: string | null): Stats {
   return isValid && total <= STAT_POINTS ? stats : { ...DEFAULT_STATS };
 }
 
-function parseBotLevel(raw: string | null): BotLevel {
-  const level = Number(raw);
-  const known = BOT_LEVELS.find((candidate) => candidate === level);
-  return known ?? DEFAULT_BOT_LEVEL;
-}
-
-// Номер, имя и короткое описание уровня — одинаково в строке списка и на кнопке выбранного.
-function levelContent(level: BotLevel): HTMLElement[] {
-  const info = BOT_LEVEL_INFO[level];
+// Номер уровня или знак двойника, имя и короткое описание — одинаково в строке списка и на кнопке выбранного.
+function rivalContent(rival: Rival): HTMLElement[] {
+  const info = rivalInfo(rival);
   const badge = document.createElement('span');
   badge.className = 'level-badge';
-  badge.textContent = String(level);
+  badge.textContent = rivalBadge(rival);
   const body = document.createElement('span');
   body.className = 'level-body';
   const name = document.createElement('span');
@@ -92,22 +86,22 @@ interface LevelPickerElements extends DropdownElements {
   info: HTMLButtonElement;
 }
 
-// Список уровней — из общего с сервером контракта; выбранный уровень запоминается на устройстве.
-function mountLevelPicker(elements: LevelPickerElements): { selected: () => BotLevel } {
-  const initial = parseBotLevel(localStorage.getItem(BOT_LEVEL_KEY));
-  const showSummary = (level: BotLevel): void => {
-    elements.hint.textContent = BOT_LEVEL_INFO[level].summary;
+// Список соперников — уровни из общего с сервером контракта и двойник; выбор запоминается на устройстве.
+function mountRivalPicker(elements: LevelPickerElements): { selected: () => Rival } {
+  const initial = rivalOf(localStorage.getItem(BOT_LEVEL_KEY), DEFAULT_RIVAL);
+  const showSummary = (rival: Rival): void => {
+    elements.hint.textContent = rivalInfo(rival).summary;
   };
   const picker = mountDropdown(elements, {
-    values: BOT_LEVELS,
+    values: RIVALS,
     selected: initial,
     optionClass: 'level',
     dataKey: 'level',
-    optionContent: levelContent,
-    toggleContent: levelContent,
-    onSelect: (level) => {
-      localStorage.setItem(BOT_LEVEL_KEY, String(level));
-      showSummary(level);
+    optionContent: rivalContent,
+    toggleContent: rivalContent,
+    onSelect: (rival) => {
+      localStorage.setItem(BOT_LEVEL_KEY, String(rival));
+      showSummary(rival);
     },
   });
   showSummary(initial);
@@ -181,7 +175,7 @@ function showHome(): void {
     localStorage.setItem(NICKNAME_KEY, nickname.value);
     localStorage.setItem(STATS_KEY, formatStats(picker.value()));
   };
-  const levels = mountLevelPicker({
+  const rivals = mountRivalPicker({
     toggle: byId('bot-level-toggle', HTMLButtonElement),
     list: byId('bot-levels', HTMLElement),
     hint: byId('level-hint', HTMLElement),
@@ -195,7 +189,7 @@ function showHome(): void {
     startDuelWith(randomCode());
   });
   createBot.addEventListener('click', () => {
-    startDuelWith(botRoomCode(levels.selected(), randomCode()));
+    startDuelWith(rivalRoomCode(rivals.selected(), randomCode()));
   });
   byId('watch-open', HTMLButtonElement).addEventListener('click', () => {
     goToFight(WATCH_PATH);
@@ -378,7 +372,7 @@ async function startWatch(): Promise<void> {
   watchModule.applyWatchStyle(document.body);
   canvas.hidden = false;
   byId('watch', HTMLElement).hidden = false;
-  const game = watchModule.mountWatch(
+  const game = await watchModule.mountWatch(
     {
       left: { toggle: byId('watch-left-toggle', HTMLButtonElement), list: byId('watch-left-list', HTMLElement) },
       right: { toggle: byId('watch-right-toggle', HTMLButtonElement), list: byId('watch-right-list', HTMLElement) },

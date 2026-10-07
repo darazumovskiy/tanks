@@ -1,4 +1,4 @@
-import type { FireContext } from '@tanks/analysis';
+import type { FireContext } from '@tanks/analysis/ruler';
 import { createRandom, TICK_RATE } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
 import { FireIntent, fireContextOf, type FireSettings } from './fire.js';
@@ -77,8 +77,8 @@ describe('огонь двойника', () => {
     }
   });
 
-  it('доля 0 — огня нет, доля 1 — огонь всё время; очень высокая доля держит долю при длине отпускания в тик', () => {
-    const shares = { ...HOLD, 'visible|<300': 0, 'visible|>600': 1, 'hidden|>600': 0.995 };
+  it('доля 0 — огня нет, доля 1 — огонь всё время; очень высокая и очень низкая доли держатся при отрезке в тик', () => {
+    const shares = { ...HOLD, 'visible|<300': 0, 'visible|>600': 1, 'hidden|>600': 0.995, 'hidden|<300': 0.005 };
     const intent = new FireIntent(
       settingsWith({ noStartPauseShare: 1, holdShare: shares, releaseMeanS: 0.5 }),
       createRandom(2),
@@ -98,10 +98,15 @@ describe('огонь двойника', () => {
     for (let tick = 0; tick < ticks; tick++) {
       high += intent.tick('hidden|>600') ? 1 : 0;
     }
+    let low = 0;
+    for (let tick = 0; tick < ticks; tick++) {
+      low += intent.tick('hidden|<300') ? 1 : 0;
+    }
 
     expect(never).toBe(0);
     expect(always).toBe(ticks);
     expect(high / ticks).toBeCloseTo(0.995, 2);
+    expect(low / ticks).toBeCloseTo(0.005, 2);
   });
 
   it('длинные паузы посреди боя: частота и длительность по профилю', () => {

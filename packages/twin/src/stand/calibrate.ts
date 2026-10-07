@@ -1,22 +1,14 @@
+import { movementMetrics, profileMetrics, type ProfileRound } from '@tanks/analysis';
 import {
   FIRE_CONTEXTS,
   HIDDEN_AIM_TARGETS,
   KIT_SIDES,
-  movementMetrics,
-  profileMetrics,
   type FireContext,
   type HiddenAimTarget,
   type KitSide,
-  type ProfileRound,
-} from '@tanks/analysis';
-import {
-  HIDDEN_AIM_NAMES,
-  KIT_NAMES,
-  twinProfile,
-  type TwinCalibration,
-  type TwinProfile,
-  type TwinReference,
-} from '../profile.js';
+} from '@tanks/analysis/ruler';
+import type { TwinCalibration, TwinProfile } from '@tanks/bots/twin';
+import { HIDDEN_AIM_NAMES, KIT_NAMES, twinProfile, type TwinReference } from '../profile.js';
 import type { PlayerMetrics, Verdict } from './honesty.js';
 import { calibrationPlan, type GamePlan } from './plan.js';
 import { runStand } from './run.js';

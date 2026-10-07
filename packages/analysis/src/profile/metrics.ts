@@ -1,19 +1,20 @@
 import { TICK_RATE } from '@tanks/shared/engine';
 import { AXIS_BUCKETS, TOUCHING_WALL, type AxisBucket } from '../movement.js';
 import {
-  AIM_GOOD_DEG,
-  DISTANCE_BUCKETS,
-  FAR_DISTANCE,
-  LEAD_FRACTION_MAX,
-  LEAD_FRACTION_MIN,
   COURSE_BAND_LABELS,
   courseBandOf,
+  DISTANCE_BUCKETS,
+  FAR_DISTANCE,
+  FIRE_CONTEXTS,
   MID_DISTANCE_LABEL,
-  MOVING_SPEED,
   type CourseBandLabel,
-} from '../shots.js';
-import { HIDDEN_AIM_TARGETS, type HiddenAimTarget } from './hiddenAim.js';
-import { fitSwitchCoefficients, modeSamples, type Coefficients, type ModeSample } from './modeSwitch.js';
+  type FireContext,
+} from '../ruler/bands.js';
+import { HIDDEN_AIM_TARGETS, type HiddenAimTarget } from '../ruler/hiddenAim.js';
+import { KIT_SIDES, type KitSide } from '../ruler/kits.js';
+import type { Coefficients } from '../ruler/modeSwitch.js';
+import { AIM_GOOD_DEG, LEAD_FRACTION_MAX, LEAD_FRACTION_MIN, MOVING_SPEED } from '../shots.js';
+import { fitSwitchCoefficients, modeSamples, type ModeSample } from './modeSwitch.js';
 import { HOLD_STYLE_SHARE, positionMask, positionSegments, STILL_SPEED, type Segment } from './position.js';
 import {
   type BuildIssue,
@@ -25,10 +26,8 @@ import {
   type ProfileShot,
   type ProfileThreat,
   type AimSample,
-  type KitSide,
   type MotionKind,
   type RoundDetail,
-  KIT_SIDES,
   MOTION_KINDS,
 } from './rounds.js';
 import { distribution, share, type Distribution, type Share } from './stats.js';
@@ -63,16 +62,6 @@ const FIGHT_TIME_BUCKETS: readonly { label: string; low: number; high: number }[
 // Отрезок позиции 10–20 % боя — заметная позиция, но не стоячая манера.
 const NOTABLE_POSITION_SHARE = 0.1;
 
-// Контекст огня — видимость противника и корзина дистанции.
-export const FIRE_CONTEXTS = [
-  'visible|<300',
-  'visible|300–600',
-  'visible|>600',
-  'hidden|<300',
-  'hidden|300–600',
-  'hidden|>600',
-] as const;
-export type FireContext = (typeof FIRE_CONTEXTS)[number];
 export type GuardMode = 'guardOn' | 'guardOff';
 // Длинная пауза огня посреди боя — от 2 с; короткие паузы без удержания предохранителем — «отпускания» пальца.
 const LONG_PAUSE_TICKS = 2 * TICK_RATE;

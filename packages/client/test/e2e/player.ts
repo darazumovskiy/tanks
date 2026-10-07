@@ -95,7 +95,7 @@ const SETTINGS_CHECK_LABEL = '#settings label.settings-check .settings-head span
 const STYLE_TOGGLE = '#settings .style-toggle';
 const styleOptionSelector = (id: string): string => `#settings .style-option[data-style="${id}"]`;
 const SETTINGS_KEY_CODE = 'KeyO';
-const levelCardSelector = (level: number): string => `#bot-levels .level[data-level="${String(level)}"]`;
+const rivalCardSelector = (rival: number | string): string => `#bot-levels .level[data-level="${String(rival)}"]`;
 const COPY_BUTTON = '#overlay .overlay-copy';
 const OPEN_APP_BANNER = '#open-app';
 const OPEN_APP_LINK = '#open-app-link';
@@ -210,14 +210,17 @@ export class Player {
   }
 
   // Игрок заходит с главной: выбирает уровень бота и жмёт «Против бота». query — параметры адреса главной (`?from=…`).
+  // rival — уровень бота или `twin` для двойника; isTouch — телефон.
   static async openAgainstBot(
     browser: Browser,
     baseUrl: string,
     name: string,
-    botLevel: number,
+    rival: number | string,
     query = '',
+    isTouch = false,
   ): Promise<Player> {
-    const context = await browser.newContext();
+    const touchOptions = isTouch ? { hasTouch: true, isMobile: true, viewport: PHONE_VIEWPORT } : {};
+    const context = await browser.newContext(touchOptions);
     await context.addInitScript(
       (entries: Record<string, string>) => {
         for (const [key, value] of Object.entries(entries)) {
@@ -229,7 +232,7 @@ export class Player {
     const page = await context.newPage();
     await page.goto(`${baseUrl}/${query}`);
     await page.locator(BOT_LEVEL_TOGGLE).click();
-    await page.locator(levelCardSelector(botLevel)).click();
+    await page.locator(rivalCardSelector(rival)).click();
     await page.locator(CREATE_BOT_BUTTON).click();
     return new Player(context, page, name);
   }

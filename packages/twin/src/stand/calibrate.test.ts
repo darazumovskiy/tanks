@@ -1,8 +1,8 @@
 import { movementMetrics, profileMetrics } from '@tanks/analysis';
+import { calibrationWith } from '@tanks/bots/twinFixture';
 import type { BotLevel } from '@tanks/shared/protocol';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { calibrationWith } from '../fixture.js';
 import { twinProfile, type TwinReference } from '../profile.js';
 import { CALIBRATION_INPUTS, calibrationOf, valuesOf, type CalibrationInput, type ParamValues } from './calibrate.js';
 import type { PlayerMetrics } from './honesty.js';

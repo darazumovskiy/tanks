@@ -5,13 +5,14 @@ import {
   type ExclusionReason,
   type ProfileRound,
 } from '@tanks/analysis';
+import { TwinBrain } from '@tanks/bots/twin';
+import type { TwinProfile } from '@tanks/bots/twin';
 import { createBot } from '@tanks/server/bots/ladder';
 import { Room } from '@tanks/server/room';
 import { createRandom, nextRandom, ROUND_SECONDS, TICK_RATE, type Side } from '@tanks/shared/engine';
 import { botRoomCode } from '@tanks/shared/protocol';
-import { TwinBrain } from '../brain/brain.js';
 import { TwinPlayer } from '../player.js';
-import { TWIN_NICK, twinSelection, type TwinProfile } from '../profile.js';
+import { TWIN_NICK, twinSelection } from '../profile.js';
 import { MemoryGameLog } from './memoryLog.js';
 import type { GamePlan } from './plan.js';
 

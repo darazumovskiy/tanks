@@ -1,7 +1,8 @@
 import { movementMetrics, profileMetrics } from '@tanks/analysis';
+import { TWIN_PROFILE_NAMES, type TwinProfileName } from '@tanks/bots/twin';
 import type { BotLevel } from '@tanks/shared/protocol';
 import { existsSync, statSync } from 'node:fs';
-import { PROFILE_WINDOWS, TWIN_PROFILE_NAMES, twinProfile, type TwinProfileName } from './profile.js';
+import { PROFILE_WINDOWS, RIVAL_PROFILE, twinProfile, twinRival } from './profile.js';
 import {
   buildReference,
   loadCalibration,
@@ -12,6 +13,7 @@ import {
   roundLines,
   writeCalibration,
   writeReference,
+  writeRival,
 } from './reference.js';
 import { CALIBRATION_GROUPS, calibrate, checkInputs, inputSpread, type PartialCalibration } from './stand/calibrate.js';
 import { judge, type PlayerMetrics } from './stand/honesty.js';
@@ -60,9 +62,11 @@ export type Invocation =
 
 type CliParse = { invocation: Invocation } | { error: string };
 
+// rivalPath — файл профиля соперника, который пишется вместе со справкой и калибровкой профиля соперника.
 export interface CliContext {
   print: (line: string) => void;
   referenceDir: string;
+  rivalPath: string;
   threads: number;
   now: () => number;
 }
@@ -200,7 +204,25 @@ function runReference(logDir: string, profile: TwinProfileName, context: CliCont
   roundLines(nick, result.reference.rounds).forEach(print);
   print(outcomeLine(result.reference.main.outcomes));
   print(writeReference(result.reference, context.referenceDir));
+  refreshRival(profile, context);
   return EXIT_OK;
+}
+
+// Профиль соперника собирается из справки и калибровки в папке справок; без них или без условий раундов файл не
+// трогается.
+function refreshRival(profile: TwinProfileName, context: CliContext): void {
+  if (profile !== RIVAL_PROFILE) {
+    return;
+  }
+  const reference = loadReference(profile, context.referenceDir);
+  const file = loadCalibration(profile, context.referenceDir);
+  const isComplete = reference !== null && file !== null && !('error' in file);
+  const rival = isComplete ? twinRival(reference, file.calibration) : null;
+  if (rival === null) {
+    context.print(`Профиль соперника не обновлён: нет справки, условий раундов или полной калибровки ${profile}`);
+    return;
+  }
+  context.print(writeRival(rival, context.rivalPath));
 }
 
 // --only: прежняя калибровка с проверенными параметрами вне перекалибруемых групп; строка — ошибка для печати.
@@ -241,6 +263,7 @@ async function runCalibrate(
   calibrationReport(result).forEach(context.print);
   context.print(timeLine(context.now() - started, invocation.threads));
   context.print(writeCalibration(invocation.profile, result.calibration, context.referenceDir));
+  refreshRival(invocation.profile, context);
   return EXIT_OK;
 }
 

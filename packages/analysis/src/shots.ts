@@ -1,8 +1,10 @@
 import { normalizeAngle, TANK_RADIUS, TICK_RATE, type Side, type Wall } from '@tanks/shared/engine';
 import type { TrackedBullet } from './bullets.js';
-import { isClear, leadPoint } from './geometry.js';
+import { leadPoint } from './geometry.js';
 import { FIGHT_PHASE, type ParsedRound, type Tick } from './logParser.js';
 import { roundTo, toDegrees, toRadians } from './numbers.js';
+import { distanceBucketOf } from './ruler/bands.js';
+import { isClear } from './ruler/geometry.js';
 
 // Противник быстрее 30 единиц в секунду считается движущимся.
 export const MOVING_SPEED = 30;
@@ -26,64 +28,6 @@ export const SHOT_KIND = {
   neither: 'мимо обоих',
 } as const;
 export type ShotKind = (typeof SHOT_KIND)[keyof typeof SHOT_KIND];
-
-const NEAR_DISTANCE = 300;
-export const FAR_DISTANCE = 600;
-export const MID_DISTANCE_LABEL = '300–600';
-export const DISTANCE_BUCKET_LABELS = ['<300', MID_DISTANCE_LABEL, '>600'] as const;
-export type DistanceBucketLabel = (typeof DISTANCE_BUCKET_LABELS)[number];
-
-export interface DistanceBucket {
-  low: number;
-  high: number;
-  label: DistanceBucketLabel;
-}
-
-export const DISTANCE_BUCKETS: readonly DistanceBucket[] = [
-  { low: 0, high: NEAR_DISTANCE, label: '<300' },
-  { low: NEAR_DISTANCE, high: FAR_DISTANCE, label: MID_DISTANCE_LABEL },
-  { low: FAR_DISTANCE, high: Infinity, label: '>600' },
-];
-
-export function distanceBucketOf(distance: number): DistanceBucketLabel {
-  if (distance < NEAR_DISTANCE) {
-    return '<300';
-  }
-  return distance < FAR_DISTANCE ? MID_DISTANCE_LABEL : '>600';
-}
-
-// Корзины дистанции для угла хода к линии на противника — по 100 от 200 до 800: угол человека меняется с
-// дистанцией круче, чем видно в трёх корзинах огня.
-export const COURSE_BAND_LABELS = [
-  '<200',
-  '200–300',
-  '300–400',
-  '400–500',
-  '500–600',
-  '600–700',
-  '700–800',
-  '>800',
-] as const;
-export type CourseBandLabel = (typeof COURSE_BAND_LABELS)[number];
-
-export interface CourseBand {
-  low: number;
-  high: number;
-  label: CourseBandLabel;
-}
-
-const COURSE_BAND_FIRST_EDGE = 200;
-const COURSE_BAND_WIDTH = 100;
-
-export const COURSE_BANDS: readonly CourseBand[] = COURSE_BAND_LABELS.map((label, index) => ({
-  low: index === 0 ? 0 : COURSE_BAND_FIRST_EDGE + (index - 1) * COURSE_BAND_WIDTH,
-  high: index === COURSE_BAND_LABELS.length - 1 ? Infinity : COURSE_BAND_FIRST_EDGE + index * COURSE_BAND_WIDTH,
-  label,
-}));
-
-export function courseBandOf(distance: number): CourseBandLabel {
-  return COURSE_BANDS.find((band) => distance < band.high)?.label ?? '>800';
-}
 
 export interface ShotRow {
   gt: number;

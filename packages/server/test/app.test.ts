@@ -12,6 +12,8 @@ import {
   MessageType,
   PROTOCOL_VERSION,
   ErrorCode,
+  TWIN_INFO,
+  twinRoomCode,
   type FfaStateMessage,
   type RoundStartMessage,
   type SnapshotMessage,
@@ -22,6 +24,10 @@ import { postInTwoParts, seededRandom, sleep, threadCpuMs } from './support.js';
 
 const FAST_ROOM = { countdownTicks: 3, roundEndTicks: 3, maxInputsPerSecond: 90 };
 const TICK_MS = 4;
+// Характеристики двойника — самый частый билд игрока с телефона.
+const TWIN_STATS = { armor: 0, engine: 3, gun: 4, reload: 3 };
+// Двойник за полминуты боя успевает поехать и выстрелить, даже когда человек стоит.
+const TWIN_WATCH_SNAPSHOTS = 30 * TICK_RATE;
 const LOG_BODY_LIMIT_BYTES = 256 * 1024;
 
 let app: App;
@@ -476,6 +482,33 @@ describe('вход в комнату', () => {
     // Стоящий за стеной человек не цель: в стену боты не стреляют, проверяется только движение.
     expect(await hasBotMoved(human)).toBe(true);
   });
+
+  it('код twin… — дуэль против двойника: он сидит первым со своими характеристиками, едет и стреляет', async () => {
+    const code = twinRoomCode('xyz1');
+    const human = await connect();
+    human.join(code, 'Дима');
+    expect((await human.nextOfType(MessageType.Welcome)).side).toBe(1);
+    const start = await human.nextOfType(MessageType.RoundStart);
+    expect(start.tanks[0]).toEqual({ nickname: TWIN_INFO.name, stats: TWIN_STATS });
+    expect(start.tanks[1].nickname).toBe('Дима');
+    let hasMoved = false;
+    let hasShot = false;
+    for (let i = 0; i < TWIN_WATCH_SNAPSHOTS && !(hasMoved && hasShot); i++) {
+      const snapshot = await human.nextOfType(MessageType.Snapshot);
+      hasMoved ||= Math.abs(snapshot.tanks[0].speed) > 1;
+      hasShot ||= snapshot.bullets.some((bullet) => bullet.owner === 0);
+    }
+    expect(hasMoved).toBe(true);
+    expect(hasShot).toBe(true);
+
+    const stranger = await connect();
+    stranger.join(code, 'Третий');
+    expect((await stranger.nextOfType(MessageType.Error)).code).toBe(ErrorCode.RoomFull);
+
+    human.close();
+    await sleep(100);
+    expect(app.stats().rooms).toBe(0);
+  }, 30000);
 
   it('код bot без заполненного уровня — неверный код комнаты, комната не создаётся', async () => {
     for (const code of ['botabc', 'bot1abc', 'bot00abc', 'bot11abc']) {

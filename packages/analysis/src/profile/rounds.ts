@@ -20,7 +20,7 @@ import {
 import type { BotLevel } from '@tanks/shared/protocol';
 import { EVENT_KIND } from '../bullets.js';
 import type { GameSummary, RoundSummary } from '../game.js';
-import { isClear, leadPoint, wallClearance } from '../geometry.js';
+import { leadPoint } from '../geometry.js';
 import type { LoggedGame } from '../index.js';
 import {
   FIGHT_PHASE,
@@ -42,15 +42,9 @@ import {
   type AxisBucket,
 } from '../movement.js';
 import { toDegrees } from '../numbers.js';
-import {
-  AIM_DONE_RAD,
-  AIM_LOST_RAD,
-  distanceBucketOf,
-  LEAD_SPAN_MIN_RAD,
-  MIN_DISTANCE,
-  MOVING_SPEED,
-} from '../shots.js';
-import { hasCoverWithin, pathFieldTo, pathLengthFrom, pathPointFrom, type PathField } from './cover.js';
+import { distanceBucketOf } from '../ruler/bands.js';
+import { hasCoverWithin, pathFieldTo, pathLengthFrom, pathPointFrom, type PathField } from '../ruler/cover.js';
+import { isClear, wallClearance } from '../ruler/geometry.js';
 import {
   bearingOf,
   HIDDEN_AIM_TARGETS,
@@ -59,7 +53,10 @@ import {
   soleChance,
   soleHiddenAim,
   type HiddenAimTarget,
-} from './hiddenAim.js';
+} from '../ruler/hiddenAim.js';
+import type { KitSide } from '../ruler/kits.js';
+import { botClassOf, type ModeFeatures } from '../ruler/modeSwitch.js';
+import { AIM_DONE_RAD, AIM_LOST_RAD, LEAD_SPAN_MIN_RAD, MIN_DISTANCE, MOVING_SPEED } from '../shots.js';
 import { upperMedian } from './stats.js';
 import { counterfactualHit, fitBulletSpeed, replayRound, shotAngle, type ReplayOutcome } from './replay.js';
 
@@ -145,9 +142,6 @@ const KIT_TRIP_MIN_CLOSE = 100;
 const FREE_RUN_STRIDE = 3;
 const FREE_RUN_CAP = 600;
 const FREE_RUN_PRECISION = 5;
-const BOT_CLASS_EDGES = [8, 9, 10] as const;
-const BOT_CLASSES = ['3–7', '8', '9', '10'] as const;
-export type BotClass = (typeof BOT_CLASSES)[number];
 
 const FLAGS_PREFIX = 'flags ';
 const SETTINGS_PREFIX = 'settings ';
@@ -272,20 +266,6 @@ export interface AimSample {
   turn: number;
 }
 
-// Признаки выбора режима в начале секунды боя.
-export interface ModeFeatures {
-  botClass: BotClass;
-  lossStreak: number;
-  roundIndex: number;
-  recentDamageShare: number;
-  healthShare: number;
-  exchangeShare: number;
-  hasCover: boolean;
-  fightSeconds: number;
-  hasSight: boolean;
-  distance: number;
-}
-
 export interface SecondSample {
   index: number;
   features: ModeFeatures;
@@ -298,10 +278,6 @@ export interface HiddenAimCounts {
   sole: Record<HiddenAimTarget, number>;
   chance: Record<HiddenAimTarget, number>;
 }
-
-// Аптечка ближе по пути мне или противнику.
-export const KIT_SIDES = ['closer', 'farther'] as const;
-export type KitSide = (typeof KIT_SIDES)[number];
 
 export interface TowardCount {
   toward: number;
@@ -522,11 +498,6 @@ function firstIntentIndex(
     return tick !== undefined && (tick.actions[human].isFiring || tick.gt >= firstGuardGt);
   });
   return found === -1 ? fight.length : found;
-}
-
-export function botClassOf(level: BotLevel): BotClass {
-  const index = BOT_CLASS_EDGES.findIndex((edge) => level === edge);
-  return BOT_CLASSES[index + 1] ?? '3–7';
 }
 
 function isControlled(action: LogAction): boolean {

@@ -10,6 +10,7 @@ packages/mobile/android
 packages/mobile/ios
 
 packages/bots/scripts/
+packages/bots/twin/
 
 # Собирается build-dashboard.py
 deploy/grafana/tanks-dashboard.json

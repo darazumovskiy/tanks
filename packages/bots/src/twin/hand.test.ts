@@ -1,6 +1,6 @@
 import { createRandom, leadPoint, normalizeAngle, TICK_RATE, type Point } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
-import { byBand, craftView } from '../fixture.js';
+import { byBand, craftView } from './fixture.js';
 import { Hand, type HandSettings } from './hand.js';
 import { fromDeciles } from './sampling.js';
 

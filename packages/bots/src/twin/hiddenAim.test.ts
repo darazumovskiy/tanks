@@ -1,7 +1,7 @@
-import { exitPointOf, ricochetAngleOf, type HiddenAimTarget } from '@tanks/analysis';
+import { exitPointOf, ricochetAngleOf, type HiddenAimTarget } from '@tanks/analysis/ruler';
 import { createRandom, mapByIndex } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
-import { calibrationWith, craftView, profileWith, type ViewSpec } from '../fixture.js';
+import { calibrationWith, craftView, profileWith, type ViewSpec } from './fixture.js';
 import { TwinBrain } from './brain.js';
 import { HiddenAim } from './hiddenAim.js';
 
@@ -89,6 +89,21 @@ describe('башня без видимости', () => {
     lastSeen.reset();
     lastSeen.pick();
     expect(lastSeen.point(POLYGON, me, HIDDEN, 0)).toBeNull();
+  });
+
+  it('рикошета нет — пеленг: танк в тесной коробке, после отскока снаряд упирается в её же стену', () => {
+    const box = [
+      { x: ME.x - 60, y: ME.y - 60, w: 120, h: 20 },
+      { x: ME.x - 60, y: ME.y + 40, w: 120, h: 20 },
+      { x: ME.x - 60, y: ME.y - 60, w: 20, h: 120 },
+      { x: ME.x + 40, y: ME.y - 60, w: 20, h: 120 },
+    ];
+    const field = { ...POLYGON, walls: box };
+    const ricochet = aimWith({ ricochet: 1 });
+    ricochet.pick();
+
+    expect(ricochetAngleOf(field, me, HIDDEN, me.stats.bulletSpeed, me.turret)).toBeNull();
+    expect(ricochet.point(field, me, HIDDEN, 0)).toBeNull();
   });
 
   it('выбор — по своей доле у каждой цели, остаток — башню не ведут; при сумме больше 1 последним меньше', () => {

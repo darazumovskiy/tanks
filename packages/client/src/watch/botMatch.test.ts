@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BotBrain } from '@tanks/bots';
+import type { BotBrain, BotRound } from '@tanks/bots';
 import {
   DEFAULT_STATS,
   DUEL_COUNTDOWN_TICKS,
@@ -10,7 +10,7 @@ import {
   type Action,
 } from '@tanks/shared/engine';
 import { BotMatch, ROUND_END_TICKS, type MatchFighter } from './botMatch.js';
-import { fighterById, type Fighter } from './fighters.js';
+import { fighterById, readyFighter, type ReadyFighter } from './fighters.js';
 
 // Предел тиков на раунд: серия без конца раунда — ошибка, а не зависание теста.
 const MAX_ROUND_TICKS = DUEL_COUNTDOWN_TICKS + ROUND_SECONDS * TICK_RATE + ROUND_END_TICKS + 1;
@@ -19,22 +19,33 @@ const FNV_PRIME = 0x01000193;
 const SPY_REACTION_TICKS = 5;
 // Десять секунд боя: каждый Параллакс успевает и сдвинуться, и выстрелить.
 const SAME_FIGHTERS_TICKS = 10 * TICK_RATE;
+// Двадцать секунд боя: двойник успевает и сдвинуться, и выстрелить.
+const TWIN_FIGHT_TICKS = 20 * TICK_RATE;
 const FULL_THROTTLE: Action = { ...IDLE_ACTION, throttle: 1 };
 
-function fighter(id: string): Fighter {
+async function fighter(id: string): Promise<ReadyFighter> {
   const found = fighterById(id);
   if (found === null) {
     throw new Error(`нет бойца ${id}`);
   }
-  return found;
+  return readyFighter(found);
 }
 
-function scriptedFighter(name: string, action: Action, reactionTicks = 0, seen: number[] = []): MatchFighter {
+function scriptedFighter(
+  name: string,
+  action: Action,
+  reactionTicks = 0,
+  seen: number[] = [],
+  rounds: BotRound[] = [],
+): MatchFighter {
   return {
     name,
     createBrain: (): BotBrain => ({
       stats: DEFAULT_STATS,
       reactionTicks,
+      init: (_view, round) => {
+        rounds.push(round);
+      },
       tick: (view) => {
         seen.push(view.enemy.x);
         return action;
@@ -81,20 +92,20 @@ function stepUntil(match: BotMatch, isDone: () => boolean): void {
 }
 
 describe('бой ботов', () => {
-  it('одно зерно — один исход', () => {
-    const pair = [fighter('bot5'), fighter('bot6')] as const;
+  it('одно зерно — один исход', async () => {
+    const pair = [await fighter('bot5'), await fighter('bot6')] as const;
     const first = play(new BotMatch(pair, 7), 3);
     const second = play(new BotMatch(pair, 7), 3);
     expect(second).toEqual(first);
   });
 
-  it('другое зерно — другой бой', () => {
-    const pair = [fighter('bot3'), fighter('bot5')] as const;
+  it('другое зерно — другой бой', async () => {
+    const pair = [await fighter('bot3'), await fighter('bot5')] as const;
     expect(play(new BotMatch(pair, 1), 2).print).not.toBe(play(new BotMatch(pair, 2), 2).print);
   });
 
-  it('фазы: отсчёт без движения, бой, итог, следующий раунд на следующей карте', () => {
-    const match = new BotMatch([fighter('bot10'), fighter('bot1')], 3);
+  it('фазы: отсчёт без движения, бой, итог, следующий раунд на следующей карте', async () => {
+    const match = new BotMatch([await fighter('bot10'), await fighter('bot1')], 3);
     const spawn = { x: match.round.tanks[0].x, y: match.round.tanks[0].y };
     expect(match.phase).toBe('countdown');
     for (let tick = 0; tick < DUEL_COUNTDOWN_TICKS; tick++) {
@@ -122,8 +133,8 @@ describe('бой ботов', () => {
     expect(match.outcome).toBeNull();
   });
 
-  it('одинаковые бойцы: оба едут и стреляют, каждый своим мозгом', () => {
-    const parallax = fighter('bot10');
+  it('одинаковые бойцы: оба едут и стреляют, каждый своим мозгом', async () => {
+    const parallax = await fighter('bot10');
     const match = new BotMatch([parallax, parallax], 11);
     stepUntil(match, () => match.phase === 'fight');
     const spawns = match.round.tanks.map((tank) => ({ x: tank.x, y: tank.y }));
@@ -168,5 +179,32 @@ describe('бой ботов', () => {
     }
     expect(seen.slice(SPY_REACTION_TICKS)).toEqual(actual.slice(0, -SPY_REACTION_TICKS));
     expect(new Set(actual).size).toBeGreaterThan(1);
+  });
+
+  it('мозг на старте раунда получает номер раунда, карту и счёт перед раундом', () => {
+    const rounds: BotRound[] = [];
+    const idle = scriptedFighter('Стоит', IDLE_ACTION);
+    const winner = scriptedFighter('Едет', FULL_THROTTLE, 0, [], rounds);
+    const match = new BotMatch([winner, idle], 1);
+    stepUntil(match, () => match.roundIndex === 1);
+
+    expect(rounds).toEqual([
+      { roundIndex: 0, mapIndex: 0, score: [0, 0] },
+      { roundIndex: 1, mapIndex: 1 % MAPS.length, score: [match.score[0], match.score[1]] },
+    ]);
+  });
+
+  it('двойник против Охотника: двойник едет и стреляет', async () => {
+    const match = new BotMatch([await fighter('twin'), await fighter('bot8')], 5);
+    stepUntil(match, () => match.phase === 'fight');
+    const spawn = { x: match.round.tanks[0].x, y: match.round.tanks[0].y };
+    let hasShot = false;
+    for (let tick = 0; tick < TWIN_FIGHT_TICKS && match.phase === 'fight'; tick++) {
+      hasShot ||= match.step().events.some((event) => event.kind === 'shot' && event.side === 0);
+    }
+
+    expect(match.names[0]).toBe('Двойник');
+    expect(hasShot).toBe(true);
+    expect({ x: match.round.tanks[0].x, y: match.round.tanks[0].y }).not.toEqual(spawn);
   });
 });

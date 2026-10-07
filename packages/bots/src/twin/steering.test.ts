@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { aimTurret, IDLE_HULL, keysToward, steerHull, type HullSteering, type StickVector } from './steering.js';
-import { craftView } from '../fixture.js';
+import { craftView } from './fixture.js';
 
 interface SteeringModule {
   steerHull: typeof steerHull;
   aimTurret: typeof aimTurret;
 }
 
-// Клиент — браузерный пакет и в сборку двойника не входит; его модуль берётся только тестом.
-const CLIENT_STEERING = new URL('../../../client/src/steering.ts', import.meta.url).href;
+// Клиент — браузерный пакет и в пакет ботов не входит; его модуль берётся только тестом, путём от этого файла.
+const CLIENT_STEERING = '../../../client/src/steering.ts';
 
 const ANGLES = Array.from({ length: 24 }, (_, index) => -Math.PI + (index * Math.PI) / 12 + 0.01);
 const MAGNITUDES = [0.2, 0.7, 1];

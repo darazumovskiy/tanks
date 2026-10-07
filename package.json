@@ -20,7 +20,7 @@
     "fx-sheets": "node packages/client/test/visual/sheets.mjs",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
-    "typecheck": "tsc -b packages/shared packages/bots packages/server packages/client packages/analysis packages/twin && tsc -p packages/shared/test && tsc -p packages/server/test && tsc -p packages/client/test/e2e"
+    "typecheck": "tsc -b packages/shared packages/bots packages/server packages/client packages/analysis packages/twin && tsc -p packages/analysis/src/ruler && tsc -p packages/shared/test && tsc -p packages/server/test && tsc -p packages/client/test/e2e"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",

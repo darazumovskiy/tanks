@@ -30,12 +30,12 @@ import {
   type ClientSummary,
 } from './movement.js';
 import { count, median, pct, roundTo, sum } from './numbers.js';
+import { DISTANCE_BUCKETS } from './ruler/bands.js';
 import { analyzeSelfHits, type SelfHitRow } from './selfHits.js';
 import {
   AIM_GOOD_DEG,
   analyzeAimTracking,
   analyzeShots,
-  DISTANCE_BUCKETS,
   LEAD_FRACTION_MAX,
   LEAD_FRACTION_MIN,
   MOVING_SPEED,

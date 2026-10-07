@@ -1,6 +1,6 @@
-import { wallClearance } from '@tanks/analysis';
+import { wallClearance } from '@tanks/analysis/ruler';
 import { BULLET_RADIUS, isSegmentClear, type Point, type Wall } from '@tanks/shared/engine';
-import type { Band } from '../profile.js';
+import type { Band } from './profile.js';
 import { findPath, nearestCell, nearestFree, WAYPOINT_REACHED, type Grid } from './path.js';
 
 export interface CoverSettings {

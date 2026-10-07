@@ -6,7 +6,7 @@ import {
   type BattleMap,
   type Point,
 } from '@tanks/shared/engine';
-import { isClear } from '../geometry.js';
+import { isClear } from './geometry.js';
 import { gridPath } from './cover.js';
 
 // Куда человек может вести башню, когда противника не видно: пеленг сквозь стену, точка выхода — первая видимая

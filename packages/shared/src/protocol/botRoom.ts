@@ -74,6 +74,25 @@ export const BOT_LEVEL_INFO: Readonly<Record<BotLevel, BotLevelInfo>> = {
   },
 };
 
+// Комната против двойника игрока: код `twin` + произвольный код. Двойник — отдельный соперник, а не уровень
+// лестницы: у его комнаты уровня нет.
+export const TWIN_ROOM_PREFIX = 'twin';
+
+export const TWIN_INFO: Readonly<BotLevelInfo> = {
+  name: 'Двойник',
+  tagline: 'Играет как ты. Ну, почти',
+  summary:
+    'Собран по твоим боям: так же целится, так же петляет и так же отвлекается на аптечки. Обыграл его — значит, играешь лучше себя вчерашнего.',
+};
+
+export function twinRoomCode(suffix: string): string {
+  return `${TWIN_ROOM_PREFIX}${suffix}`;
+}
+
+export function isTwinRoomCode(code: string): boolean {
+  return code.startsWith(TWIN_ROOM_PREFIX);
+}
+
 function isBotLevel(value: number): value is BotLevel {
   return (BOT_LEVELS as readonly number[]).includes(value);
 }

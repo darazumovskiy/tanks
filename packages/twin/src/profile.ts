@@ -1,29 +1,38 @@
+import type {
+  Distribution,
+  MovementMetrics,
+  ProfileMetrics,
+  ProfilePeriod,
+  ProfileSelection,
+  SelectedRounds,
+} from '@tanks/analysis';
 import {
   COURSE_BANDS,
   DISTANCE_BUCKET_LABELS,
   distanceBucketOf,
-  type Coefficients,
+  HIDDEN_AIM_TARGETS,
   type CourseBandLabel,
   type DistanceBucketLabel,
-  HIDDEN_AIM_TARGETS,
-  type Distribution,
-  type FireContext,
   type HiddenAimTarget,
   type KitSide,
-  type MovementMetrics,
-  type ProfileMetrics,
-  type ProfilePeriod,
-  type ProfileSelection,
-  type SelectedRounds,
-} from '@tanks/analysis';
+} from '@tanks/analysis/ruler';
 import { createBrain } from '@tanks/bots';
+import {
+  SIGHT_KEYS,
+  type Band,
+  type SightKey,
+  type TwinCalibration,
+  type TwinProfile,
+  type TwinProfileName,
+  type TwinRival,
+} from '@tanks/bots/twin';
 import { createParallax } from '@tanks/server/bots/ladder';
-import { deriveStats, TICK_RATE } from '@tanks/shared/engine';
-import { BOT_LEVELS, type BotLevel } from '@tanks/shared/protocol';
+import { deriveStats, STAT_KEYS, TICK_RATE, type Stats } from '@tanks/shared/engine';
+import { BOT_LEVELS, TWIN_INFO, type BotLevel } from '@tanks/shared/protocol';
 
-export const TWIN_PROFILE_NAMES = ['phone', 'pc'] as const;
-export const TWIN_NICK = 'Двойник';
-export type TwinProfileName = (typeof TWIN_PROFILE_NAMES)[number];
+export const TWIN_NICK = TWIN_INFO.name;
+// Профиль, которым двойник играет против игрока в дуэли и в бою ботов.
+export const RIVAL_PROFILE: TwinProfileName = 'phone';
 
 // Справка по журналам человека: числа раундов по правилам выборки, метрики главного окна профиля
 // и движение в своём окне.
@@ -41,9 +50,6 @@ export interface TwinReference {
   movement: MovementMetrics;
 }
 
-// Противник на виду или не виден: у решений манёвра свои распределения для каждого случая.
-export const SIGHT_KEYS = ['sight', 'hidden'] as const;
-export type SightKey = (typeof SIGHT_KEYS)[number];
 export const SIGHT_NAMES: Readonly<Record<SightKey, string>> = { sight: 'на виду', hidden: 'без видимости' };
 
 export const KIT_NAMES: Readonly<Record<KitSide, string>> = {
@@ -57,51 +63,6 @@ export const HIDDEN_AIM_NAMES: Readonly<Record<HiddenAimTarget, string>> = {
   ricochet: 'рикошете',
   lastSeen: 'месте, где видел последний раз',
 };
-
-// Параметры, которые подбираются калибровкой по своим метрикам-входам. hiddenAim — доли решений, на которых
-// башня без видимости ведётся на цель; kitShare — доля решений манёвра, на которых танк едет к аптечке;
-// kitFollowShare — доля начатых поездок к аптечке, которые танк доводит, пока аптечку не подберут.
-export interface TwinCalibration {
-  correlationTicks: number;
-  lagTicks: number;
-  holdShare: Record<FireContext, number>;
-  decisionMeanS: number;
-  courseReach: number;
-  reverseChance: number;
-  kitShare: Record<KitSide, number>;
-  kitFollowShare: number;
-  hiddenAim: Record<HiddenAimTarget, number>;
-  coverHoldShare: number;
-  returnAvoidShare: number;
-}
-
-export interface Band {
-  near: number;
-  far: number;
-}
-
-export interface TwinProfile {
-  name: TwinProfileName;
-  control: 'sticks' | 'mouseKeys';
-  channel: { uplinkTicks: number; downlinkTicks: number; interpolationTicks: number };
-  settings: { pivotThrottle: number };
-  hand: { errorDecilesDeg: Record<DistanceBucketLabel, number[]>; leadShare: number };
-  fire: {
-    noStartPauseShare: number;
-    startPauseDecilesS: number[];
-    releaseMeanS: number;
-    longPausePerMinute: number;
-    longPauseDecilesS: number[];
-  };
-  manoeuvre: {
-    stickDeciles: number[];
-    courseDecilesDeg: Record<SightKey, Record<CourseBandLabel, number[]>>;
-  };
-  cover: { distanceBand: Band; wallDistanceBand: Band } | null;
-  modeSwitch: { enter: Coefficients | null; leave: Coefficients | null };
-  hiddenAimTargets: HiddenAimTarget[];
-  calibration: TwinCalibration | null;
-}
 
 // Выборка профиля: ник, периоды настроек списками игр, игры против старой лестницы ботов и окна счёта.
 interface ProfileWindows {
@@ -120,6 +81,7 @@ const TICK_MS = MS_PER_SECOND / TICK_RATE;
 const PERCENT = 100;
 
 const GAME_ID_SEPARATOR = ' ';
+const BUILD_SEPARATOR = '/';
 // Упреждения как приёма у игрока нет на обоих устройствах: выстрелы по движущемуся ложатся на корпус не реже, чем
 // на точку упреждения. Подгонкой по журналам доля не отделяется от отставания башни — значение из данных.
 const LEAD_SHARE = 0;
@@ -313,5 +275,56 @@ export function twinProfile(reference: TwinReference, calibration: TwinCalibrati
     modeSwitch: { enter: main.modeSwitch.enter, leave: main.modeSwitch.leave },
     hiddenAimTargets: hiddenAimTargetsOf(main.aim),
     calibration,
+  };
+}
+
+// Билд справки «броня/двигатель/пушка/перезарядка» в характеристики.
+export function buildStats(build: string): Stats {
+  const values = build.split(BUILD_SEPARATOR).map(Number);
+  const stats = {} as Stats;
+  STAT_KEYS.forEach((key, index) => {
+    stats[key] = values[index] ?? 0;
+  });
+  return stats;
+}
+
+function mostRounds<T>(counts: ReadonlyMap<T, number>): T | null {
+  let best: T | null = null;
+  let bestRounds = 0;
+  for (const [value, rounds] of counts) {
+    if (rounds > bestRounds) {
+      best = value;
+      bestRounds = rounds;
+    }
+  }
+  return best;
+}
+
+// Соперник в игре — профиль плюс условия, в которых игрок играл больше всего раундов главного окна: билд,
+// предохранитель у большинства раундов, уровень соперника; null — в справке нет раундов с условиями.
+export function twinRival(reference: TwinReference, calibration: TwinCalibration): TwinRival | null {
+  const builds = new Map<string, number>();
+  const levels = new Map<BotLevel, number>();
+  let guardRounds = 0;
+  let rounds = 0;
+  for (const level of BOT_LEVELS) {
+    const conditions = reference.main.conditions[level]?.conditions ?? [];
+    for (const condition of conditions) {
+      builds.set(condition.build, (builds.get(condition.build) ?? 0) + condition.rounds);
+      levels.set(level, (levels.get(level) ?? 0) + condition.rounds);
+      guardRounds += condition.hasRicochetGuard ? condition.rounds : 0;
+      rounds += condition.rounds;
+    }
+  }
+  const build = mostRounds(builds);
+  const opponentLevel = mostRounds(levels);
+  if (build === null || opponentLevel === null) {
+    return null;
+  }
+  return {
+    profile: twinProfile(reference, calibration),
+    stats: buildStats(build),
+    hasRicochetGuard: guardRounds * 2 > rounds,
+    opponentLevel,
   };
 }

@@ -15,7 +15,8 @@ import {
   type LogBuilder,
   type Pose,
 } from '../logFixture.js';
-import { profileMetrics, type FireContext } from './index.js';
+import type { FireContext } from '../ruler/bands.js';
+import { profileMetrics } from './index.js';
 
 interface Stage {
   human: Pose;

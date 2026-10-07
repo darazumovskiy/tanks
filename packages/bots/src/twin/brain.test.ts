@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { byBand, calibrationWith, craftView, profileWith, type ViewSpec } from '../fixture.js';
-import type { TwinProfile } from '../profile.js';
+import { byBand, calibrationWith, craftView, profileWith, type ViewSpec } from './fixture.js';
+import type { TwinProfile } from './profile.js';
 import { TwinBrain, type TwinDecision, type TwinSituation } from './brain.js';
 
 const PHONE_DECILES = [0, 6.1, 9.4, 14.3, 18.1, 23.2, 31.3, 44, 54.6, 78.6, 135.2];

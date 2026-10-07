@@ -23,15 +23,17 @@ import {
   type Pose,
 } from '../logFixture.js';
 import {
+  exitPointOf,
   hiddenAimDirections,
   HIDDEN_AIM_WINDOW,
+  ricochetAngleOf,
   ricochetAnglesOf,
   soleChance,
   soleHiddenAim,
   type HiddenAimDirections,
   type HiddenAimTarget,
-} from './hiddenAim.js';
-import { exitPointOf, profileMetrics, ricochetAngleOf } from './index.js';
+} from '../ruler/hiddenAim.js';
+import { profileMetrics } from './index.js';
 
 // Полигон: центральный блок стен закрывает противника B от танка; на месте A противник был виден.
 const POLYGON = mapByIndex(0);

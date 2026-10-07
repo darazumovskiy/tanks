@@ -13,13 +13,18 @@ import {
   shotEvent,
   type Pose,
 } from '@tanks/analysis/logFixture';
-import { COURSE_BAND_LABELS, DISTANCE_BUCKET_LABELS, type Distribution } from '@tanks/analysis';
+import type { Distribution } from '@tanks/analysis';
+import { COURSE_BAND_LABELS, DISTANCE_BUCKET_LABELS } from '@tanks/analysis/ruler';
+import { parseTwinRival, type TwinCalibration } from '@tanks/bots/twin';
+import { calibrationWith } from '@tanks/bots/twinFixture';
 import { TICK_RATE } from '@tanks/shared/engine';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runCli, USAGE } from './cli.js';
-import { PROFILE_WINDOWS, twinProfile, type TwinCalibration, type TwinReference } from './profile.js';
+import { PROFILE_WINDOWS, twinProfile, twinRival, type TwinReference } from './profile.js';
+import { loadCalibration, loadReference } from './reference.js';
 
 const OPEN_Y = 100;
 const BOT_POSE = pose(800, OPEN_Y, Math.PI, Math.PI);
@@ -34,6 +39,10 @@ const C2_WEAK_GAME = 'MFAK';
 const OLD_LADDER_GAME = 'DF9T';
 const PHONE_GAMES = PROFILE_WINDOWS.phone.periods.flatMap((period) => period.games);
 const NO_SHARE = { part: 0, total: 0, pct: null };
+const RIVAL_FILE = 'rival.json';
+const RIVAL_NOT_REFRESHED = 'Профиль соперника не обновлён: нет справки, условий раундов или полной калибровки phone';
+const REFERENCE_DIR = fileURLToPath(new URL('../reference/', import.meta.url));
+const RIVAL_PATH = fileURLToPath(import.meta.resolve('@tanks/bots/twin-rival.json'));
 
 function summary(n: number, value: number): Distribution {
   return { n, q1: value, median: value, q3: value, deciles: new Array<number>(11).fill(value) };
@@ -79,6 +88,7 @@ async function cli(argv: readonly string[], referenceDir: string): Promise<{ cod
   const code = await runCli(argv, {
     print: (line) => lines.push(line),
     referenceDir,
+    rivalPath: join(referenceDir, RIVAL_FILE),
     threads: 1,
     now: () => 0,
   });
@@ -120,7 +130,9 @@ describe('команда reference', () => {
     expect(lines).toContain('  исключено (weakBot): 1');
     expect(lines).toContain('  исключено (oldLadder): 1');
     expect(lines).toContain('Победы в главном окне: 0 из 1, интервал 0–79 %');
-    expect(lines.at(-1)).toBe(path);
+    expect(lines.at(-2)).toBe(path);
+    expect(lines.at(-1)).toBe(RIVAL_NOT_REFRESHED);
+    expect(existsSync(join(dir, RIVAL_FILE))).toBe(false);
     expect(reference).toMatchObject({
       profile: 'phone',
       nick: 'Mob',
@@ -304,5 +316,68 @@ describe('профиль двойника', () => {
     expect(course.hidden['<200'][5]).toBe(90);
     expect(course.hidden['400–500'][5]).toBe(51);
     expect(course.hidden['>800'][5]).toBe(90);
+  });
+});
+
+describe('профиль соперника', () => {
+  const playerReference = (): TwinReference => {
+    const reference = loadReference('phone', REFERENCE_DIR);
+    if (reference === null) {
+      throw new Error('нет справки телефона');
+    }
+    return reference;
+  };
+  const playerCalibration = (): TwinCalibration => {
+    const file = loadCalibration('phone', REFERENCE_DIR);
+    if (file === null || 'error' in file) {
+      throw new Error('нет калибровки телефона');
+    }
+    return file.calibration;
+  };
+
+  it('профиль — twinProfile; билд и уровень соперника — с наибольшим числом раундов; предохранитель — у большинства', () => {
+    const reference = playerReference();
+    const calibration = playerCalibration();
+    const rival = twinRival(reference, calibration);
+
+    expect(rival).toEqual({
+      profile: twinProfile(reference, calibration),
+      stats: { armor: 0, engine: 3, gun: 4, reload: 3 },
+      hasRicochetGuard: true,
+      opponentLevel: 8,
+    });
+
+    const guardOff = structuredClone(reference);
+    for (const level of Object.values(guardOff.main.conditions)) {
+      level.conditions = level.conditions.map((condition) => ({ ...condition, hasRicochetGuard: false }));
+    }
+    expect(twinRival(guardOff, calibration)?.hasRicochetGuard).toBe(false);
+
+    const noConditions = structuredClone(reference);
+    noConditions.main.conditions = {};
+    expect(twinRival(noConditions, calibration)).toBeNull();
+  });
+
+  it('файл профиля соперника совпадает со сборкой из справки и калибровки телефона — после них нужен twin reference или calibrate', () => {
+    const file = parseTwinRival(readFileSync(RIVAL_PATH, 'utf8'));
+
+    expect(twinRival(playerReference(), playerCalibration())).toEqual(file);
+  });
+
+  it('reference: справка телефона без условий раундов профиль соперника не трогает, справка компьютера — тоже', async () => {
+    const calibration = calibrationWith();
+    const logDir = makeLogDir({ [`${C2_GAME}.log`]: phoneGameLog('Mob', 'bot08twin') });
+    const dir = makeLogDir({ 'phone.calibration.json': JSON.stringify(calibration) });
+
+    const phone = await cli(['reference', logDir, '--profile', 'phone'], dir);
+    expect(phone.lines.at(-1)).toBe(RIVAL_NOT_REFRESHED);
+    expect(existsSync(join(dir, RIVAL_FILE))).toBe(false);
+
+    const pcDir = makeLogDir({ 'pc.calibration.json': JSON.stringify(calibration) });
+    const pcLogs = makeLogDir({ 'K3UX.log': phoneGameLog('dd', 'bot08pc') });
+    const pc = await cli(['reference', pcLogs, '--profile', 'pc'], pcDir);
+    expect(pc.code).toBe(0);
+    expect(pc.lines.at(-1)).toBe(join(pcDir, 'pc.json'));
+    expect(existsSync(join(pcDir, RIVAL_FILE))).toBe(false);
   });
 });

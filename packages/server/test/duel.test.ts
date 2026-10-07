@@ -11,6 +11,7 @@ import {
 import {
   botRoomCode,
   EventFlag,
+  twinRoomCode,
   MessageType,
   type RoundStartMessage,
   type ServerMessage,
@@ -365,24 +366,31 @@ describe('скольжение вдоль стен', () => {
 });
 
 describe('против бота', () => {
-  it('скриптовый человек против Охотника: раунд доигрывается до конца, начинается следующий', async () => {
-    const human = await TestClient.connect(port);
-    clients.push(human);
-    human.join(botRoomCode(8, 'duel'), 'Человек', HUNTER);
-    await human.nextOfType(MessageType.Welcome);
-    await human.nextOfType(MessageType.RoundStart);
+  it.each([
+    ['Охотника', botRoomCode(8, 'duel')],
+    ['двойника', twinRoomCode('duel')],
+  ])(
+    'скриптовый человек против %s: раунд доигрывается до конца, начинается следующий',
+    async (_name, code) => {
+      const human = await TestClient.connect(port);
+      clients.push(human);
+      human.join(code, 'Человек', HUNTER);
+      await human.nextOfType(MessageType.Welcome);
+      await human.nextOfType(MessageType.RoundStart);
 
-    const deadline = Date.now() + ROUND_TIMEOUT_MS;
-    let last: SnapshotMessage | null = null;
-    while (Date.now() < deadline && last?.isOver !== true) {
-      const fresh = await freshSnapshots(human);
-      last = fresh.all.find((snapshot) => snapshot.isOver) ?? fresh.latest;
-      const [bot, me] = last.tanks;
-      human.input({ ...steerTo(me, bot, 120), ...aimAt(me, bot) });
-    }
-    expect(last?.isOver).toBe(true);
+      const deadline = Date.now() + ROUND_TIMEOUT_MS;
+      let last: SnapshotMessage | null = null;
+      while (Date.now() < deadline && last?.isOver !== true) {
+        const fresh = await freshSnapshots(human);
+        last = fresh.all.find((snapshot) => snapshot.isOver) ?? fresh.latest;
+        const [bot, me] = last.tanks;
+        human.input({ ...steerTo(me, bot, 120), ...aimAt(me, bot) });
+      }
+      expect(last?.isOver).toBe(true);
 
-    const next = await human.nextOfType(MessageType.RoundStart, 3000);
-    expect(next.roundIndex).toBe(1);
-  }, 60000);
+      const next = await human.nextOfType(MessageType.RoundStart, 3000);
+      expect(next.roundIndex).toBe(1);
+    },
+    60000,
+  );
 });

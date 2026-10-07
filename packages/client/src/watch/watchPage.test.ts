@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorldView } from '../prediction.js';
 import { Effects } from '../render/effects.js';
 import type { Overlay } from '../render/renderer.js';
@@ -8,6 +8,7 @@ import { Sfx } from '../sfx.js';
 import { installFakeAudio, type FakeAudio } from '../testing/fakeAudio.js';
 import { MAX_STEPS_PER_FRAME } from './stepClock.js';
 import type { WatchGame } from './watchGame.js';
+import { fighterById } from './fighters.js';
 import { mountWatch, outcomeText } from './watchPage.js';
 
 const FRAME_MS = 1000 / 60;
@@ -43,7 +44,7 @@ describe('экран боя ботов', () => {
   let game: WatchGame;
   let audio: FakeAudio;
 
-  function mount(): void {
+  async function mount(): Promise<void> {
     document.body.innerHTML = `
       <div id="result"></div>
       <div class="watch-pick"><button id="left-toggle"></button><div id="left-list" hidden></div></div>
@@ -52,7 +53,7 @@ describe('экран боя ботов', () => {
       <button id="pause"></button>
       <button id="restart"></button>
       <button id="sound"></button>`;
-    game = mountWatch(
+    game = await mountWatch(
       {
         left: { toggle: element('left-toggle', HTMLButtonElement), list: element('left-list', HTMLElement) },
         right: { toggle: element('right-toggle', HTMLButtonElement), list: element('right-list', HTMLElement) },
@@ -118,9 +119,14 @@ describe('экран боя ботов', () => {
     return button;
   }
 
-  function pick(side: 'left' | 'right', id: string): void {
+  // Новый бой начинается, когда мозг бойца загружен: выбор ждёт, пока бой не сменится.
+  async function pick(side: 'left' | 'right', id: string): Promise<void> {
+    const index = side === 'left' ? 0 : 1;
     element(`${side}-toggle`, HTMLButtonElement).click();
     element(`${side}-list`, HTMLElement).querySelector<HTMLButtonElement>(`[data-fighter="${id}"]`)?.click();
+    await vi.waitFor(() => {
+      expect(game.debugState().fighterIds[index]).toBe(id);
+    });
   }
 
   beforeEach(() => {
@@ -137,8 +143,8 @@ describe('экран боя ботов', () => {
     audio.restore();
   });
 
-  it('без сохранённого выбора: Охотник против Параллакса, ×1, не на паузе', () => {
-    mount();
+  it('без сохранённого выбора: Охотник против Параллакса, ×1, не на паузе', async () => {
+    await mount();
     const state = game.debugState();
     expect(state.fighterIds).toEqual(['bot8', 'bot10']);
     expect(state.fighters).toEqual(['Охотник', 'ПАРАЛЛАКС-ASTRA']);
@@ -148,15 +154,15 @@ describe('экран боя ботов', () => {
     expect(element('left-toggle', HTMLButtonElement).textContent).toContain('Охотник');
   });
 
-  it('сохранённый выбор открывается; неизвестный номер — боец по умолчанию', () => {
+  it('сохранённый выбор открывается; неизвестный номер — боец по умолчанию', async () => {
     stored.set(LEFT_KEY, 'bot3');
     stored.set(RIGHT_KEY, 'bot99');
-    mount();
+    await mount();
     expect(game.debugState().fighterIds).toEqual(['bot3', 'bot10']);
   });
 
-  it('за секунду кадров — 30 тиков на ×1 и 120 на ×4; смена скорости не сбрасывает бой', () => {
-    mount();
+  it('за секунду кадров — 30 тиков на ×1 и 120 на ×4; смена скорости не сбрасывает бой', async () => {
+    await mount();
     frames(FRAMES_PER_S);
     expect(game.debugState().totalTicks).toBe(TICKS_PER_S);
     speedButton(4).click();
@@ -169,8 +175,8 @@ describe('экран боя ботов', () => {
     expect(state.seed).toBe(1);
   });
 
-  it('пауза: кадры идут, тики стоят; повторное нажатие продолжает', () => {
-    mount();
+  it('пауза: кадры идут, тики стоят; повторное нажатие продолжает', async () => {
+    await mount();
     frames(10);
     const pause = element('pause', HTMLButtonElement);
     pause.click();
@@ -187,8 +193,8 @@ describe('экран боя ботов', () => {
     expect(pause.getAttribute('aria-label')).toBe('Пауза');
   });
 
-  it('скрытая вкладка: бой стоит; вернулась после долгой паузы — без рывка', () => {
-    mount();
+  it('скрытая вкладка: бой стоит; вернулась после долгой паузы — без рывка', async () => {
+    await mount();
     frames(10);
     isHidden = true;
     const hiddenAt = game.debugState().totalTicks;
@@ -202,8 +208,8 @@ describe('экран боя ботов', () => {
     expect(game.debugState().totalTicks - hiddenAt).toBeLessThanOrEqual(MAX_STEPS_PER_FRAME);
   });
 
-  it('пауза переживает скрытую вкладку', () => {
-    mount();
+  it('пауза переживает скрытую вкладку', async () => {
+    await mount();
     element('pause', HTMLButtonElement).click();
     isHidden = true;
     frames(10);
@@ -213,10 +219,10 @@ describe('экран боя ботов', () => {
     expect(game.debugState().totalTicks).toBe(0);
   });
 
-  it('смена бойца посреди боя — новый бой с нуля, выбор запоминается', () => {
-    mount();
+  it('смена бойца посреди боя — новый бой с нуля, выбор запоминается', async () => {
+    await mount();
     frames(FRAMES_PER_S);
-    pick('right', 'bot5');
+    await pick('right', 'bot5');
     const state = game.debugState();
     expect(state.fighters).toEqual(['Охотник', 'Ветеран']);
     expect(state.totalTicks).toBe(0);
@@ -227,16 +233,58 @@ describe('экран боя ботов', () => {
     expect(element('right-toggle', HTMLButtonElement).textContent).toContain('Ветеран');
   });
 
-  it('одинаковые бойцы в обоих списках — бой идёт', () => {
-    mount();
-    pick('left', 'bot10');
+  it('двойник — последним в обоих списках: знак «Я», имя и описание', async () => {
+    await mount();
+    for (const side of ['left', 'right'] as const) {
+      const rows = element(`${side}-list`, HTMLElement).querySelectorAll('.level');
+      const last = rows[rows.length - 1];
+      expect(last?.getAttribute('data-fighter')).toBe('twin');
+      expect(last?.querySelector('.level-badge')?.textContent).toBe('Я');
+      expect(last?.querySelector('.level-name')?.textContent).toBe('Двойник');
+      expect(last?.querySelector('.level-tagline')?.textContent).toBe('Играет как ты. Ну, почти');
+    }
+  });
+
+  it('выбор двойника — его мозг загружается, бой с ним с нуля; сохранённый двойник — бой с ним с открытия', async () => {
+    await mount();
+    frames(FRAMES_PER_S);
+    await pick('right', 'twin');
+    const state = game.debugState();
+    expect(state.fighters).toEqual(['Охотник', 'Двойник']);
+    expect(state.totalTicks).toBe(0);
+    expect(state.score).toEqual([0, 0]);
+    expect(stored.get(RIGHT_KEY)).toBe('twin');
+    expect(element('right-toggle', HTMLButtonElement).textContent).toContain('Двойник');
+    frames(FRAMES_PER_S);
+    expect(game.debugState().totalTicks).toBe(TICKS_PER_S);
+
+    stored.set(LEFT_KEY, 'twin');
+    await mount();
+    expect(game.debugState().fighterIds).toEqual(['twin', 'twin']);
+  });
+
+  it('выбран двойник, до конца загрузки — другой боец: бой с последним выбранным', async () => {
+    await mount();
+    element('right-toggle', HTMLButtonElement).click();
+    element('right-list', HTMLElement).querySelector<HTMLButtonElement>('[data-fighter="twin"]')?.click();
+    await pick('right', 'bot5');
+    await fighterById('twin')?.loadBrain();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(game.debugState().fighterIds).toEqual(['bot8', 'bot5']);
+    expect(stored.get(RIGHT_KEY)).toBe('bot5');
+  });
+
+  it('одинаковые бойцы в обоих списках — бой идёт', async () => {
+    await mount();
+    await pick('left', 'bot10');
     frames(FRAMES_PER_S);
     expect(game.debugState().fighterIds).toEqual(['bot10', 'bot10']);
     expect(game.debugState().totalTicks).toBe(TICKS_PER_S);
   });
 
-  it('«заново» — счёт и тики с нуля, новое зерно', () => {
-    mount();
+  it('«заново» — счёт и тики с нуля, новое зерно', async () => {
+    await mount();
     frames(FRAMES_PER_S);
     element('restart', HTMLButtonElement).click();
     expect(game.debugState().totalTicks).toBe(0);
@@ -244,9 +292,9 @@ describe('экран боя ботов', () => {
     expect(game.debugState().fighterIds).toEqual(['bot8', 'bot10']);
   });
 
-  it('конец раунда — итог с именем победителя, со следующим раундом уходит', () => {
+  it('конец раунда — итог с именем победителя, со следующим раундом уходит', async () => {
     stored.set(LEFT_KEY, 'bot1');
-    mount();
+    await mount();
     speedButton(4).click();
     const result = element('result', HTMLElement);
     expect(result.classList.contains('is-shown')).toBe(false);
@@ -261,9 +309,9 @@ describe('экран боя ботов', () => {
     expect(drawn.at(-1)?.hud.score).toEqual([0, 1]);
   });
 
-  it('итог раунда: движок стоит — танки и снаряды на картинке стоят кадр в кадр', () => {
+  it('итог раунда: движок стоит — танки и снаряды на картинке стоят кадр в кадр', async () => {
     stored.set(LEFT_KEY, 'bot1');
-    mount();
+    await mount();
     speedButton(4).click();
     framesUntil(() => game.debugState().phase === 'roundEnd');
     speedButton(1).click();
@@ -280,8 +328,8 @@ describe('экран боя ботов', () => {
     expect(new Set(poses).size).toBe(1);
   });
 
-  it('отсчёт как в дуэли: «3, 2, 1» за три секунды, «БОЙ!» — первые полсекунды боя', () => {
-    mount();
+  it('отсчёт как в дуэли: «3, 2, 1» за три секунды, «БОЙ!» — первые полсекунды боя', async () => {
+    await mount();
     frames(1);
     expect(game.debugState().phase).toBe('countdown');
     expect(drawn.at(-1)?.overlay).toMatchObject({ kind: 'countdown', totalS: 3 });
@@ -305,8 +353,8 @@ describe('экран боя ботов', () => {
     expect(outcomeText({ winner: null, isByTime: false }, names).note).toBe('Подбили друг друга');
   });
 
-  it('звук: кнопка и M выключают и включают', () => {
-    mount();
+  it('звук: кнопка и M выключают и включают', async () => {
+    await mount();
     const sound = element('sound', HTMLButtonElement);
     sound.click();
     expect(game.debugState().isMuted).toBe(true);

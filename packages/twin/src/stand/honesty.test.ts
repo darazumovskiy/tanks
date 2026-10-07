@@ -1,8 +1,9 @@
 import { wilson, type ProfileRound } from '@tanks/analysis';
+import { calibrationWith } from '@tanks/bots/twinFixture';
+import type { TwinCalibration } from '@tanks/bots/twin';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { calibrationWith } from '../fixture.js';
-import { PROFILE_WINDOWS, twinProfile, type TwinCalibration, type TwinReference } from '../profile.js';
+import { PROFILE_WINDOWS, twinProfile, type TwinReference } from '../profile.js';
 import {
   CALIBRATION_INPUTS,
   calibrationOf,

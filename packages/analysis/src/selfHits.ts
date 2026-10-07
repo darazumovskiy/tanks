@@ -1,6 +1,7 @@
 import { clamp, normalizeAngle, TICK_RATE, type Side, type Wall } from '@tanks/shared/engine';
 import type { Hit, TrackedBullet } from './bullets.js';
-import { castRay, isClear } from './geometry.js';
+import { castRay } from './geometry.js';
+import { isClear } from './ruler/geometry.js';
 import type { ParsedRound, Tick } from './logParser.js';
 import { isAutofireOnAt, type AutofireChange } from './movement.js';
 import { roundTo, toDegrees } from './numbers.js';

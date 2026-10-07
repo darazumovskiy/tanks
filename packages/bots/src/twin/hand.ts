@@ -1,5 +1,5 @@
 import { leadPoint, normalizeAngle, TICK_RATE, type Point, type Random, type TankView } from '@tanks/shared/engine';
-import { distanceBucketOf, type DistanceBucketLabel } from '@tanks/analysis';
+import { distanceBucketOf, type DistanceBucketLabel } from '@tanks/analysis/ruler';
 import { fromDeciles, normalCdf, standardNormal } from './sampling.js';
 
 export interface HandSettings {
@@ -80,7 +80,8 @@ export class Hand {
   private laggedTarget(): SeenTarget {
     const last = this.targets.length - 1;
     const lag = this.settings.lagTicks;
-    const latest = this.targets[last] ?? { x: 0, y: 0, vx: 0, vy: 0 };
+    // История не пуста: цель этого тика уже добавлена; low и следующая за ней — не дальше последней.
+    const [latest] = this.targets.slice(-1) as [SeenTarget];
     if (lag < 0) {
       this.targets.splice(0, last);
       const ahead = -lag / TICK_RATE;
@@ -89,8 +90,7 @@ export class Hand {
     const position = last - Math.min(last, lag);
     const low = Math.floor(position);
     const fraction = position - low;
-    const older = this.targets[low] ?? latest;
-    const newer = this.targets[Math.min(last, low + 1)] ?? older;
+    const [older, newer] = [this.targets[low], this.targets[Math.min(last, low + 1)]] as [SeenTarget, SeenTarget];
     const keep = Math.ceil(lag) + 1;
     if (this.targets.length > keep) {
       this.targets.splice(0, this.targets.length - keep);

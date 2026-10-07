@@ -1,4 +1,4 @@
-import { distanceBucketOf, type FireContext } from '@tanks/analysis';
+import { distanceBucketOf, type FireContext } from '@tanks/analysis/ruler';
 import { TICK_RATE, type Random } from '@tanks/shared/engine';
 import { chance, sampleDeciles } from './sampling.js';
 

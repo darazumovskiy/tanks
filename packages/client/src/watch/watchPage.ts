@@ -5,7 +5,7 @@ import { WatchRenderer } from '../render/watchRenderer.js';
 import { WATCH_STYLE } from '../render/watchStyle.js';
 import { Sfx } from '../sfx.js';
 import type { RoundOutcome } from './botMatch.js';
-import { FIGHTERS, fighterById, type Fighter } from './fighters.js';
+import { FIGHTERS, fighterById, readyFighter, type Fighter, type ReadyFighter } from './fighters.js';
 import { WATCH_SPEEDS, type WatchSpeed } from './stepClock.js';
 import { WatchGame, type WatchGameDeps } from './watchGame.js';
 
@@ -200,13 +200,23 @@ function mountSpeeds(container: HTMLElement, game: WatchGame): void {
   select(DEFAULT_SPEED);
 }
 
+function readyPair(left: Fighter, right: Fighter): Promise<[ReadyFighter, ReadyFighter]> {
+  return Promise.all([readyFighter(left), readyFighter(right)]);
+}
+
 // Экран боя ботов: выбор двух бойцов, скорость, пауза, «заново», звук, итог раунда. Выбор бойцов запоминается.
-export function mountWatch(elements: WatchPageElements, storage: WatchStorage, deps: WatchGameDeps): WatchGame {
+// Бой с новым бойцом начинается, когда его мозг загружен; пока грузится, идёт прежний бой, а выбор, сделанный за это
+// время позже, побеждает.
+export async function mountWatch(
+  elements: WatchPageElements,
+  storage: WatchStorage,
+  deps: WatchGameDeps,
+): Promise<WatchGame> {
   let left = storedFighter(storage, LEFT_KEY, DEFAULT_LEFT_ID);
   let right = storedFighter(storage, RIGHT_KEY, DEFAULT_RIGHT_ID);
   const game = new WatchGame(
     {
-      fighters: [left, right],
+      fighters: await readyPair(left, right),
       speed: DEFAULT_SPEED,
       onOutcome: (outcome, names) => {
         showOutcome(elements.result, outcome, names);
@@ -214,15 +224,24 @@ export function mountWatch(elements: WatchPageElements, storage: WatchStorage, d
     },
     deps,
   );
+  let choice = 0;
+  const startChosen = async (): Promise<void> => {
+    choice++;
+    const current = choice;
+    const fighters = await readyPair(left, right);
+    if (current === choice) {
+      game.setFighters(fighters);
+    }
+  };
   mountPicker(elements.left, left, (fighter) => {
     left = fighter;
     storage.setItem(LEFT_KEY, fighter.id);
-    game.setFighters([left, right]);
+    void startChosen();
   });
   mountPicker(elements.right, right, (fighter) => {
     right = fighter;
     storage.setItem(RIGHT_KEY, fighter.id);
-    game.setFighters([left, right]);
+    void startChosen();
   });
   mountSpeeds(elements.speeds, game);
   reflectPause(elements.pause, game.isPaused);

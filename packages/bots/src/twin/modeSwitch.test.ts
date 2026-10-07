@@ -1,4 +1,4 @@
-import { switchProbability, type Coefficients, type ModeFeatures } from '@tanks/analysis';
+import { switchProbability, type Coefficients, type ModeFeatures } from '@tanks/analysis/ruler';
 import {
   countdownFrames,
   fightFrame,
@@ -130,5 +130,30 @@ describe('выбор режима', () => {
       );
       expect(twin).toEqual(second.features);
     }
+  });
+
+  it('двойник на стороне 0: урон своей стороне и противнику — по своим сторонам', () => {
+    const maxHp = deriveStats(DEFAULT_STATS).maxHp;
+    const hits: HitRecord[] = [
+      { tick: 5, side: 0, value: 20, isPickup: false },
+      { tick: 6, side: 1, value: 10, isPickup: false },
+    ];
+    const twin = modeFeatures(
+      {
+        map: mapByIndex(0),
+        me: { x: 200, y: 450, maxHp },
+        enemy: { x: 1000, y: 450 },
+        side: 0,
+        tick: 30,
+        fightTick: 30,
+        hasSight: true,
+        distance: 800,
+        hits,
+      },
+      { level: 8, roundIndex: 0, lossStreak: 0 },
+    );
+
+    expect(twin.recentDamageShare).toBeCloseTo(20 / maxHp, 12);
+    expect(twin.exchangeShare).toBeCloseTo(-10 / maxHp, 12);
   });
 });

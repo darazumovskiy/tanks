@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { leadPoint } from './geometry.js';
-import { analyzeLogs, distanceBucketOf, type GameSummary } from './index.js';
+import { analyzeLogs, type GameSummary } from './index.js';
+import { distanceBucketOf } from './ruler/bands.js';
 import {
   countdownFrames,
   DEFAULT_BULLET_SPEED,

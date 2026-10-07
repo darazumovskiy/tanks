@@ -52,6 +52,8 @@ const DIAGONAL_AIM_OFFSET = { x: 400, y: -300 };
 const GUARD_SHOT_TIMEOUT_MS = 5_000;
 // С верхней полосы путь к этой точке упирается в стену (330, 160, 44, 200) при любом разбросе прибытия.
 const BEHIND_WALL_POST = { x: 1350, y: 700 };
+// Двойник начинает огонь после стартовой паузы игрока; полминуты боя — с запасом.
+const TWIN_SHOT_TIMEOUT_MS = 30_000;
 const AIM_LINE_TIMEOUT_MS = 8_000;
 const LEAD_HINT_LABEL = 'Подсказка упреждения';
 // Огонь по цели: телефон стоит на точке появления (140, 450); компьютер прячется за стеной (330, 160, 44, 200) в
@@ -528,6 +530,27 @@ test('с главной: выбран уровень 10, «Против бота
   await expectEnemyMoves(human, start, 'бот Астры не двигается');
   await human.close();
 });
+
+for (const screen of [
+  { id: 'телефон', isTouch: true },
+  { id: 'компьютер', isTouch: false },
+]) {
+  test(`с главной: «Двойник» ведёт в бой с двойником, он едет и стреляет — ${screen.id}`, async ({ browser }) => {
+    const human = await Player.openAgainstBot(browser, server.baseUrl, 'Дима', 'twin', '', screen.isTouch);
+    await expect(human.page).toHaveURL(/\/d\/twin[a-z0-9]+$/);
+    const start = await human.waitForFight();
+    expect(start.side).toBe(1);
+    expect(start.nicknames[0]).toBe('Двойник');
+    await expectEnemyMoves(human, start, 'двойник не двигается');
+    // Человек не стреляет: снаряд на поле — выстрел двойника.
+    await until(
+      async () => ((await human.state())?.bullets ?? 0) > 0 || null,
+      TWIN_SHOT_TIMEOUT_MS,
+      'двойник не стреляет',
+    );
+    await human.close();
+  });
+}
 
 test('создатель ждёт соперника: «Копировать» кладёт ссылку на дуэль в буфер обмена', async ({ browser }) => {
   const code = roomCode();

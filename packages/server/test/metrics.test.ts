@@ -183,7 +183,7 @@ describe('GET /metrics', () => {
     );
   });
 
-  it('игроки по видам: люди и серверные боты общей игры, бот роя, человек и бот лестницы в дуэли; ход ботов', async () => {
+  it('игроки по видам: люди и серверные боты общей игры, бот роя, люди, бот лестницы и двойник в дуэли; ход ботов', async () => {
     const human = await connect();
     human.join('ffa10', 'Дима');
     const swarmBot = await connect();
@@ -191,6 +191,9 @@ describe('GET /metrics', () => {
     const duelist = await connect();
     duelist.join('bot04x', 'Дуэлянт');
     await duelist.nextOfType(MessageType.RoundStart);
+    const twinDuelist = await connect();
+    twinDuelist.join('twinx', 'Себя-победитель');
+    await twinDuelist.nextOfType(MessageType.RoundStart);
     let series = await scrape();
     const deadline = Date.now() + SCRAPE_WAIT_MS;
     while (valueOf(series, 'tanks_bot_think_ms{quantile="max"}') === 0 && Date.now() < deadline) {
@@ -199,8 +202,8 @@ describe('GET /metrics', () => {
     }
     const players = [...series].filter(([key, value]) => key.startsWith('tanks_players') && value !== 0);
     expect(Object.fromEntries(players)).toEqual({
-      'tanks_players{mode="duel",kind="human"}': 1,
-      'tanks_players{mode="duel",kind="bot"}': 1,
+      'tanks_players{mode="duel",kind="human"}': 2,
+      'tanks_players{mode="duel",kind="bot"}': 2,
       'tanks_players{mode="ffa10",kind="human"}': 1,
       'tanks_players{mode="ffa10",kind="bot"}': 6,
       'tanks_players{mode="ffa30",kind="swarm"}': 1,

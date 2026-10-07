@@ -8,6 +8,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./ruler": {
+      "types": "./dist/ruler/index.d.ts",
+      "default": "./dist/ruler/index.js"
+    },
     "./logFixture": {
       "types": "./dist/logFixture.d.ts",
       "default": "./dist/logFixture.js"

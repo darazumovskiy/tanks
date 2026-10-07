@@ -1,4 +1,4 @@
-import { ReactionDelay, type BotBrain } from '@tanks/bots';
+import { ReactionDelay, type BotBrain, type BotRound } from '@tanks/bots';
 import {
   botView,
   createRandom,
@@ -159,8 +159,9 @@ export class BotMatch {
       ],
       this.rules,
     );
-    this.brains[0].init?.(botView(round, 0));
-    this.brains[1].init?.(botView(round, 1));
+    const start: BotRound = { roundIndex: this.roundNumber, mapIndex: round.mapIndex, score: [...this.wins] };
+    this.brains[0].init?.(botView(round, 0), start);
+    this.brains[1].init?.(botView(round, 1), start);
     this.lastOutcome = null;
     this.enter('countdown');
     return round;

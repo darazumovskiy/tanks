@@ -1,4 +1,4 @@
-import { botClassOf, hasCoverWithin, type ModeFeatures } from '@tanks/analysis';
+import { botClassOf, hasCoverWithin, type ModeFeatures } from '@tanks/analysis/ruler';
 import { TICK_RATE, type MapDef, type Side } from '@tanks/shared/engine';
 import type { BotLevel } from '@tanks/shared/protocol';
 

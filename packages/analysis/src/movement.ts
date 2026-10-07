@@ -1,5 +1,5 @@
 import { normalizeAngle, TANK_RADIUS, TICK_RATE, type Side, type Wall } from '@tanks/shared/engine';
-import { wallClearance } from './geometry.js';
+import { wallClearance } from './ruler/geometry.js';
 import {
   FIGHT_PHASE,
   field,

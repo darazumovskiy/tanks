@@ -1,3 +1,11 @@
+import {
+  TwinRoundState,
+  type HitRecord,
+  type TwinDecision,
+  type TwinProfile,
+  type TwinSituation,
+  type TwinView,
+} from '@tanks/bots/twin';
 import type { GameLog } from '@tanks/server/gameLog';
 import type { Connection, Seat } from '@tanks/server/room';
 import {
@@ -23,9 +31,6 @@ import {
   type SnapshotMessage,
   type TankSnapshot,
 } from '@tanks/shared/protocol';
-import type { TwinDecision, TwinSituation, TwinView } from './brain/brain.js';
-import { lossStreakAfter, type HitRecord } from './brain/modeSwitch.js';
-import type { TwinProfile } from './profile.js';
 
 export interface Brain {
   init(situation: TwinSituation): void;
@@ -116,13 +121,14 @@ export class TwinPlayer implements Connection {
   private gameId: string | null = null;
   private lastSnapshotGameTick = 0;
   private lastSnapshotClock: number | null = null;
-  private previousScore: [number, number] | null = null;
-  private lossStreak = 0;
+  private readonly roundState: TwinRoundState;
   private wasGuardHolding = false;
   private finished = 0;
   private isOverCounted = false;
 
-  constructor(private readonly options: TwinPlayerOptions) {}
+  constructor(private readonly options: TwinPlayerOptions) {
+    this.roundState = new TwinRoundState(options.level, options.hasRicochetGuard);
+  }
 
   // Раундов, которые комната уже закончила, — без задержки канала.
   get finishedRounds(): number {
@@ -188,9 +194,6 @@ export class TwinPlayer implements Connection {
   }
 
   private startRound(message: RoundStartMessage): void {
-    const enemySide: Side = this.side === 0 ? 1 : 0;
-    this.lossStreak = lossStreakAfter(this.lossStreak, this.previousScore, message.score, enemySide);
-    this.previousScore = [message.score[0], message.score[1]];
     this.gameId = message.gameId;
     this.round = createRound(
       message.mapIndex,
@@ -205,14 +208,8 @@ export class TwinPlayer implements Connection {
     this.hits = [];
     this.isRoundOver = false;
     this.wasGuardHolding = false;
-    this.options.brain.init({
-      level: this.options.level,
-      roundIndex: message.roundIndex,
-      lossStreak: this.lossStreak,
-      mapIndex: message.mapIndex,
-      hasRicochetGuard: this.options.hasRicochetGuard,
-      seed: this.options.roundSeeds[message.roundIndex] ?? message.roundIndex,
-    });
+    const seed = this.options.roundSeeds[message.roundIndex] ?? message.roundIndex;
+    this.options.brain.init(this.roundState.next(message, this.side, seed));
     this.write(`flags guard=${flag(this.options.hasRicochetGuard)} aimline=1`);
     this.write(
       `settings ${JSON.stringify({ pivotThrottle: this.options.profile.settings.pivotThrottle, hasRicochetGuard: this.options.hasRicochetGuard })}`,

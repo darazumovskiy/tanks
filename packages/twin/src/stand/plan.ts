@@ -1,11 +1,10 @@
 import type { Condition } from '@tanks/analysis';
-import { STAT_KEYS, type Side, type Stats } from '@tanks/shared/engine';
+import type { Side, Stats } from '@tanks/shared/engine';
 import { BOT_LEVELS, type BotLevel } from '@tanks/shared/protocol';
-import type { TwinReference } from '../profile.js';
+import { buildStats, type TwinReference } from '../profile.js';
 
 // Игры уровня идут парами с обеих сторон: у пары одна длина и одни условия.
 const SIDES_PER_PAIR = 2;
-const BUILD_SEPARATOR = '/';
 const FNV_OFFSET = 0x811c9dc5;
 const FNV_PRIME = 0x01000193;
 const GAME_ID_PREFIX = 'T';
@@ -49,15 +48,6 @@ function hashSeed(text: string): number {
     hash = Math.imul(hash ^ text.charCodeAt(i), FNV_PRIME) >>> 0;
   }
   return hash;
-}
-
-function statsOf(build: string): Stats {
-  const values = build.split(BUILD_SEPARATOR).map(Number);
-  const stats = {} as Stats;
-  STAT_KEYS.forEach((key, index) => {
-    stats[key] = values[index] ?? 0;
-  });
-  return stats;
 }
 
 function allConditions(reference: TwinReference): Condition[] {
@@ -173,7 +163,7 @@ export function standPlan(reference: TwinReference, options: PlanOptions): GameP
           level,
           twinSide: side === 0 ? 1 : 0,
           condition: {
-            stats: statsOf(condition.build),
+            stats: buildStats(condition.build),
             wallSlidePercent: condition.wallSlidePercent,
             hasRicochetGuard: condition.hasRicochetGuard,
           },

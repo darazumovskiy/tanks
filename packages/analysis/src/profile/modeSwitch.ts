@@ -1,29 +1,13 @@
 import { TICK_RATE } from '@tanks/shared/engine';
+import {
+  featureVector,
+  MODE_FEATURE_NAMES,
+  type Coefficients,
+  type ModeFeatureName,
+  type ModeFeatures,
+} from '../ruler/modeSwitch.js';
 import { positionSegments } from './position.js';
-import type { ModeFeatures, ProfileRound } from './rounds.js';
-
-// Выбор режима — два потока событий: «манёвр → позиция» и «позиция → манёвр». Вероятность перехода за
-// секунду — логистическая функция признаков в начале секунды; коэффициенты — максимум правдоподобия
-// с небольшим штрафом на величину (свободный член не штрафуется).
-export const MODE_FEATURE_NAMES = [
-  'class8',
-  'class9',
-  'class10',
-  'lossStreak',
-  'roundIndex',
-  'recentDamageShare',
-  'healthShare',
-  'exchangeShare',
-  'hasCover',
-  'fightSeconds',
-  'positionSeconds',
-] as const;
-export type ModeFeatureName = (typeof MODE_FEATURE_NAMES)[number];
-
-export interface Coefficients {
-  intercept: number;
-  weights: Record<ModeFeatureName, number>;
-}
+import type { ProfileRound } from './rounds.js';
 
 export interface ModeSample {
   roundId: string;
@@ -37,22 +21,6 @@ const L2_PENALTY = 0.1;
 const MAX_ITERATIONS = 100;
 const CONVERGED_STEP = 1e-9;
 const PIVOT_EPSILON = 1e-12;
-
-function featureVector(features: ModeFeatures, positionSeconds: number): Record<ModeFeatureName, number> {
-  return {
-    class8: features.botClass === '8' ? 1 : 0,
-    class9: features.botClass === '9' ? 1 : 0,
-    class10: features.botClass === '10' ? 1 : 0,
-    lossStreak: features.lossStreak,
-    roundIndex: features.roundIndex,
-    recentDamageShare: features.recentDamageShare,
-    healthShare: features.healthShare,
-    exchangeShare: features.exchangeShare,
-    hasCover: features.hasCover ? 1 : 0,
-    fightSeconds: features.fightSeconds,
-    positionSeconds,
-  };
-}
 
 // Посекундные отсчёты боя: режим в начале секунды и был ли переход за эту секунду. Позиция, дожившая
 // до конца боя, выходом не считается: последняя неполная секунда боя в отсчёты не идёт, и конец боя не попадает
@@ -81,16 +49,6 @@ export function modeSamples(rounds: readonly ProfileRound[]): ModeSample[] {
     }
   }
   return result;
-}
-
-// Вероятность перехода за секунду по коэффициентам — та же модель, по которой их подбирает fitSwitchCoefficients.
-export function switchProbability(coefficients: Coefficients, features: ModeFeatures, positionSeconds: number): number {
-  const vector = featureVector(features, positionSeconds);
-  const logit = MODE_FEATURE_NAMES.reduce(
-    (total, name) => total + coefficients.weights[name] * vector[name],
-    coefficients.intercept,
-  );
-  return 1 / (1 + Math.exp(-logit));
 }
 
 // Индексы матриц ниже всегда в пределах размера: значение по умолчанию недостижимо.
@@ -128,7 +86,8 @@ function solve(matrix: readonly (readonly number[])[], vector: readonly number[]
   return rows.map((row, i) => at(row, vector.length) / at(row, i));
 }
 
-// Логистическая регрессия методом Ньютона; samples — отсчёты одного потока. null — переходов нет или
+// Коэффициенты выбора режима — максимум правдоподобия с небольшим штрафом на величину (свободный член не
+// штрафуется), логистическая регрессия методом Ньютона; samples — отсчёты одного потока. null — переходов нет или
 // переход в каждом отсчёте: у правдоподобия нет максимума.
 export function fitSwitchCoefficients(samples: readonly ModeSample[]): Coefficients | null {
   const switches = samples.filter((sample) => sample.hasSwitched).length;

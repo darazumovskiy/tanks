@@ -1,6 +1,6 @@
 import { botView, createRound, DEFAULT_STATS, type BulletView, type Kit, type Side } from '@tanks/shared/engine';
-import type { TwinView } from './brain/brain.js';
-import { COURSE_BAND_LABELS, type CourseBandLabel, type DistanceBucketLabel } from '@tanks/analysis';
+import type { TwinView } from './brain.js';
+import { COURSE_BAND_LABELS, type CourseBandLabel, type DistanceBucketLabel } from '@tanks/analysis/ruler';
 import type { SightKey, TwinCalibration, TwinProfile } from './profile.js';
 
 // Крафтовые виды и профили для тестов мозга, игрока и стенда.

@@ -1,3 +1,6 @@
+import type { TwinDecision, TwinSituation, TwinView } from '@tanks/bots/twin';
+import { profileWith } from '@tanks/bots/twinFixture';
+import type { TwinProfile } from '@tanks/bots/twin';
 import type { GameLog } from '@tanks/server/gameLog';
 import { Room, type Connection, type Seat } from '@tanks/server/room';
 import { DEFAULT_STATS, deriveStats, IDLE_ACTION, type Action, type Side } from '@tanks/shared/engine';
@@ -9,10 +12,7 @@ import {
   type TankSnapshot,
 } from '@tanks/shared/protocol';
 import { describe, expect, it } from 'vitest';
-import type { TwinDecision, TwinSituation, TwinView } from './brain/brain.js';
-import { profileWith } from './fixture.js';
 import { TwinPlayer, type Brain } from './player.js';
-import type { TwinProfile } from './profile.js';
 
 const FAST_ROOM = { countdownTicks: 2, roundEndTicks: 2, maxInputsPerSecond: 90 };
 const TURNING: Action = { throttle: 0, turn: 1, turretTurn: 1, isFiring: false };

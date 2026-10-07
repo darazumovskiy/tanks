@@ -1,10 +1,10 @@
 import { analyzeLogLines, analyzeLogs } from '@tanks/analysis';
 import { makeLogDir, removeLogDirs } from '@tanks/analysis/logFixture';
+import { calibrationWith } from '@tanks/bots/twinFixture';
 import { DEFAULT_STATS } from '@tanks/shared/engine';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { calibrationWith } from '../fixture.js';
 import { twinProfile, type TwinReference } from '../profile.js';
 import { playGame } from './match.js';
 import { MemoryGameLog } from './memoryLog.js';

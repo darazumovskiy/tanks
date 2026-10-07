@@ -8,12 +8,22 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./parallax.js": "./scripts/parallax/bot.js"
+    "./twin": {
+      "types": "./dist/twin/index.d.ts",
+      "default": "./dist/twin/index.js"
+    },
+    "./twinFixture": {
+      "types": "./dist/twin/fixture.d.ts",
+      "default": "./dist/twin/fixture.js"
+    },
+    "./parallax.js": "./scripts/parallax/bot.js",
+    "./twin-rival.json": "./twin/rival.json"
   },
   "scripts": {
     "build": "tsc -b"
   },
   "dependencies": {
+    "@tanks/analysis": "*",
     "@tanks/shared": "*"
   }
 }

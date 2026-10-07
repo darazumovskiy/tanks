@@ -1,14 +1,16 @@
 import { makeLogDir, removeLogDirs } from '@tanks/analysis/logFixture';
+import type { TwinCalibration } from '@tanks/bots/twin';
+import { calibrationWith } from '@tanks/bots/twinFixture';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runCli } from '../cli.js';
-import { calibrationWith } from '../fixture.js';
-import type { TwinCalibration, TwinReference } from '../profile.js';
+import { twinRival, type TwinReference } from '../profile.js';
 
 const PHONE = JSON.parse(readFileSync(new URL('../../reference/phone.json', import.meta.url), 'utf8')) as TwinReference;
 const NO_SHARE = { part: 0, total: 0, pct: null };
 const CALIBRATE_THREADS = 4;
+const RIVAL_FILE = 'rival.json';
 
 // Справка с одним раундом игрока на уровне 8 и без метрик-входов: калибровке нечего подбирать, она мерит один раз.
 function tinyReference(): TwinReference {
@@ -51,6 +53,7 @@ async function cli(
   const code = await runCli(argv, {
     print: (line) => lines.push(line),
     referenceDir,
+    rivalPath: join(referenceDir, RIVAL_FILE),
     threads,
     now: () => (clock += 500),
   });
@@ -62,7 +65,7 @@ afterEach(() => {
 });
 
 describe('команды стенда', () => {
-  it('calibrate: мерит входы против набора соперников игрока, печатает таблицу и пишет файл калибровки', async () => {
+  it('calibrate: мерит входы против набора соперников игрока, печатает таблицу, пишет файлы калибровки и соперника', async () => {
     const dir = makeLogDir({ 'phone.json': JSON.stringify(tinyReference()) });
 
     // Смесь калибровки — около тысячи раундов уровня 8: потоки исполняют собранный dist, без инструментовки покрытия.
@@ -74,7 +77,9 @@ describe('команды стенда', () => {
     expect(lines.some((line) => line.startsWith('| Отставание башни по ходу цели, тиков | — |'))).toBe(true);
     expect(lines).toContain('Прогонов стенда: 1; все входы в допуске');
     expect(lines).toContain(`Время: 0.5 с · потоков ${String(CALIBRATE_THREADS)}`);
-    expect(lines.at(-1)).toBe(join(dir, 'phone.calibration.json'));
+    expect(lines.at(-2)).toBe(join(dir, 'phone.calibration.json'));
+    expect(lines.at(-1)).toBe(join(dir, RIVAL_FILE));
+    expect(JSON.parse(readFileSync(join(dir, RIVAL_FILE), 'utf8'))).toEqual(twinRival(tinyReference(), calibration));
     expect(calibration).toMatchObject({ reverseChance: 0, coverHoldShare: 0, lagTicks: 15 });
     expect(calibration.correlationTicks).toBeCloseTo(Math.sqrt(120), 3);
   }, 60000);

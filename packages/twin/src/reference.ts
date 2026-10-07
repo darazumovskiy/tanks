@@ -9,15 +9,10 @@ import {
   type ProfileRound,
   type WinCount,
 } from '@tanks/analysis';
+import type { TwinCalibration, TwinProfileName, TwinRival } from '@tanks/bots/twin';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  PROFILE_WINDOWS,
-  profileSelection,
-  type TwinCalibration,
-  type TwinProfileName,
-  type TwinReference,
-} from './profile.js';
+import { PROFILE_WINDOWS, profileSelection, type TwinReference } from './profile.js';
 import { missingParams } from './stand/calibrate.js';
 
 const JSON_INDENT = 1;
@@ -120,6 +115,12 @@ export function writeReference(reference: TwinReference, dir: string): string {
 
 export function writeCalibration(name: TwinProfileName, calibration: TwinCalibration, dir: string): string {
   return writeJson(dir, `${name}${CALIBRATION_SUFFIX}`, calibration);
+}
+
+// Профиль соперника — одной строкой и без округления: мозг в бою получает тот же профиль, что на стенде.
+export function writeRival(rival: TwinRival, path: string): string {
+  writeFileSync(path, `${JSON.stringify(rival)}\n`);
+  return path;
 }
 
 // Справку пишет этот же модуль, её форма не проверяется; null — файла нет.

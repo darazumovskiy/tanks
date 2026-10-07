@@ -52,7 +52,7 @@ export class ArenaBot implements Connection {
       message.rules,
     );
     this.delay = new ReactionDelay(this.brain.reactionTicks);
-    this.brain.init?.(botView(this.round, this.side));
+    this.brain.init?.(botView(this.round, this.side), message);
   }
 
   private react(round: Round, message: SnapshotMessage): void {

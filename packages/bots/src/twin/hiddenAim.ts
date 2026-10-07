@@ -1,4 +1,4 @@
-import { exitPointOf, HIDDEN_AIM_TARGETS, ricochetAngleOf, type HiddenAimTarget } from '@tanks/analysis';
+import { exitPointOf, HIDDEN_AIM_TARGETS, ricochetAngleOf, type HiddenAimTarget } from '@tanks/analysis/ruler';
 import { nextRandom, type MapDef, type Point, type Random, type TankView } from '@tanks/shared/engine';
 
 // Точка выхода и рикошет пересчитываются раз в 10 тиков.

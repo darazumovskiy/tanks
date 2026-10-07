@@ -8,7 +8,7 @@ import type { Overlay } from '../render/renderer.js';
 import type { WatchHudInfo } from '../render/watchRenderer.js';
 import type { Sfx } from '../sfx.js';
 import { BotMatch, type MatchPhase, type RoundOutcome } from './botMatch.js';
-import type { Fighter } from './fighters.js';
+import type { ReadyFighter } from './fighters.js';
 import { StepClock, type WatchSpeed } from './stepClock.js';
 import { posesOf, worldViewAt, type Poses } from './watchView.js';
 
@@ -29,7 +29,7 @@ export interface WatchGameDeps {
 
 // onOutcome — итог раунда появился (с именами бойцов) или ушёл со стартом следующего (null).
 export interface WatchGameOptions {
-  fighters: readonly [Fighter, Fighter];
+  fighters: readonly [ReadyFighter, ReadyFighter];
   speed: WatchSpeed;
   onOutcome: (outcome: RoundOutcome | null, names: readonly [string, string]) => void;
 }
@@ -85,7 +85,7 @@ export class WatchGame {
   private readonly sfx: Sfx;
   private readonly fxPolicy = new DuelFxPolicy();
   private readonly clock = new StepClock();
-  private fighters: readonly [Fighter, Fighter];
+  private fighters: readonly [ReadyFighter, ReadyFighter];
   private match: BotMatch;
   private poses: Poses | null = null;
   private speed: WatchSpeed;
@@ -128,7 +128,7 @@ export class WatchGame {
     return this.sfx.isMuted;
   }
 
-  setFighters(fighters: readonly [Fighter, Fighter]): void {
+  setFighters(fighters: readonly [ReadyFighter, ReadyFighter]): void {
     this.fighters = fighters;
     this.restart();
   }

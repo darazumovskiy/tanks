@@ -10,8 +10,8 @@ export function fromDeciles(deciles: readonly number[], u: number): number {
   const steps = deciles.length - 1;
   const k = Math.min(steps, Math.max(0, u * steps));
   const low = Math.floor(k);
-  const lowValue = deciles[low] ?? 0;
-  const highValue = deciles[Math.min(steps, low + 1)] ?? lowValue;
+  // Децилей не меньше одного: low и следующий за ним — в пределах списка.
+  const [lowValue, highValue] = [deciles[low], deciles[Math.min(steps, low + 1)]] as [number, number];
   return lowValue + (highValue - lowValue) * (k - low);
 }
 

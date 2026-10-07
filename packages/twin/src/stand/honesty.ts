@@ -1,7 +1,4 @@
 import {
-  DISTANCE_BUCKET_LABELS,
-  HIDDEN_AIM_TARGETS,
-  KIT_SIDES,
   MOTION_KINDS,
   wilson,
   type Distribution,
@@ -12,13 +9,14 @@ import {
   type Share,
   type WinCount,
 } from '@tanks/analysis';
+import { DISTANCE_BUCKET_LABELS, HIDDEN_AIM_TARGETS, KIT_SIDES } from '@tanks/analysis/ruler';
+import { SIGHT_KEYS } from '@tanks/bots/twin';
 import type { BotLevel } from '@tanks/shared/protocol';
 import {
   HIDDEN_AIM_NAMES,
-  KIT_NAMES,
   hiddenAimTargetsOf,
+  KIT_NAMES,
   PROFILE_WINDOWS,
-  SIGHT_KEYS,
   SIGHT_NAMES,
   type TwinReference,
 } from '../profile.js';
