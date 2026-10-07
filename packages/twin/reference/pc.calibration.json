@@ -13,9 +13,10 @@
  "courseReach": 283.2361,
  "reverseChance": 0.3333,
  "kitShare": {
-  "closer": 0.5,
-  "farther": 0.25
+  "closer": 0.6667,
+  "farther": 0.0208
  },
+ "kitFollowShare": 0.9896,
  "hiddenAim": {
   "bearing": 0,
   "exit": 0.5,
