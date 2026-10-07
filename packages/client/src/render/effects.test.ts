@@ -1,11 +1,11 @@
 import { EventFlag, type TankSnapshot } from '@tanks/shared/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DecalLayer } from './decals.js';
-import { Effects, type FxAnnouncement, type FxEvent, type FxEventOptions } from './effects.js';
+import { Effects, KILL_MARK, KILL_WORDS, type FxAnnouncement, type FxEvent, type FxEventOptions } from './effects.js';
 
 const COLORS: Readonly<Record<number, string>> = { 3: '#4fc3c9', 7: '#e8825a' };
 const NAMES: Readonly<Record<number, string>> = { 3: 'Вася', 7: 'Петя' };
-const QUIET: FxEventOptions = { shake: 0, flash: 0, announcement: null, hasParticles: true };
+const QUIET: FxEventOptions = { shake: 0, flash: 0, announcement: null, hasParticles: true, ownKillCount: null };
 const FIRST_BLOOD: FxAnnouncement = { kind: 'firstBlood', size: 1, duration: 1 };
 const SELF_HIT: FxAnnouncement = { kind: 'selfHit', size: 1, duration: 1 };
 const ZONE_START: FxAnnouncement = { kind: 'zoneStart', size: 1, duration: 1 };
@@ -124,13 +124,31 @@ describe('тряска, вспышка и объявление — ровно и
 
   it('сила тряски и вспышка — из параметров, сильнее текущих', () => {
     const effects = makeEffects();
-    effects.onEvent(fxEvent('shot'), { shake: 4, flash: 0.3, announcement: null, hasParticles: true });
+    effects.onEvent(fxEvent('shot'), {
+      shake: 4,
+      flash: 0.3,
+      announcement: null,
+      hasParticles: true,
+      ownKillCount: null,
+    });
     expect(effects.shake).toBe(4);
     expect(effects.flashScreen).toBe(0.3);
-    effects.onEvent(fxEvent('fizzle'), { shake: 2, flash: 0.1, announcement: null, hasParticles: true });
+    effects.onEvent(fxEvent('fizzle'), {
+      shake: 2,
+      flash: 0.1,
+      announcement: null,
+      hasParticles: true,
+      ownKillCount: null,
+    });
     expect(effects.shake).toBe(4);
     expect(effects.flashScreen).toBe(0.3);
-    effects.onEvent(fxEvent('bump'), { shake: 11, flash: 0.5, announcement: null, hasParticles: true });
+    effects.onEvent(fxEvent('bump'), {
+      shake: 11,
+      flash: 0.5,
+      announcement: null,
+      hasParticles: true,
+      ownKillCount: null,
+    });
     expect(effects.shake).toBe(11);
     expect(effects.flashScreen).toBe(0.5);
   });
@@ -182,7 +200,7 @@ describe('тряска, вспышка и объявление — ровно и
     ]);
   });
 
-  it('без частиц: объявление, тряска и вспышка есть, а на месте события — ни подпалины, ни цифры, ни отдачи', () => {
+  it('без частиц: объявление, тряска и вспышка есть, а на месте события — ни подпалины, ни цифры, ни фрага, ни отдачи', () => {
     const decals = new FakeDecals();
     const effects = makeEffects(decals);
     effects.onEvent(fxEvent('death', { tank: 3, by: 7 }), {
@@ -190,6 +208,7 @@ describe('тряска, вспышка и объявление — ровно и
       flash: 0.2,
       announcement: FIRST_BLOOD,
       hasParticles: false,
+      ownKillCount: 3,
     });
     effects.onEvent(fxEvent('shot', { tank: 7 }), { ...QUIET, hasParticles: false });
     effects.onEvent(fxEvent('hit', { tank: 3, by: 7 }), { ...QUIET, hasParticles: false });
@@ -231,6 +250,28 @@ describe('эффекты по номерам танков', () => {
     const selfEffects = makeEffects();
     selfEffects.onEvent(fxEvent('hit', { tank: 7, by: 7, flags: EventFlag.Self | EventFlag.Ricochet }), QUIET);
     expect(popupTexts(selfEffects).map((drawn) => drawn.text)).toEqual(['-28']);
+  });
+
+  it('F3 свой фраг над убитым: «УБИТ!», «ПОДБИТ!» или «ГОТОВ!» со счётом цветом фрага, слово не повторяется подряд', () => {
+    const effects = makeEffects();
+    const pattern = new RegExp(`^(${KILL_WORDS.join('|')})! \\((\\d+)\\)$`);
+    const words: string[] = [];
+    for (let count = 1; count <= 10; count++) {
+      effects.onEvent(fxEvent('death', { tank: 3, by: 7 }), { ...QUIET, ownKillCount: count });
+      const mark = popupTexts(effects).at(-1);
+      const match = pattern.exec(mark?.text ?? '');
+      expect(mark?.fillStyle).toBe(KILL_MARK.color);
+      expect(match?.[2]).toBe(String(count));
+      words.push(match?.[1] ?? '');
+    }
+    expect(words.every((word, index) => index === 0 || word !== words[index - 1])).toBe(true);
+    expect(new Set(words).size).toBeGreaterThan(1);
+  });
+
+  it('гибель без номера фрага — без надписи', () => {
+    const effects = makeEffects();
+    effects.onEvent(fxEvent('death', { tank: 3, by: 7 }), QUIET);
+    expect(popupTexts(effects)).toEqual([]);
   });
 
   it('урон зоной подсвечивает танк вполсилы и не пишет цифру', () => {

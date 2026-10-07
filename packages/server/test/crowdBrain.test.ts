@@ -4,10 +4,12 @@ import {
   DEFAULT_RULES,
   deriveStats,
   FFA,
+  ffaMap,
   ffaViewReach,
   IDLE_ACTION,
   makeTank,
   stepWorld,
+  TICK_RATE,
   type Action,
   type BattleMap,
   type FfaMap,
@@ -133,6 +135,83 @@ function survivesCrossfire(drive: (world: ReturnType<typeof createWorld>, brain:
   }
   const me = world.tanks[0];
   return me === undefined ? 0 : me.stats.maxHp - me.hp;
+}
+
+interface Standing {
+  stillShare: number;
+  longestStillS: number;
+}
+
+// Конечный круг карты на 10 мест: три бота 5-го уровня целятся в неуязвимый танк, который кружит у центра;
+// подбитый бот возвращается в круг. Стоит — за последнюю секунду сдвинулся меньше чем на 25.
+function finalCircleStanding(seed: number, seconds: number): Standing {
+  const map = ffaMap(10);
+  const radius = FFA.finalRadiusPerRootPlayer * Math.sqrt(10);
+  const zone = { x: map.width / 2, y: map.height / 2, radius };
+  const plan: ZonePlan = { startRadius: radius, finalRadius: radius, startShrink: 0, endShrink: 1 };
+  const random = seededRandom(seed);
+  const stats = CROWD_PROFILES[5].stats;
+  const placeInCircle = (share: number): { x: number; y: number; heading: number } => {
+    const angle = random() * Math.PI * 2;
+    return {
+      x: zone.x + Math.cos(angle) * radius * share,
+      y: zone.y + Math.sin(angle) * radius * share,
+      heading: angle,
+    };
+  };
+  const human = makeTank({ name: 'Человек', stats }, 100, { x: zone.x, y: zone.y, heading: 0 });
+  const bots = [1, 2, 3].map((id) => makeTank({ name: 'Бот', stats }, id, placeInCircle(0.6)));
+  const world = createWorld(map, [human, ...bots], DEFAULT_RULES, plan);
+  const brains = new Map(
+    bots.map((bot) => [bot.id, new CrowdBrain(CROWD_PROFILES[5], seededRandom(seed + bot.id), bot.id)]),
+  );
+  for (const brain of brains.values()) {
+    brain.init();
+  }
+  const tracks = new Map<number, { x: number; y: number }[]>();
+  const streaks = new Map<number, number>();
+  let samples = 0;
+  let still = 0;
+  let longest = 0;
+  for (let tick = 0; tick < seconds * TICK_RATE; tick++) {
+    human.shieldLeft = FFA.shieldSeconds;
+    const enemiesOf = (id: number): CrowdTank[] =>
+      world.tanks.filter((tank) => tank.id !== id && tank.isAlive).map(fromTank);
+    const bullets = world.bullets.map((shot) =>
+      bullet(shot.id, shot.owner, shot.x, shot.y, shot.vx, shot.vy, shot.hasBounced),
+    );
+    const actions = world.tanks.map((tank): Action => {
+      const brain = brains.get(tank.id);
+      if (brain === undefined) {
+        return { throttle: 0.6, turn: tick % 120 < 60 ? 0.6 : -0.6, turretTurn: 0, isFiring: false };
+      }
+      const enemies = enemiesOf(tank.id);
+      const target = enemies.find((enemy) => enemy.id === human.id) ?? null;
+      return brain.tick(viewOf(fromTank(tank), { tick, map, enemies, bullets, kits: world.kits, zone }), target);
+    });
+    stepWorld(world, actions);
+    for (const bot of bots) {
+      if (!bot.isAlive) {
+        Object.assign(bot, placeInCircle(0.5), { isAlive: true, hp: bot.stats.maxHp });
+        brains.get(bot.id)?.init();
+        tracks.delete(bot.id);
+        continue;
+      }
+      const track = [...(tracks.get(bot.id) ?? []), { x: bot.x, y: bot.y }].slice(-TICK_RATE);
+      tracks.set(bot.id, track);
+      const first = track[0];
+      const isStill =
+        track.length === TICK_RATE && first !== undefined && Math.hypot(bot.x - first.x, bot.y - first.y) < 25;
+      samples++;
+      const streak = isStill ? (streaks.get(bot.id) ?? 0) + 1 : 0;
+      streaks.set(bot.id, streak);
+      longest = Math.max(longest, streak);
+      if (isStill) {
+        still++;
+      }
+    }
+  }
+  return { stillShare: still / samples, longestStillS: longest / TICK_RATE };
 }
 
 describe('мозг толпы на крафтовых видах', () => {
@@ -262,6 +341,53 @@ describe('мозг толпы на крафтовых видах', () => {
       expect(action.throttle).toBeGreaterThan(0.5);
       expect(Math.abs(action.turn)).toBeLessThan(0.2);
     }
+  });
+
+  it('конечный круг на движке: три бота 5-го уровня стоят меньше 15 % времени и не дольше 3 с подряд', () => {
+    for (const seed of [11, 12, 13, 14]) {
+      const standing = finalCircleStanding(seed, 30);
+      expect(standing.stillShare, `сид ${String(seed)}`).toBeLessThan(0.15);
+      expect(standing.longestStillS, `сид ${String(seed)}`).toBeLessThan(3);
+    }
+  });
+
+  it('возврат от края держится до глубины 150: на 70 и 100 — к центру, на 160 — снова к цели', () => {
+    const zone = { x: 800, y: 450, radius: 300 };
+    const enemy = crowdTank(2, 800, 100);
+    const facingCenter = Math.PI / 2;
+    const at = (depth: number): CrowdTank => crowdTank(ME, 800, 450 - zone.radius + depth, { heading: facingCenter });
+    const returning = brainOf(profileOf(5));
+    const edge = returning.tick(viewOf(at(70), { zone, enemies: [enemy] }), enemy);
+    const back = returning.tick(viewOf(at(100), { tick: 1, zone, enemies: [enemy] }), enemy);
+    const deep = returning.tick(viewOf(at(160), { tick: 2, zone, enemies: [enemy] }), enemy);
+    const fresh = brainOf(profileOf(5)).tick(viewOf(at(100), { tick: 1, zone, enemies: [enemy] }), enemy);
+    for (const toCenter of [edge, back]) {
+      expect(toCenter.throttle).toBe(1);
+      expect(Math.abs(toCenter.turn)).toBeLessThan(0.3);
+    }
+    expect(Math.abs(fresh.turn)).toBeGreaterThan(0.5);
+    expect(Math.abs(deep.turn)).toBeGreaterThan(0.5);
+  });
+
+  it('сближение: отход, упирающийся в край зоны, сменяется смещением поперёк', () => {
+    const me = crowdTank(ME, 950, 450, { heading: 0 });
+    const target = crowdTank(2, 800, 450);
+    const open = brainOf(profileOf(4)).tick(viewOf(me), target);
+    const nearEdge = brainOf(profileOf(4)).tick(viewOf(me, { zone: { x: 800, y: 450, radius: 330 } }), target);
+    expect(open).toMatchObject({ throttle: 1, turn: 0 });
+    expect(Math.abs(nearEdge.turn)).toBeGreaterThan(0.5);
+  });
+
+  it('аптечка ближе 130 к краю зоны — не цель раненого, глубже — цель', () => {
+    const me = crowdTank(ME, 800, 450, { heading: 0, hp: 40 });
+    const zone = { x: 800, y: 450, radius: 300 };
+    const enemy = crowdTank(2, 1300, 450);
+    const shallow = [{ x: 800, y: 250, isActive: true, respawnIn: 0 }];
+    const deep = [{ x: 800, y: 300, isActive: true, respawnIn: 0 }];
+    const toShallow = brainOf(profileOf(4)).tick(viewOf(me, { zone, kits: shallow, enemies: [enemy] }), enemy);
+    const toDeep = brainOf(profileOf(4)).tick(viewOf(me, { zone, kits: deep, enemies: [enemy] }), enemy);
+    expect(Math.abs(toShallow.turn)).toBeLessThan(0.3);
+    expect(toDeep.turn).toBeLessThan(-0.5);
   });
 
   it('ранен при активной аптечке: уровень с аптечками едет к ней, без аптечек — нет', () => {

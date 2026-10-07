@@ -4,6 +4,7 @@ import {
   FFA_RESPAWN_WAIT_TICKS,
   ffaEfficiency,
   ffaStandings,
+  isFfaContender,
   TICK_RATE,
   type FfaSize,
   type RoundRules,
@@ -107,6 +108,12 @@ export interface FfaScoreboardModel {
   leader: FfaLeader | null;
 }
 
+// Своё убийство в матче, о котором пришло событие: тик снимка и кого.
+interface OwnKill {
+  tick: number;
+  victimId: number;
+}
+
 // Запись ленты: кто, кого, как и когда пришла по местным часам.
 interface FeedEntry {
   key: number;
@@ -171,6 +178,7 @@ export interface FfaResultsModel {
   rows: FfaResultRow[];
   // Секунд до следующего матча по местным часам; null — игроков меньше минимума, ждём сбора.
   nextMatchInS: number | null;
+  hasSurvived: boolean;
 }
 
 // lost — связь пропала; returned — вернулись на своё место; late — место ушло, вход заново.
@@ -281,9 +289,14 @@ export class FfaSession {
   private readonly names = new Map<number, KnownPlayer>();
   private scoreRows: FfaScoreRow[] = [];
   private lastSnapshotTick: number | null = null;
+  private hasSnapshotSinceWelcome = false;
   private ownDeath: FfaSnapshotEvent | null = null;
   private feedEntries: FeedEntry[] = [];
   private nextFeedKey = 1;
+  private ownKills: OwnKill[] = [];
+  // Своих убийств в счёте сервера больше, чем пришло событий: убийства за обрыв связи. Счёт приходит после снимка
+  // того же тика, поэтому все события до него уже учтены.
+  private missedOwnKills = 0;
   private suddenDeathNoticeAt: number | null = null;
   // Боты, выбывшие в финале этого матча; null — финал ещё не начался или не учтён.
   private outBotIds: Set<number> | null = null;
@@ -328,6 +341,7 @@ export class FfaSession {
     const isSame = message.playerId === this.playerId && message.gameId === this.gameId;
     this.isConnectionLost = false;
     this.ownDeath = null;
+    this.hasSnapshotSinceWelcome = false;
     this.playerId = message.playerId;
     this.gameId = message.gameId;
     this.rules = { ...message.rules };
@@ -392,6 +406,8 @@ export class FfaSession {
 
   onScore(message: FfaScoreMessage): void {
     this.scoreRows = message.rows;
+    const ownKills = message.rows.find((row) => row.id === this.playerId)?.kills ?? 0;
+    this.missedOwnKills = Math.max(this.missedOwnKills, ownKills - this.ownKills.length);
   }
 
   // false — снимок старше уже принятого в этом матче: его пропускают целиком.
@@ -407,6 +423,7 @@ export class FfaSession {
       this.spectatorSince = receivedAt;
     }
     this.lastSnapshotTick = message.tick;
+    this.hasSnapshotSinceWelcome = true;
     this.tick = message.tick;
     this.self = message.self;
     this.noteFinalBots(message);
@@ -415,7 +432,7 @@ export class FfaSession {
         this.suddenDeathNoticeAt = receivedAt;
       }
       if (event.kind === 'death') {
-        this.noteDeath(event, receivedAt);
+        this.noteDeath(event, message.tick, receivedAt);
       }
     }
     return true;
@@ -497,6 +514,16 @@ export class FfaSession {
       return null;
     }
     return { place: index + 1, total: standings.length, kills: row.kills, deaths: row.deaths };
+  }
+
+  // Сколько своих убийств в матче с этим включительно, по событию гибели из снимка тика tick; null — не своё
+  // убийство. Убийства, пропущенные за обрыв связи, берутся из счёта сервера.
+  ownKillNumber(tick: number, victimId: number): number | null {
+    const index = this.ownKills.findIndex((kill) => kill.tick === tick && kill.victimId === victimId);
+    if (index === -1) {
+      return null;
+    }
+    return this.missedOwnKills + index + 1;
   }
 
   // Цель зрителя держится, пока её танк жив. Первая — убийца на поле, иначе лидер среди живых; цель погибла или
@@ -625,7 +652,18 @@ export class FfaSession {
       total: standings.length,
       rows,
       nextMatchInS: hasEnoughPlayers && startInS !== null ? Math.ceil(startInS) : null,
+      hasSurvived: place !== null && this.hasSurvivedFinal(),
     };
+  }
+
+  // По последнему снимку матча в этом соединении: финал шёл, а свой танк на поле или подбит, но не выбыл — за него
+  // выбыл бот. Снимок до обрыва не в счёт: за обрыв танк мог выбыть.
+  private hasSurvivedFinal(): boolean {
+    const self = this.self;
+    if (self === null || !this.hasSnapshotSinceWelcome || !this.isFinal) {
+      return false;
+    }
+    return isFfaContender(self.state, self.isOut);
   }
 
   private countdown(now: number, screen: FfaScreen): FfaCountdownModel | null {
@@ -792,7 +830,7 @@ export class FfaSession {
     return this.roster.some((player) => player.isBot && this.outBotIds?.has(player.id) !== true);
   }
 
-  private noteDeath(event: FfaSnapshotEvent, receivedAt: number): void {
+  private noteDeath(event: FfaSnapshotEvent, tick: number, receivedAt: number): void {
     this.feedEntries.push({
       key: this.nextFeedKey++,
       killerId: event.by,
@@ -802,6 +840,10 @@ export class FfaSession {
     });
     if (event.tank === this.playerId) {
       this.ownDeath = event;
+    }
+    const isOwnKill = this.playerId !== null && event.by === this.playerId && event.tank !== this.playerId;
+    if (isOwnKill && event.tank !== null) {
+      this.ownKills.push({ tick, victimId: event.tank });
     }
   }
 
@@ -837,6 +879,8 @@ export class FfaSession {
   private forgetMatch(): void {
     this.scoreRows = [];
     this.feedEntries = [];
+    this.ownKills = [];
+    this.missedOwnKills = 0;
     this.lastSnapshotTick = null;
     this.ownDeath = null;
     this.outBotIds = null;

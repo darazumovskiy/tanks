@@ -71,11 +71,13 @@ export interface FxAnnouncement {
 
 // Что событие делает с экраном целиком. Решает вызывающий: дуэль и толпа трясут и объявляют по своим правилам.
 // hasParticles — частицы, следы, цифры и отдача на месте события; без них событие далеко за окном только объявляется.
+// ownKillCount — гибель от своего выстрела: сколько своих убийств в матче с этим; надпись над убитым — с частицами.
 export interface FxEventOptions {
   shake: number;
   flash: number;
   announcement: FxAnnouncement | null;
   hasParticles: boolean;
+  ownKillCount: number | null;
 }
 
 export interface FxTank {
@@ -106,6 +108,18 @@ const TREAD_MIN_SPEED = 8;
 const DECAL_FADE_EVERY_TICKS = 45;
 const ZONE_ANNOUNCE_COLOR = '#ff4d5e';
 const ANNOUNCE_SECONDS = 1.8;
+export const KILL_WORDS = ['УБИТ', 'ПОДБИТ', 'ГОТОВ'] as const;
+// Свой фраг над убитым: надпись выше цифры урона и ника, кольцо вокруг взрыва.
+export const KILL_MARK = {
+  color: '#ff2d45',
+  ringColor: '255,45,69',
+  textSize: 46,
+  textSeconds: 1.6,
+  lift: 90,
+  ringRadius: 95,
+  ringWidth: 7,
+  ringSeconds: 0.55,
+} as const;
 
 function particle(partial: Partial<Particle> & Pick<Particle, 'kind' | 'x' | 'y' | 'max'>): Particle {
   return {
@@ -134,6 +148,7 @@ export class Effects {
   private announcements: Announcement[] = [];
   private readonly trails = new Map<number, TrailPoint[]>();
   private readonly tankFxById = new Map<number, TankFx>();
+  private lastKillWord: string | null = null;
   shake = 0;
   flashScreen = 0;
   time = 0;
@@ -150,6 +165,7 @@ export class Effects {
     this.popups = [];
     this.trails.clear();
     this.tankFxById.clear();
+    this.lastKillWord = null;
   }
 
   tankFx(id: number): Readonly<TankFx> {
@@ -184,6 +200,9 @@ export class Effects {
   onEvent(event: FxEvent, options: FxEventOptions): void {
     if (options.hasParticles) {
       this.spawnFor(event);
+    }
+    if (options.hasParticles && options.ownKillCount !== null) {
+      this.markKill(event, options.ownKillCount);
     }
     this.shake = Math.max(this.shake, options.shake);
     this.flashScreen = Math.max(this.flashScreen, options.flash);
@@ -324,6 +343,33 @@ export class Effects {
     this.sparks(x, y, 50, '255,220,150', 700);
     this.smoke(x, y, 24, 34, 2.4, '70,70,74');
     this.decals.scorch(x, y, 90, 0.75);
+  }
+
+  // Слово наугад, но не то же, что в прошлый раз: подряд одинаковые читаются как повтор одной надписи.
+  private markKill(event: FxEvent, count: number): void {
+    const words = KILL_WORDS.filter((word) => word !== this.lastKillWord);
+    const word = words[Math.floor(Math.random() * words.length)] ?? KILL_WORDS[0];
+    this.lastKillWord = word;
+    const { x, y } = event;
+    this.spawn(
+      particle({
+        kind: 'ring',
+        x,
+        y,
+        max: KILL_MARK.ringSeconds,
+        size: KILL_MARK.ringRadius,
+        color: KILL_MARK.ringColor,
+        width: KILL_MARK.ringWidth,
+      }),
+    );
+    this.popup(
+      `${word}! (${String(count)})`,
+      x,
+      y - KILL_MARK.lift,
+      KILL_MARK.color,
+      KILL_MARK.textSize,
+      KILL_MARK.textSeconds,
+    );
   }
 
   // «САМ СЕБЯ!» — цветом того, кто попал в себя; «ПЕРВАЯ КРОВЬ» — цветом и именем стрелка.

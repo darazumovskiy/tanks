@@ -30,6 +30,7 @@ function model(overrides: Partial<FfaResultsModel> = {}): FfaResultsModel {
       resultRow(8),
     ],
     nextMatchInS: 4,
+    hasSurvived: false,
     ...overrides,
   };
 }
@@ -87,6 +88,23 @@ describe('итоги', () => {
     expect(left).toEqual(['leave']);
     view.update(null);
     expect(view.element.classList.contains('is-shown')).toBe(false);
+  });
+
+  it('F5 выжил в финале — плашка и поздравление под местом; не выжил — их нет; следующие итоги — плашка заново', () => {
+    const { view } = mount();
+    const side = (): string => shownText(view.element.querySelector('.ffa-results-side') ?? document.body);
+    view.update(model({ hasSurvived: true }));
+    expect(side()).toBe(
+      'КРЕПКО 7-й из 20 ВЫЖИЛ В ФИНАЛЕ До последней секунды на ходу — респект, танкист! Следующий матч через 4 Выйти',
+    );
+    const badge = view.element.querySelector('.ffa-results-survived-badge');
+    view.update(model({ hasSurvived: true }));
+    expect(view.element.querySelector('.ffa-results-survived-badge')).toBe(badge);
+    view.update(null);
+    view.update(model({ hasSurvived: true }));
+    expect(view.element.querySelector('.ffa-results-survived-badge')).not.toBe(badge);
+    view.update(model({ hasSurvived: false }));
+    expect(side()).toBe('КРЕПКО 7-й из 20 Следующий матч через 4 Выйти');
   });
 
   it('те же строки новыми объектами — узлы таблицы прежние; изменилась строка — таблица пересобрана', () => {

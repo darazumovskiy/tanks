@@ -2249,6 +2249,32 @@ body.ffa .menu-toggle {
   font-size: 17px;
 }
 
+.ffa-results-survived {
+  margin: 4px 0 2px;
+}
+
+.ffa-results-survived-badge {
+  display: inline-block;
+  padding: 4px 11px 3px;
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--ffa-accent);
+  background: rgba(232, 130, 90, 0.16);
+  border: 1px solid var(--ffa-accent);
+  border-radius: 999px;
+  box-shadow: 0 0 16px rgba(232, 130, 90, 0.35);
+  animation: ffa-survived-pop 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.35) 0.25s both;
+}
+
+.ffa-results-survived-note {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--ffa-text);
+  animation: ffa-survived-note 0.2s var(--ffa-ease) 0.5s both;
+}
+
 .ffa-results-next {
   font-size: 13px;
   color: var(--ffa-muted);
@@ -2441,6 +2467,20 @@ body.ffa .menu-toggle {
 @keyframes ffa-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes ffa-survived-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+
+@keyframes ffa-survived-note {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
   }
 }
 

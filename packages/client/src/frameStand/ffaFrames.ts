@@ -28,9 +28,11 @@ export interface StandBullet {
   angle: number;
 }
 
+// ownKillCount — гибель от своего выстрела: номер своего убийства в матче.
 export interface StandEvent {
   ageS: number;
   event: FfaSnapshotEvent;
+  ownKillCount?: number;
 }
 
 // `focus` — половина экрана вокруг точки поля, как у кадров дуэли.
@@ -119,6 +121,19 @@ const SHIELD_WRECK: StandTank = {
   y: 900,
   heading: 2,
   turret: 2.6,
+  hp: 0,
+  isAlive: false,
+};
+
+// Свой фраг в разгар взрыва: надпись уже выросла, кольцо ещё расходится.
+const OWN_KILL_AGE_S = 0.3;
+const OWN_KILL_VICTIM: StandTank = {
+  id: 2,
+  name: 'Вася',
+  x: 1760,
+  y: 1000,
+  heading: Math.PI,
+  turret: Math.PI,
   hp: 0,
   isAlive: false,
 };
@@ -282,6 +297,30 @@ export const FFA_FRAMES: readonly FfaStandFrame[] = [
       },
     ],
     crop: { kind: 'focus', x: SHIELD_OWN.x, y: SHIELD_OWN.y },
+  },
+  {
+    ...BASE,
+    id: 'own-kill',
+    title: 'свой фраг: красная надпись со счётом и кольцо над убитым, свой танк и соседи видны',
+    screens: PHONE,
+    tanks: [OWN, OWN_KILL_VICTIM, CROWD[3] ?? OWN, CROWD[6] ?? OWN],
+    events: [
+      {
+        ageS: OWN_KILL_AGE_S,
+        ownKillCount: 3,
+        event: {
+          kind: 'death',
+          tank: OWN_KILL_VICTIM.id,
+          by: ME,
+          x: OWN_KILL_VICTIM.x,
+          y: OWN_KILL_VICTIM.y,
+          value: 0,
+          dx: 0,
+          dy: 0,
+          flags: 0,
+        },
+      },
+    ],
   },
   {
     ...BASE,

@@ -297,9 +297,14 @@ function startSuddenDeath(match: FfaMatch, events: FfaEvent[]): void {
   }
 }
 
-// Ещё в игре: живой танк или человек, за которого выбыл бот, — в обломках или в ожидании.
+// Ещё в игре: живой танк или человек, за которого выбыл бот, — в обломках или в ожидании. Клиент судит по тем же
+// полям своего состояния.
+export function isFfaContender(state: FfaPlayerState, isOut: boolean): boolean {
+  return state === 'alive' || ((state === 'wreck' || state === 'waiting') && !isOut);
+}
+
 function isContender(player: FfaPlayer): boolean {
-  return player.state === 'alive' || ((player.state === 'wreck' || player.state === 'waiting') && !player.isOut);
+  return isFfaContender(player.state, player.isOut);
 }
 
 // Один живой или никого; человек, который вернётся на поле, — ещё не конец: матч ждёт его возвращения.

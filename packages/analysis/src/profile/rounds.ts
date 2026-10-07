@@ -1376,7 +1376,9 @@ function kitCounts(round: ParsedRound, frames: readonly FightFrame[], map: MapDe
     if (trip !== null) {
       const isTripToward = isCourseToward(trip.field, me, course);
       trip.gap = isTripToward ? 0 : trip.gap + 1;
-      trip.lastLength = isTripToward ? pathLengthFrom(trip.field, me) : trip.lastLength;
+      if (isTripToward) {
+        trip.lastLength = pathLengthFrom(trip.field, me);
+      }
     }
     if (trip !== null && trip.gap > KIT_TRIP_GAP_SAMPLES) {
       countTrip(counts, trip, 'dropped');

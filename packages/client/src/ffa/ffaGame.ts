@@ -477,7 +477,9 @@ export class FfaGame {
     const listener = this.listener();
     const drawnTank = (id: number): FfaViewTank | null => view.tanks.find((tank) => tank.id === id) ?? null;
     for (const { event, tick } of this.events.release(view.clock, drawnTank, now)) {
-      const options = this.fxPolicy.optionsFor(event, myId, camera);
+      const victimId = event.kind === 'death' ? event.tank : null;
+      const ownKillCount = victimId === null ? null : this.session.ownKillNumber(tick, victimId);
+      const options = this.fxPolicy.optionsFor(event, myId, camera, ownKillCount);
       if (options !== null) {
         this.effects.onEvent(event, options);
       }

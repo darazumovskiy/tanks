@@ -2104,6 +2104,28 @@ describe('картинка совпадает с сервером', () => {
     expect(hits()[0]?.y).toBeCloseTo(hit.y + (drawn?.y ?? NaN) - enemyOnServer.y, 3);
   });
 
+  it('F4 свой выстрел убил чужой танк в кадре — эффекты гибели получают номер своего фрага, когда дошла картинка', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000)]);
+    enterFight(harness, world);
+    const socket = harness.socket();
+    for (let index = 0; index < 10; index++) {
+      step(world);
+      socket.receive(snapshotOf(world));
+      harness.frames(2);
+    }
+    const onEvent = vi.spyOn(harness.effects, 'onEvent');
+    const enemy = world.tanks.find((candidate) => candidate.id === ENEMY) ?? tank(ENEMY, 0, 0);
+    enemy.isAlive = false;
+    enemy.hp = 0;
+    step(world);
+    socket.receive(snapshotOf(world, { events: [event('death', ENEMY, enemy.x, enemy.y, ME)] }));
+    for (let waited = 0; waited < PICTURE_FRAMES * 2 && onEvent.mock.calls.length === 0; waited++) {
+      harness.frames(1);
+    }
+    expect(onEvent.mock.calls.map(([fx, options]) => [fx.kind, options.ownKillCount])).toEqual([['death', 1]]);
+  });
+
   it('попадание по своему танку — в первом же кадре', () => {
     const harness = makeGame();
     const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000)]);
