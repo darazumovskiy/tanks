@@ -21,9 +21,15 @@ export interface DropdownConfig<T> {
   onSelect: (value: T) => void;
 }
 
+export interface Dropdown<T> {
+  selected: () => T;
+  // Выбор без onSelect — откат выбора, который не удалось применить.
+  setSelected: (value: T) => void;
+}
+
 // Выпадающий список своего оформления: кнопка показывает выбранное, панель — все варианты. Закрывается выбором,
 // касанием мимо и Escape.
-export function mountDropdown<T>(elements: DropdownElements, config: DropdownConfig<T>): { selected: () => T } {
+export function mountDropdown<T>(elements: DropdownElements, config: DropdownConfig<T>): Dropdown<T> {
   const { toggle, list } = elements;
   let selected = config.selected;
   const rows = config.values.map((value) => {
@@ -85,5 +91,11 @@ export function mountDropdown<T>(elements: DropdownElements, config: DropdownCon
     }
   });
   render();
-  return { selected: () => selected };
+  return {
+    selected: () => selected,
+    setSelected: (value) => {
+      selected = value;
+      render();
+    },
+  };
 }

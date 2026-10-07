@@ -10,6 +10,7 @@ export interface WatchStyle {
   barWideHeightPx: number;
   transitionMs: number;
   resultMs: number;
+  noticeShownMs: number;
 }
 
 export const WATCH_STYLE: WatchStyle = {
@@ -20,4 +21,5 @@ export const WATCH_STYLE: WatchStyle = {
   barWideHeightPx: 64,
   transitionMs: 160,
   resultMs: 200,
+  noticeShownMs: 4000,
 };

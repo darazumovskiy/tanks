@@ -51,7 +51,7 @@ describe('код комнаты против двойника', () => {
   });
 
   it('у двойника есть имя, описание и подсказка', () => {
-    expect(TWIN_INFO.name).toBe('Двойник');
+    expect(TWIN_INFO.name).toBe('Двойник автора');
     expect(TWIN_INFO.tagline).not.toBe('');
     expect(TWIN_INFO.summary).not.toBe('');
   });

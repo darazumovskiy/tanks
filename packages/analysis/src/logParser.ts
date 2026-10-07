@@ -7,6 +7,9 @@ const LINE_PATTERN = /^(\d\d):(\d\d):(\d\d)\.(\d{3}) (\S+) gt=(\d+) tc=\S+ (?:no
 const KEY_VALUE_PATTERN = /(\w+)=(\S*)/g;
 const CLIENT_SOURCE_PATTERN = /^C([01])$/;
 const DEVICE_PATTERN = /^device ua=(.*) screen=\S* dpr=\S* touch=(\S*)/;
+// Ник пишется в журнал как есть и может содержать пробелы: он тянется до следующего поля строки.
+const GAME_START_NAMES_PATTERN = / p0=(.*?) p1=(.*?)(?: rules=\S*)?$/;
+const LEAVE_NICK_PATTERN = / nick=(.*)$/;
 const SERVER_SOURCE = 'S';
 const LOG_EXTENSION = '.log';
 const ROOM_LOG_PREFIX = 'room-';
@@ -265,7 +268,8 @@ export function parseGameLog(id: string, text: string): ParsedGame | null {
     if (body.startsWith('game start')) {
       const values = parseKeyValues(body);
       room = field(values, 'room');
-      names = [field(values, 'p0'), field(values, 'p1')];
+      const nameMatch = GAME_START_NAMES_PATTERN.exec(body);
+      names = [nameMatch?.[1] ?? '', nameMatch?.[2] ?? ''];
       startSec = sec;
       wallSlidePercent = wallSlideOf(field(values, 'rules'));
       continue;
@@ -279,7 +283,7 @@ export function parseGameLog(id: string, text: string): ParsedGame | null {
     }
     if (body.startsWith('leave')) {
       const values = parseKeyValues(body);
-      leave = { side: sideOf(values.get('side')), nick: field(values, 'nick') };
+      leave = { side: sideOf(values.get('side')), nick: LEAVE_NICK_PATTERN.exec(body)?.[1] ?? '' };
     }
   }
   if (room === null || startSec === null || rounds.length === 0) {

@@ -535,12 +535,12 @@ for (const screen of [
   { id: 'телефон', isTouch: true },
   { id: 'компьютер', isTouch: false },
 ]) {
-  test(`с главной: «Двойник» ведёт в бой с двойником, он едет и стреляет — ${screen.id}`, async ({ browser }) => {
-    const human = await Player.openAgainstBot(browser, server.baseUrl, 'Дима', 'twin', '', screen.isTouch);
+  test(`с главной: «Двойник автора» ведёт в бой, он едет и стреляет — ${screen.id}`, async ({ browser }) => {
+    const human = await Player.openAgainstBot(browser, server.baseUrl, 'Игрок', 'twin', '', screen.isTouch);
     await expect(human.page).toHaveURL(/\/d\/twin[a-z0-9]+$/);
     const start = await human.waitForFight();
     expect(start.side).toBe(1);
-    expect(start.nicknames[0]).toBe('Двойник');
+    expect(start.nicknames[0]).toBe('Двойник автора');
     await expectEnemyMoves(human, start, 'двойник не двигается');
     // Человек не стреляет: снаряд на поле — выстрел двойника.
     await until(

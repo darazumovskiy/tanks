@@ -203,7 +203,7 @@ describe('бой ботов', () => {
       hasShot ||= match.step().events.some((event) => event.kind === 'shot' && event.side === 0);
     }
 
-    expect(match.names[0]).toBe('Двойник');
+    expect(match.names[0]).toBe('Двойник автора');
     expect(hasShot).toBe(true);
     expect({ x: match.round.tanks[0].x, y: match.round.tanks[0].y }).not.toEqual(spawn);
   });

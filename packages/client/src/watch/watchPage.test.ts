@@ -6,6 +6,7 @@ import { StampDecals } from '../render/stampDecals.js';
 import type { WatchHudInfo } from '../render/watchRenderer.js';
 import { Sfx } from '../sfx.js';
 import { installFakeAudio, type FakeAudio } from '../testing/fakeAudio.js';
+import { WATCH_STYLE } from '../render/watchStyle.js';
 import { MAX_STEPS_PER_FRAME } from './stepClock.js';
 import type { WatchGame } from './watchGame.js';
 import { fighterById } from './fighters.js';
@@ -47,6 +48,7 @@ describe('экран боя ботов', () => {
   async function mount(): Promise<void> {
     document.body.innerHTML = `
       <div id="result"></div>
+      <div id="notice"></div>
       <div class="watch-pick"><button id="left-toggle"></button><div id="left-list" hidden></div></div>
       <div class="watch-pick"><button id="right-toggle"></button><div id="right-list" hidden></div></div>
       <div id="speeds"></div>
@@ -62,6 +64,7 @@ describe('экран боя ботов', () => {
         restart: element('restart', HTMLButtonElement),
         sound: element('sound', HTMLButtonElement),
         result: element('result', HTMLElement),
+        notice: element('notice', HTMLElement),
       },
       {
         getItem: (key) => stored.get(key) ?? null,
@@ -141,7 +144,21 @@ describe('экран боя ботов', () => {
 
   afterEach(() => {
     audio.restore();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
   });
+
+  function failTwinLoad(): void {
+    const twin = fighterById('twin');
+    if (twin === null) {
+      throw new Error('нет двойника');
+    }
+    vi.spyOn(twin, 'loadBrain').mockRejectedValue(new Error('кусок сборки не загрузился'));
+  }
+
+  function selectedId(side: 'left' | 'right'): string | null {
+    return element(`${side}-list`, HTMLElement).querySelector('.is-selected')?.getAttribute('data-fighter') ?? null;
+  }
 
   it('без сохранённого выбора: Охотник против Параллакса, ×1, не на паузе', async () => {
     await mount();
@@ -233,16 +250,60 @@ describe('экран боя ботов', () => {
     expect(element('right-toggle', HTMLButtonElement).textContent).toContain('Ветеран');
   });
 
-  it('двойник — последним в обоих списках: знак «Я», имя и описание', async () => {
+  it('двойник — последним в обоих списках: знак «А», имя и описание', async () => {
     await mount();
     for (const side of ['left', 'right'] as const) {
       const rows = element(`${side}-list`, HTMLElement).querySelectorAll('.level');
       const last = rows[rows.length - 1];
       expect(last?.getAttribute('data-fighter')).toBe('twin');
-      expect(last?.querySelector('.level-badge')?.textContent).toBe('Я');
-      expect(last?.querySelector('.level-name')?.textContent).toBe('Двойник');
-      expect(last?.querySelector('.level-tagline')?.textContent).toBe('Играет как ты. Ну, почти');
+      expect(last?.querySelector('.level-badge')?.textContent).toBe('А');
+      expect(last?.querySelector('.level-name')?.textContent).toBe('Двойник автора');
+      expect(last?.querySelector('.level-tagline')?.textContent).toBe('Играет как автор игры. Ну, почти');
     }
+  });
+
+  it('сохранённый двойник не загрузился на открытии — бой с бойцом по умолчанию и сообщение', async () => {
+    failTwinLoad();
+    stored.set(LEFT_KEY, 'twin');
+    stored.set(RIGHT_KEY, 'bot3');
+    await mount();
+    expect(game.debugState().fighterIds).toEqual(['bot8', 'bot3']);
+    expect(element('left-toggle', HTMLButtonElement).textContent).toContain('Охотник');
+    expect(selectedId('left')).toBe('bot8');
+    const notice = element('notice', HTMLElement);
+    expect(notice.classList.contains('is-shown')).toBe(true);
+    expect(notice.textContent).toContain('Двойник автора не приехал');
+    expect(notice.textContent).toContain('Обнови страницу');
+    frames(FRAMES_PER_S);
+    expect(game.debugState().totalTicks).toBe(TICKS_PER_S);
+    expect(drawn.length).toBeGreaterThan(0);
+  });
+
+  it('выбранный посреди боя двойник не загрузился — прежний бой идёт, выбор откатан и не запомнен', async () => {
+    failTwinLoad();
+    await mount();
+    frames(FRAMES_PER_S);
+    element('right-toggle', HTMLButtonElement).click();
+    element('right-list', HTMLElement).querySelector<HTMLButtonElement>('[data-fighter="twin"]')?.click();
+    const notice = element('notice', HTMLElement);
+    await vi.waitFor(() => {
+      expect(notice.classList.contains('is-shown')).toBe(true);
+    });
+    expect(notice.textContent).toContain('Двойник автора не приехал');
+    expect(game.debugState().fighterIds).toEqual(['bot8', 'bot10']);
+    expect(element('right-toggle', HTMLButtonElement).textContent).toContain('ПАРАЛЛАКС-ASTRA');
+    expect(selectedId('right')).toBe('bot10');
+    expect(stored.has(RIGHT_KEY)).toBe(false);
+    frames(FRAMES_PER_S);
+    expect(game.debugState().totalTicks).toBe(TICKS_PER_S * 2);
+
+    vi.useFakeTimers();
+    element('right-toggle', HTMLButtonElement).click();
+    element('right-list', HTMLElement).querySelector<HTMLButtonElement>('[data-fighter="twin"]')?.click();
+    await vi.advanceTimersByTimeAsync(WATCH_STYLE.noticeShownMs - 1);
+    expect(notice.classList.contains('is-shown')).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(notice.classList.contains('is-shown')).toBe(false);
   });
 
   it('выбор двойника — его мозг загружается, бой с ним с нуля; сохранённый двойник — бой с ним с открытия', async () => {
@@ -250,7 +311,7 @@ describe('экран боя ботов', () => {
     frames(FRAMES_PER_S);
     await pick('right', 'twin');
     const state = game.debugState();
-    expect(state.fighters).toEqual(['Охотник', 'Двойник']);
+    expect(state.fighters).toEqual(['Охотник', 'Двойник автора']);
     expect(state.totalTicks).toBe(0);
     expect(state.score).toEqual([0, 0]);
     expect(stored.get(RIGHT_KEY)).toBe('twin');

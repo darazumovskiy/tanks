@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { TWIN_INFO, twinRoomCode } from '@tanks/shared/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { analyzeLogs, type GameSummary } from './index.js';
 import {
@@ -94,6 +95,7 @@ describe('разбор журнала игры', () => {
       'DDDD.log': shortGame('plain3', ['Ветеран', 'Дима'], [0, 1]),
       'EEEE.log': shortGame('plain4', ['Петя', 'Дима'], [0, 1]),
       'FFFF.log': shortGame('plain5', ['Ветеран', 'Снайпер'], [0, 1]),
+      'GGGG.log': shortGame(twinRoomCode('k7m2px'), [TWIN_INFO.name, 'Игрок'], [0, 1]),
     });
     const byId = new Map(run(dir).map((game) => [game.id, game]));
 
@@ -106,6 +108,25 @@ describe('разбор журнала игры', () => {
     expect(byId.get('DDDD')?.human_side).toBe(1);
     expect(byId.get('EEEE')?.human_side).toBe(0);
     expect(byId.get('FFFF')?.human_side).toBe(1);
+    expect(byId.get('GGGG')?.human_side).toBe(1);
+    expect(byId.get('GGGG')?.bot_name).toBe(TWIN_INFO.name);
+    expect(byId.get('GGGG')?.level).toBeNull();
+  });
+
+  it('ник с пробелами — целиком в начале игры и при уходе', () => {
+    const text = new LogBuilder(START_SEC)
+      .gameStart('bot05space', 'Ветеран', 'Мой ник')
+      .client(HUMAN, 'in seq=1 a=0.00,0.00,0.00,0')
+      .roundStart(0, 0)
+      .frames(countdownFrames(POSES))
+      .frames(standingFrames(POSES, 5))
+      .leave(HUMAN, 'Мой ник')
+      .text();
+    const [game] = run(makeLogDir({ 'SPCE.log': text }));
+
+    expect(game?.human_name).toBe('Мой ник');
+    expect(game?.bot_name).toBe('Ветеран');
+    expect(game?.leave).toEqual({ side: HUMAN, nick: 'Мой ник' });
   });
 
   it('устройство: из журнала комнаты не дальше пяти минут, иначе по нику, иначе неизвестно; переход через полночь', () => {

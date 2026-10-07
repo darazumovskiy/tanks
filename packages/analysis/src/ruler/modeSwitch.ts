@@ -24,7 +24,7 @@ export interface Coefficients {
 
 const BOT_CLASS_EDGES = [8, 9, 10] as const;
 const BOT_CLASSES = ['3–7', '8', '9', '10'] as const;
-export type BotClass = (typeof BOT_CLASSES)[number];
+type BotClass = (typeof BOT_CLASSES)[number];
 
 // Признаки выбора режима в начале секунды боя.
 export interface ModeFeatures {

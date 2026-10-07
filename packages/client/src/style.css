@@ -2854,6 +2854,49 @@ body.watch #stage {
   color: rgba(244, 241, 232, 0.65);
 }
 
+/* Боец не загрузился — карточка в стиле итога раунда над панелью, рядом со списком, где его выбирали. */
+.watch-notice {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--watch-bar) + var(--watch-bar-under) + 12px);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 10px 20px 12px;
+  text-align: center;
+  background: rgba(11, 15, 13, 0.9);
+  border: 1px solid #e8825a;
+  border-radius: 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition:
+    opacity var(--watch-result, 200ms) ease-out,
+    transform var(--watch-result, 200ms) ease-out;
+  pointer-events: none;
+}
+
+.watch-notice.is-shown {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.watch-notice-title {
+  font-family: 'Russo One', 'Arial Black', sans-serif;
+  font-size: 18px;
+  line-height: 1.2;
+  color: #f4f1e8;
+}
+
+.watch-notice-note {
+  font-size: 13px;
+  color: rgba(244, 241, 232, 0.65);
+}
+
 /* Компьютер: панель выше, итог и подписи крупнее. */
 @media (min-width: 1000px) and (min-height: 600px) {
   body.watch {

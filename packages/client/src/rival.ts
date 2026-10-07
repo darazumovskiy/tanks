@@ -12,8 +12,8 @@ import {
 export const TWIN_RIVAL = 'twin';
 export type Rival = BotLevel | typeof TWIN_RIVAL;
 export const RIVALS: readonly Rival[] = [...BOT_LEVELS, TWIN_RIVAL];
-// Значок двойника в списках вместо номера уровня: это ты сам.
-export const TWIN_BADGE = 'Я';
+// Значок двойника в списках вместо номера уровня: первая буква автора игры.
+export const TWIN_BADGE = 'А';
 
 export function rivalOf(raw: string | null, fallback: Rival): Rival {
   return RIVALS.find((rival) => String(rival) === raw) ?? fallback;

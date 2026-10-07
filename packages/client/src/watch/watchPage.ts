@@ -1,4 +1,5 @@
-import { mountDropdown, type DropdownElements } from '../dropdown.js';
+import type { Side } from '@tanks/shared/engine';
+import { mountDropdown, type Dropdown, type DropdownElements } from '../dropdown.js';
 import { createDuelEffects } from '../render/renderer.js';
 import { SIDE_COLORS } from '../render/view.js';
 import { WatchRenderer } from '../render/watchRenderer.js';
@@ -17,6 +18,7 @@ export interface WatchPageElements {
   restart: HTMLButtonElement;
   sound: HTMLButtonElement;
   result: HTMLElement;
+  notice: HTMLElement;
 }
 
 export interface WatchStorage {
@@ -37,6 +39,7 @@ const OUTCOME_SIDE_CLASSES = ['is-left', 'is-right'] as const;
 const DRAW_CLASS = 'is-draw';
 const SOUND_KEY_CODE = 'KeyM';
 const SEED_PARAM = 'seed';
+const SIDES: readonly Side[] = [0, 1];
 
 function requireFighter(id: string): Fighter {
   const fighter = fighterById(id);
@@ -160,8 +163,12 @@ function reflectSound(button: HTMLButtonElement, isMuted: boolean): void {
 }
 
 // Значение списка — номер бойца: он же попадает в data-атрибут строки.
-function mountPicker(elements: DropdownElements, selected: Fighter, onSelect: (fighter: Fighter) => void): void {
-  mountDropdown(elements, {
+function mountPicker(
+  elements: DropdownElements,
+  selected: Fighter,
+  onSelect: (fighter: Fighter) => void,
+): Dropdown<string> {
+  return mountDropdown(elements, {
     values: FIGHTERS.map((fighter) => fighter.id),
     selected: selected.id,
     optionClass: 'level',
@@ -200,23 +207,67 @@ function mountSpeeds(container: HTMLElement, game: WatchGame): void {
   select(DEFAULT_SPEED);
 }
 
-function readyPair(left: Fighter, right: Fighter): Promise<[ReadyFighter, ReadyFighter]> {
-  return Promise.all([readyFighter(left), readyFighter(right)]);
+// null — мозг бойца не загрузился: кусок сборки не приехал по сети.
+async function readyOrNull(fighter: Fighter): Promise<ReadyFighter | null> {
+  try {
+    return await readyFighter(fighter);
+  } catch {
+    return null;
+  }
+}
+
+// Сообщение поверх боя о бойце, который не загрузился; само уходит через noticeShownMs.
+function noticeShower(element: HTMLElement): (fighter: Fighter) => void {
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  return (fighter) => {
+    const title = document.createElement('span');
+    title.className = 'watch-notice-title';
+    title.textContent = `${fighter.name} не приехал`;
+    const note = document.createElement('span');
+    note.className = 'watch-notice-note';
+    note.textContent = 'Обнови страницу — и в бой';
+    element.replaceChildren(title, note);
+    element.classList.add(SHOWN_CLASS);
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      element.classList.remove(SHOWN_CLASS);
+    }, WATCH_STYLE.noticeShownMs);
+  };
+}
+
+// Боец, сохранённый для стороны; не загрузился — боец стороны по умолчанию, его мозг готов сразу.
+async function readyStored(
+  storage: WatchStorage,
+  key: string,
+  fallbackId: string,
+  showNotice: (fighter: Fighter) => void,
+): Promise<ReadyFighter> {
+  const fighter = storedFighter(storage, key, fallbackId);
+  const ready = await readyOrNull(fighter);
+  if (ready !== null) {
+    return ready;
+  }
+  showNotice(fighter);
+  return readyFighter(requireFighter(fallbackId));
 }
 
 // Экран боя ботов: выбор двух бойцов, скорость, пауза, «заново», звук, итог раунда. Выбор бойцов запоминается.
 // Бой с новым бойцом начинается, когда его мозг загружен; пока грузится, идёт прежний бой, а выбор, сделанный за это
-// время позже, побеждает.
+// время позже, побеждает. Боец, чей мозг не загрузился, в выборе не остаётся и не запоминается.
 export async function mountWatch(
   elements: WatchPageElements,
   storage: WatchStorage,
   deps: WatchGameDeps,
 ): Promise<WatchGame> {
-  let left = storedFighter(storage, LEFT_KEY, DEFAULT_LEFT_ID);
-  let right = storedFighter(storage, RIGHT_KEY, DEFAULT_RIGHT_ID);
+  const showNotice = noticeShower(elements.notice);
+  let playing: [ReadyFighter, ReadyFighter] = await Promise.all([
+    readyStored(storage, LEFT_KEY, DEFAULT_LEFT_ID, showNotice),
+    readyStored(storage, RIGHT_KEY, DEFAULT_RIGHT_ID, showNotice),
+  ]);
+  const chosen: [Fighter, Fighter] = [requireFighter(playing[0].id), requireFighter(playing[1].id)];
   const game = new WatchGame(
     {
-      fighters: await readyPair(left, right),
+      fighters: playing,
       speed: DEFAULT_SPEED,
       onOutcome: (outcome, names) => {
         showOutcome(elements.result, outcome, names);
@@ -228,21 +279,44 @@ export async function mountWatch(
   const startChosen = async (): Promise<void> => {
     choice++;
     const current = choice;
-    const fighters = await readyPair(left, right);
-    if (current === choice) {
-      game.setFighters(fighters);
+    const loaded = await Promise.all([readyOrNull(chosen[0]), readyOrNull(chosen[1])]);
+    if (current !== choice) {
+      return;
     }
+    const next: [ReadyFighter, ReadyFighter] = [...playing];
+    let hasFailed = false;
+    for (const side of SIDES) {
+      const ready = loaded[side];
+      if (ready === null) {
+        hasFailed = true;
+        showNotice(chosen[side]);
+        chosen[side] = requireFighter(playing[side].id);
+        pickers[side].setSelected(chosen[side].id);
+        continue;
+      }
+      next[side] = ready;
+    }
+    const isSamePair = next[0].id === playing[0].id && next[1].id === playing[1].id;
+    if (hasFailed && isSamePair) {
+      return;
+    }
+    playing = next;
+    storage.setItem(LEFT_KEY, playing[0].id);
+    storage.setItem(RIGHT_KEY, playing[1].id);
+    game.setFighters(playing);
   };
-  mountPicker(elements.left, left, (fighter) => {
-    left = fighter;
-    storage.setItem(LEFT_KEY, fighter.id);
+  const choose = (side: Side, fighter: Fighter): void => {
+    chosen[side] = fighter;
     void startChosen();
-  });
-  mountPicker(elements.right, right, (fighter) => {
-    right = fighter;
-    storage.setItem(RIGHT_KEY, fighter.id);
-    void startChosen();
-  });
+  };
+  const pickers = [
+    mountPicker(elements.left, chosen[0], (fighter) => {
+      choose(0, fighter);
+    }),
+    mountPicker(elements.right, chosen[1], (fighter) => {
+      choose(1, fighter);
+    }),
+  ] as const;
   mountSpeeds(elements.speeds, game);
   reflectPause(elements.pause, game.isPaused);
   elements.pause.addEventListener('click', () => {

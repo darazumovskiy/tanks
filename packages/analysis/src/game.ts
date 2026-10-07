@@ -1,5 +1,5 @@
 import { mapByIndex, TICK_RATE, type Side, type Wall } from '@tanks/shared/engine';
-import { BOT_LEVEL_INFO, BOT_LEVELS, botLevelOf, type BotLevel } from '@tanks/shared/protocol';
+import { BOT_LEVEL_INFO, BOT_LEVELS, botLevelOf, TWIN_INFO, type BotLevel } from '@tanks/shared/protocol';
 import { EVENT_KIND, trackRound, type Hit, type TrackedBullet, type TrackedRound } from './bullets.js';
 import { inferBulletSpeed, inferStats, type InferredStats } from './inferStats.js';
 import {
@@ -193,7 +193,7 @@ export interface GameAnalysis {
   selfHits: SelfHitRow[];
 }
 
-const BOT_NAMES = new Set(BOT_LEVELS.map((level) => BOT_LEVEL_INFO[level].name));
+const BOT_NAMES = new Set([...BOT_LEVELS.map((level) => BOT_LEVEL_INFO[level].name), TWIN_INFO.name]);
 
 // Сторона человека — та, от которой есть строки клиента; если есть от обеих — та, чьё имя не из списка ботов.
 function humanSideOf(game: ParsedGame): Side {

@@ -381,6 +381,7 @@ async function startWatch(): Promise<void> {
       restart: byId('watch-restart', HTMLButtonElement),
       sound: byId('watch-sound', HTMLButtonElement),
       result: byId('watch-result', HTMLElement),
+      notice: byId('watch-notice', HTMLElement),
     },
     localStorage,
     watchModule.browserWatchDeps(canvas),

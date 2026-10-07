@@ -156,7 +156,7 @@ describe('стенд', () => {
     expect(summary).toMatchObject({
       human_side: plan.twinSide,
       level: 8,
-      human_name: 'Двойник',
+      human_name: 'Двойник автора',
       device: 'tanks-twin/phone',
     });
     expect(result.rounds.reduce((total, round) => total + round.shotEvents, 0)).toBeLessThanOrEqual(twinShots);
@@ -182,7 +182,7 @@ describe('стенд', () => {
       'T080003.log',
       'room-bot08twin.log',
     ]);
-    expect(result.games.map((game) => game.summary.human_name)).toEqual(['Двойник', 'Двойник', 'Двойник', 'Двойник']);
+    expect(result.games.map((game) => game.summary.human_name)).toEqual(Array(4).fill('Двойник автора'));
     expect(result.skipped).toEqual([]);
   });
 
