@@ -187,7 +187,7 @@ export class FfaRenderer {
     const plan = input.zonePlan;
     const map = this.map;
     return {
-      field: { width: map.width, height: map.height },
+      field: map,
       borderWidth: BORDER_WIDTH,
       floor: (ctx, floorCamera) => {
         this.floor.draw(ctx, floorCamera);

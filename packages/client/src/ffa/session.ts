@@ -281,6 +281,7 @@ export class FfaSession {
   playerId: number | null = null;
   gameId: string | null = null;
   rules: RoundRules = { ...DEFAULT_RULES };
+  hasNetSmoothing = false;
   match: FfaMatchInfo | null = null;
   self: FfaSelf | null = null;
   tick = 0;
@@ -352,6 +353,7 @@ export class FfaSession {
     this.playerId = message.playerId;
     this.gameId = message.gameId;
     this.rules = { ...message.rules };
+    this.hasNetSmoothing = message.hasNetSmoothing;
     const invite = INVITE_NOTICES[message.inviteMiss];
     this.inviteNotice = invite === null ? null : { kind: invite, at: receivedAt };
     if (isFirst) {

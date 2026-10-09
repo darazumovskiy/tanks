@@ -3,7 +3,7 @@ import type { SnapshotEvent, TankSnapshot } from '@tanks/shared/protocol';
 import { CountdownBeeper } from '../countdownBeeper.js';
 import type { WorldView } from '../prediction.js';
 import type { Effects } from '../render/effects.js';
-import { DuelFxPolicy, duelFxEvent } from '../render/fxEvent.js';
+import { DuelFxPolicy, duelFxEvent, duelFxTanks } from '../render/fxEvent.js';
 import type { Overlay } from '../render/renderer.js';
 import type { WatchHudInfo } from '../render/watchRenderer.js';
 import type { Sfx } from '../sfx.js';
@@ -124,10 +124,6 @@ export class WatchGame {
     return this.isPausedNow;
   }
 
-  get isMuted(): boolean {
-    return this.sfx.isMuted;
-  }
-
   setFighters(fighters: readonly [ReadyFighter, ReadyFighter]): void {
     this.fighters = fighters;
     this.restart();
@@ -144,10 +140,6 @@ export class WatchGame {
   togglePause(): boolean {
     this.isPausedNow = !this.isPausedNow;
     return this.isPausedNow;
-  }
-
-  toggleSound(): boolean {
-    return this.sfx.toggle();
   }
 
   unlockSound(): void {
@@ -226,10 +218,7 @@ export class WatchGame {
     }
     this.worstFrameStepsMsInWindow = Math.max(this.worstFrameStepsMsInWindow, this.deps.now() - startedAt);
     const view = worldViewAt(this.match.round, this.poses, this.clock.fraction);
-    this.effects.update(frameMs / MS_PER_S, [
-      { ...view.tanks[0], id: 0 },
-      { ...view.tanks[1], id: 1 },
-    ]);
+    this.effects.update(frameMs / MS_PER_S, duelFxTanks(view));
     this.countdownBeeper.update(this.overlay());
   }
 

@@ -14,6 +14,7 @@ export {
 export * from './maps.js';
 export * from './round.js';
 export * from './lead.js';
+export * from './shot.js';
 export * from './trajectory.js';
 export * from './view.js';
 export * from './random.js';

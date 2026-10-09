@@ -18,6 +18,7 @@ import {
   FFA_JOURNAL,
   FfaInviteMiss,
   FfaPhase,
+  formatJournalRules,
   MessageType,
   PROTOCOL_VERSION,
   replayFfaJournal,
@@ -1127,4 +1128,77 @@ describe('журнал боя толпы', () => {
     expect(replayed?.mismatches).toEqual([]);
     expect(replayed?.match.players.map((player) => player.id)).toEqual([busy.welcome.playerId]);
   }, 30_000);
+
+  it.each([
+    {
+      title: 'догон 2',
+      env: { SHOT_LEAD_TICKS: '2' },
+      ffa: {},
+      rules: { wallSlidePercent: 0, shotLeadTicks: 2, shotInheritPercent: 0 },
+      field: ' lead=2',
+    },
+    {
+      title: 'снаряд со скоростью танка 100 и серверные боты',
+      env: { SHOT_INHERIT_PERCENT: '100' },
+      ffa: { hasServerBots: true, minimum: { 10: 4, 30: 4, 50: 4 } },
+      rules: { wallSlidePercent: 0, shotLeadTicks: 0, shotInheritPercent: 100 },
+      field: ' inherit=100',
+    },
+  ])(
+    '$title: люди и бот стреляют, бот входит посреди боя, человек выходит — прогон совпадает на всех сверках',
+    async (rule) => {
+      await startApp({ matchSeconds: 20, quitTicks: 20, ...rule.ffa }, { logDir, env: rule.env });
+      const [shooter, target] = await fightPair(SHOOTER, TARGET);
+      const shooterId = shooter.welcome.playerId;
+      const targetId = target.welcome.playerId;
+      let bot: Entered | null = null;
+      let isTargetGone = false;
+      let isResults = false;
+      const deadline = Date.now() + SCRIPT_TIMEOUT_MS;
+      while (!isResults && Date.now() < deadline) {
+        const messages = [await shooter.client.next(deadline - Date.now()), ...shooter.client.takeQueued()];
+        isResults = messages.some(
+          (message) => message.type === MessageType.FfaState && message.phase === FfaPhase.Results,
+        );
+        const latest = messages.filter(isSnapshot).pop();
+        if (latest === undefined || isResults) {
+          continue;
+        }
+        hunt(shooter.client, latest, shooterId, targetId);
+        const botLatest = bot?.client.takeQueued().filter(isSnapshot).pop();
+        if (bot !== null && botLatest !== undefined) {
+          hunt(bot.client, botLatest, bot.welcome.playerId, targetId);
+        }
+        if (bot === null && latest.tick > 100) {
+          bot = await enter('ffa10', { nickname: 'Бот', stats: SHOOTER, isBot: true });
+        }
+        if (!isTargetGone && latest.tick > 400) {
+          target.client.send({ type: MessageType.Leave });
+          target.client.close();
+          isTargetGone = true;
+        }
+      }
+      expect(isResults).toBe(true);
+      expect(bot?.welcome.rules).toEqual(rule.rules);
+      const botId = String(bot?.welcome.playerId);
+      const journal = await journalOf(shooter.welcome.gameId);
+      const firesOf = (id: string): boolean =>
+        journal.some((line) => new RegExp(` ac .*\\b${id}=-?\\d+,-?\\d+,-?\\d+,1`).test(line));
+      expect(linesOf(journal, FFA_JOURNAL.gameStart)[0]).toMatch(new RegExp(` ${formatJournalRules(rule.rules)}$`));
+      expect(linesOf(journal, FFA_JOURNAL.join)[0]).toMatch(new RegExp(`id=${botId} .* bot=1$`));
+      expect(firesOf(String(shooterId))).toBe(true);
+      expect(firesOf(botId)).toBe(true);
+      expect(journal.some((line) => line.endsWith(`leave id=${String(targetId)} reason=offline`))).toBe(true);
+
+      const [replayed] = replayFfaJournal(journal, { mapFor: () => TEST_MAP }).matches;
+      expect(replayed?.isComplete).toBe(true);
+      expect(replayed?.mismatches).toEqual([]);
+      expect(replayed?.sums).toBe(Math.ceil((replayed?.match.world.tick ?? 0) / TICK_RATE));
+
+      const withoutRule = journal.map((line) => line.replace(rule.field, ''));
+      const [plainReplay] = replayFfaJournal(withoutRule, { mapFor: () => TEST_MAP }).matches;
+      expect(plainReplay?.mismatches.length).toBeGreaterThan(0);
+    },
+    30_000,
+  );
 });

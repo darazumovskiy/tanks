@@ -33,6 +33,7 @@
     <button id="autofire" class="autofire-toggle" type="button" aria-label="Авто-огонь" aria-pressed="false" hidden>
       АВТО
     </button>
+    <button id="sound-toggle" class="sound-toggle battle-sound" type="button" hidden></button>
     <aside id="settings" class="settings" hidden></aside>
     <section id="lab" class="lab" hidden></section>
     <section id="watch" class="watch" hidden>
@@ -95,27 +96,12 @@
             <path d="M19 4.5V9h-4.5" />
           </svg>
         </button>
-        <button
-          id="watch-sound"
-          class="watch-icon watch-sound"
-          type="button"
-          aria-label="Выключить звук"
-          aria-pressed="false"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" /></svg>
-          <svg class="watch-icon-stroke watch-icon-waves" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M15 9.5a3.5 3.5 0 0 1 0 5" />
-            <path d="M17.5 7a7 7 0 0 1 0 10" />
-          </svg>
-          <svg class="watch-icon-stroke watch-icon-cross" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="m15.5 9.5 5 5" />
-            <path d="m20.5 9.5-5 5" />
-          </svg>
-        </button>
+        <button id="watch-sound" class="watch-icon sound-toggle" type="button"></button>
       </nav>
     </section>
     <section id="home" class="home" hidden>
       <h1>Танки</h1>
+      <button id="home-sound" class="sound-toggle home-sound" type="button" hidden></button>
       <div class="home-lead">
         <label>
           Имя

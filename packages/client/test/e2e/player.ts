@@ -26,6 +26,7 @@ export interface DebugState {
   isShotGuarded: boolean;
   isZoneFiring: boolean;
   isReversing: boolean;
+  isMuted: boolean;
   aimLine: { state: 'none' | 'onTarget' | 'lead'; isReturning: boolean } | null;
   aimLineStyle: string;
   me: TankState;
@@ -70,6 +71,7 @@ export interface FfaDebugState {
   feed: string[];
   spectating: number | null;
   isAutoFiring: boolean;
+  isMuted: boolean;
 }
 
 export interface PlayerOptions {

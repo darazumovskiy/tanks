@@ -17,6 +17,7 @@
     "analyze-logs": "node packages/analysis/dist/main.js",
     "twin": "node packages/twin/dist/main.js",
     "swarm": "node packages/server/dist/swarm/main.js",
+    "bad-net": "node --import ./packages/client/test/e2e/tsLoader.mjs packages/client/test/e2e/badNet.ts",
     "fx-sheets": "node packages/client/test/visual/sheets.mjs",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",

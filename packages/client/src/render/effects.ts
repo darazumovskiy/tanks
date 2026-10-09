@@ -1,6 +1,8 @@
+import { shotCarry, type Field, type Point } from '@tanks/shared/engine';
 import { EventFlag, type FfaEventKind, type SnapshotEventKind, type TankSnapshot } from '@tanks/shared/protocol';
 import type { Camera } from './camera.js';
 import type { DecalLayer } from './decals.js';
+import { MuzzleExit, muzzleOf } from './muzzleExit.js';
 import { BODY_FONT, HEAD_FONT, easeOut, lerp, rgba } from './view.js';
 
 type ParticleKind = 'spark' | 'smoke' | 'flash' | 'ring' | 'fire' | 'debris';
@@ -19,6 +21,11 @@ interface Particle {
   width: number;
   rot: number;
   vr: number;
+  // Скорость, которую частица несёт от танка, без затухания.
+  driftX: number;
+  driftY: number;
+  // Номер танка, на дуле которого частица стоит всю жизнь.
+  anchor: number | null;
 }
 
 interface Popup {
@@ -80,17 +87,24 @@ export interface FxEventOptions {
   ownKillCount: number | null;
 }
 
+// Нарисованный танк кадра; скорость орудия и доля скорости танка у снаряда — чтобы искры летели по пути снаряда.
 export interface FxTank {
   id: number;
   x: number;
   y: number;
+  heading: number;
+  turret: number;
+  speed: number;
   hp: number;
   maxHp: number;
   isAlive: boolean;
+  bulletSpeed: number;
+  shotInheritPercent: number;
 }
 
 export interface FxBullet {
   id: number;
+  owner: number;
   x: number;
   y: number;
   color: string;
@@ -102,6 +116,9 @@ interface TrailPoint {
 }
 
 const MAX_PARTICLES = 1400;
+// Дымок выстрела отстаёт от едущего танка: за кормой остаётся лёгкий след.
+const SHOT_SMOKE_CARRY = 0.5;
+const NO_DRIFT: Readonly<Point> = { x: 0, y: 0 };
 const TRAIL_LENGTH = 80;
 const TREAD_EVERY_TICKS = 2;
 const TREAD_MIN_SPEED = 8;
@@ -132,12 +149,28 @@ function particle(partial: Partial<Particle> & Pick<Particle, 'kind' | 'x' | 'y'
     width: 2,
     rot: 0,
     vr: 0,
+    driftX: 0,
+    driftY: 0,
+    anchor: null,
     ...partial,
   };
 }
 
 function idleTankFx(): TankFx {
   return { flash: 0, recoil: 0, ghostHp: null, smokeTimer: 0 };
+}
+
+function velocityOf(tank: Readonly<FxTank>): Point {
+  return { x: Math.cos(tank.heading) * tank.speed, y: Math.sin(tank.heading) * tank.speed };
+}
+
+// Направление полёта снаряда относительно танка: ствол × скорость орудия + снос − скорость танка.
+function shotHeadingFromTank(tank: Readonly<FxTank>, turret: number): number {
+  const carry = shotCarry(tank, tank.shotInheritPercent);
+  const velocity = velocityOf(tank);
+  const x = Math.cos(turret) * tank.bulletSpeed + carry.x - velocity.x;
+  const y = Math.sin(turret) * tank.bulletSpeed + carry.y - velocity.y;
+  return Math.atan2(y, x);
 }
 
 // Визуальный слой поверх симуляции: частицы, следы гусениц и подпалины, всплывающие цифры, объявления, тряска.
@@ -148,6 +181,8 @@ export class Effects {
   private announcements: Announcement[] = [];
   private readonly trails = new Map<number, TrailPoint[]>();
   private readonly tankFxById = new Map<number, TankFx>();
+  private tanksById = new Map<number, Readonly<FxTank>>();
+  private readonly muzzleExit = new MuzzleExit();
   private lastKillWord: string | null = null;
   shake = 0;
   flashScreen = 0;
@@ -165,6 +200,8 @@ export class Effects {
     this.popups = [];
     this.trails.clear();
     this.tankFxById.clear();
+    this.tanksById.clear();
+    this.muzzleExit.reset();
     this.lastKillWord = null;
   }
 
@@ -213,15 +250,9 @@ export class Effects {
 
   private spawnFor(event: FxEvent): void {
     switch (event.kind) {
-      case 'shot': {
-        if (event.tank !== null) {
-          this.fxOf(event.tank).recoil = 1;
-        }
-        this.spawn(particle({ kind: 'flash', x: event.x, y: event.y, max: 0.09, size: 34, color: '255,220,150' }));
-        this.sparks(event.x, event.y, 6, '255,210,120', 420, event.value, 0.5);
-        this.smoke(event.x + event.dx * 6, event.y + event.dy * 6, 3, 10, 0.7);
+      case 'shot':
+        this.onShot(event);
         break;
-      }
       case 'ricochet':
         this.sparks(event.x, event.y, 10, '255,240,200', 320, Math.atan2(event.dy, event.dx), 2.2);
         this.spawn(particle({ kind: 'flash', x: event.x, y: event.y, max: 0.08, size: 22, color: '255,255,230' }));
@@ -266,6 +297,31 @@ export class Effects {
       default:
         break;
     }
+  }
+
+  // Вспышка стоит на дуле нарисованного стрелка, искры и дымок едут с ним; стрелка нет в кадре — всё в точке события.
+  private onShot(event: FxEvent): void {
+    const shooter = event.tank === null ? undefined : this.tanksById.get(event.tank);
+    if (event.tank !== null) {
+      this.fxOf(event.tank).recoil = 1;
+    }
+    const muzzle = shooter === undefined ? { x: event.x, y: event.y } : muzzleOf(shooter);
+    const drift = shooter === undefined ? NO_DRIFT : velocityOf(shooter);
+    const sparkHeading = shooter === undefined ? event.value : shotHeadingFromTank(shooter, event.value);
+    this.spawn(
+      particle({
+        kind: 'flash',
+        x: muzzle.x,
+        y: muzzle.y,
+        max: 0.09,
+        size: 34,
+        color: '255,220,150',
+        anchor: shooter?.id ?? null,
+      }),
+    );
+    this.sparks(muzzle.x, muzzle.y, 6, '255,210,120', 420, sparkHeading, 0.5, drift);
+    const smokeDrift = { x: drift.x * SHOT_SMOKE_CARRY, y: drift.y * SHOT_SMOKE_CARRY };
+    this.smoke(muzzle.x + event.dx * 6, muzzle.y + event.dy * 6, 3, 10, 0.7, undefined, smokeDrift);
   }
 
   private onHit(event: FxEvent): void {
@@ -393,14 +449,21 @@ export class Effects {
 
   update(dt: number, tanks: readonly FxTank[]): void {
     this.time += dt;
+    this.tanksById = new Map(tanks.map((tank) => [tank.id, tank]));
     for (const p of this.particles) {
       p.life += dt;
       const damping = Math.exp(-p.drag * dt);
       p.vx *= damping;
       p.vy *= damping;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
+      p.x += (p.vx + p.driftX) * dt;
+      p.y += (p.vy + p.driftY) * dt;
       p.rot += p.vr * dt;
+      const anchor = p.anchor === null ? undefined : this.tanksById.get(p.anchor);
+      if (anchor !== undefined) {
+        const muzzle = muzzleOf(anchor);
+        p.x = muzzle.x;
+        p.y = muzzle.y;
+      }
     }
     this.particles = this.particles.filter((p) => p.life < p.max);
     for (const popup of this.popups) {
@@ -465,6 +528,7 @@ export class Effects {
     speed: number,
     direction?: number,
     spread = Math.PI,
+    drift: Readonly<Point> = NO_DRIFT,
   ): void {
     for (let i = 0; i < count; i++) {
       const angle = direction === undefined ? Math.random() * Math.PI * 2 : direction + (Math.random() - 0.5) * spread;
@@ -480,12 +544,22 @@ export class Effects {
           color,
           size: 2 + Math.random() * 1.5,
           drag: 4,
+          driftX: drift.x,
+          driftY: drift.y,
         }),
       );
     }
   }
 
-  private smoke(x: number, y: number, count: number, size = 14, max = 1.2, color = '120,120,125'): void {
+  private smoke(
+    x: number,
+    y: number,
+    count: number,
+    size = 14,
+    max = 1.2,
+    color = '120,120,125',
+    drift: Readonly<Point> = NO_DRIFT,
+  ): void {
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
       const velocity = 10 + Math.random() * 40;
@@ -500,6 +574,8 @@ export class Effects {
           size: size * (0.6 + Math.random() * 0.8),
           color,
           drag: 1.5,
+          driftX: drift.x,
+          driftY: drift.y,
         }),
       );
     }
@@ -524,8 +600,9 @@ export class Effects {
     this.decals.draw(ctx, camera);
   }
 
-  // Снаряд сменил номер (предсказанный выстрел подтвердил сервер) — хвост продолжается под новым номером.
+  // Снаряд сменил номер (предсказанный выстрел подтвердил сервер) — хвост и выход из дула продолжаются под новым.
   renameTrail(fromId: number, toId: number): void {
+    this.muzzleExit.rename(fromId, toId);
     const trail = this.trails.get(fromId);
     if (trail === undefined) {
       return;
@@ -534,11 +611,12 @@ export class Effects {
     this.trails.set(toId, trail);
   }
 
-  drawBullets(ctx: CanvasRenderingContext2D, bullets: readonly FxBullet[]): void {
+  // Снаряд рисуется выходящим из дула стрелка; поле — для выстрела в упор.
+  drawBullets(ctx: CanvasRenderingContext2D, bullets: readonly FxBullet[], field: Readonly<Field>): void {
     const live = new Set<number>();
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    for (const bullet of bullets) {
+    for (const bullet of this.muzzleExit.place(bullets, this.tanksById, field, this.time)) {
       live.add(bullet.id);
       let trail = this.trails.get(bullet.id);
       if (trail === undefined) {

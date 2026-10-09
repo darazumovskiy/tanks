@@ -49,7 +49,7 @@ export default defineConfig({
         'packages/client/src/render/shieldRings.ts',
         'packages/client/src/ffa/arrows.ts',
         'packages/client/src/audioMix.ts',
-        'packages/client/src/{pictureTime,spareInput,predictedShots}.ts',
+        'packages/client/src/{pictureTime,spareInput,predictedShots,ownShots,netSmoothing}.ts',
         'packages/client/src/fxLab/{scenes,styleParams,paramPanel,contactSheet}.ts',
         'packages/client/src/clientInfo.ts',
         'packages/client/src/telemetry.ts',
@@ -119,7 +119,7 @@ export default defineConfig({
           functions: 95,
           lines: 95,
         },
-        'packages/client/src/{pictureTime,spareInput,predictedShots}.ts': {
+        'packages/client/src/{pictureTime,spareInput,predictedShots,ownShots,netSmoothing}.ts': {
           statements: 95,
           branches: 90,
           functions: 95,

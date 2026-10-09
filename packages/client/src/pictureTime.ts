@@ -1,14 +1,30 @@
-import { BULLET_RADIUS, DT, TANK_RADIUS, type Point } from '@tanks/shared/engine';
+import {
+  BULLET_RADIUS,
+  deriveStats,
+  DT,
+  flyBullets,
+  STAT_MAX,
+  TANK_RADIUS,
+  type Point,
+  type World,
+} from '@tanks/shared/engine';
 import type { FfaEventKind, SnapshotEventKind } from '@tanks/shared/protocol';
 
 // Зона «у танка»: ближе к своему танку снаряд рисуется в его времени, ближе к чужому — во времени чужого.
 export const PICTURE_NEAR = TANK_RADIUS * 2.5;
+// Свой снаряд сходит ко времени чужих, когда до зоны чужого танка самое быстрое сближение займёт меньше стольких
+// разрывов между временами: снаряд теряет разрыв, замедляясь не больше чем на треть, и входит в зону в её времени.
+export const PICTURE_APPROACH_SPAN = 3;
+const TANK_SPEED_MAX = deriveStats({ armor: 0, engine: STAT_MAX, gun: 0, reload: 0 }).maxSpeed;
 // Тик картинки снаряда растёт не медленнее этой доли хода тика чужих: улетающий от своего танка снаряд замедляется,
 // но назад не летит и не зависает.
 export const PICTURE_MIN_TIME_RATE = 0.5;
 // Свой танк вернулся на поле: тик своего танка на картинке догоняет тик предсказания, идя во столько раз быстрее
 // тика чужих.
 export const PICTURE_CATCH_UP_RATE = 2;
+// Свой снаряд, летящий к своему танку, догоняет его время на столько тиков пути раньше: догон идёт кадрами, и без
+// запаса снаряд входит в зону своего танка с отставанием в шаг кадра.
+const RETURN_MARGIN_TICKS = 1;
 // Событие, до места которого картинка не дошла за это время, выбрасывается; свой снаряд у корпуса врага ждёт вспышку
 // столько же хода тика чужих.
 export const EVENT_MAX_WAIT_MS = 500;
@@ -21,15 +37,32 @@ const LEAD_TICKS = 2;
 // Запас набирается, когда до касания по дорожке осталось не больше стольких тиков; набирается во столько раз быстрее
 // хода тика картинки снаряда — снаряд на подлёте ускоряется, — сходит вдвое медленнее.
 const LEAD_LOOK_TICKS = LEAD_TICKS + 2;
-const LEAD_RATE = 2;
+export const PICTURE_LEAD_RATE = 2;
+// Танк, на броне которого стоит свой снаряд, — ближайший к его прошлому месту не дальше радиуса танка: дальше
+// ближайшим может оказаться соседний — корпуса не перекрываются. Нет такого — танк пропал с картинки или прыгнул,
+// снаряд пропадает.
+const HOLD_TANK_REACH = TANK_RADIUS;
+// Место ухода с брони ищется делением отрезка тиков пополам до этой точности в тиках и не раньше стольких тиков до
+// тика снаряда в миг касания: касание находится и на пути с запасом подлёта впереди тика снаряда, а дальше назад
+// дорожка до отскока бывает впереди брони.
+const RELEASE_TICK_PRECISION = 1e-3;
+// Шаг, которым дорожка за местом на броне проверяется на заход в окружность касания: задевший её короче шага
+// снаряд — не дальше пары единиц от окружности.
+const RELEASE_SCAN_TICKS = 0.05;
+// Место ухода с брони дальше окружности касания хотя бы на столько: на самой окружности снаряд неотличим от стоящего
+// на броне.
+const RELEASE_CLEARANCE = 0.01;
+const RELEASE_LOOK_BACK_TICKS = LEAD_TICKS + 1;
 
 // Два времени кадра: myTick — тик своего танка (предсказание), othersTick — дробный тик чужих танков
-// (интерполяция снимков). me — свой танк в myTick, null — его нет на поле; others — живые чужие в othersTick.
+// (интерполяция снимков). me — свой танк предсказания в myTick, null — его нет на поле; others — живые чужие
+// в othersTick; ownShift — смещение нарисованного своего танка от предсказанного, нет — ноль.
 export interface PictureClock {
   myTick: number;
   othersTick: number;
   me: Point | null;
   others: readonly Point[];
+  ownShift?: Point;
 }
 
 export interface TrackPoint {
@@ -74,6 +107,57 @@ export function pictureWeight(toMe: number, toOther: number): number {
   return b / (a + b);
 }
 
+// Через сколько тиков снаряд на пути path (path[k] — место через k тиков) может оказаться в зоне «у танка» tank,
+// если тот поедет ему навстречу по tankStep за тик; между тиками пути — линейно. Путь кончился раньше —
+// бесконечность.
+function ticksToZone(path: readonly Point[], tank: Point, tankStep = TANK_SPEED_MAX * DT): number {
+  let previous = Infinity;
+  for (const [ticks, point] of path.entries()) {
+    const slack = distance(point, tank) - PICTURE_NEAR - tankStep * ticks;
+    if (slack <= 0) {
+      return ticks === 0 ? 0 : ticks - 1 + previous / (previous - slack);
+    }
+    previous = slack;
+  }
+  return Infinity;
+}
+
+// Доля пути своего снаряда от времени чужих к своему: 1 — у своего танка и пока снаряд не подлетает к чужому, к зоне
+// чужого убывает до 0. У своего танка отставание во времени не больше, чем снаряд пролетает от края его зоны, и не
+// больше половины тиков, за которые летящий к своему танку снаряд долетит до его зоны, если танк поедет навстречу:
+// догоняя, снаряд сокращает отставание на тик за тик хода чужих, а путь до зоны — на два. Иначе отставший снаряд
+// оказывается в зоне своего танка и прыгает в его тик. Рядом и чужой, и свой — время своего. path — будущий путь
+// снаряда по тикам от места в тике картинки, me — свой танк, gapTicks — разрыв между временами.
+export function ownBulletWeight(
+  path: readonly Point[],
+  me: Point | null,
+  others: readonly Point[],
+  gapTicks: number,
+): number {
+  const [start, next] = path;
+  const toMe = me === null || start === undefined ? Infinity : distance(start, me);
+  if (start === undefined || gapTicks <= 0 || toMe <= PICTURE_NEAR) {
+    return 1;
+  }
+  const span = PICTURE_APPROACH_SPAN * gapTicks;
+  let weight = 1;
+  for (const other of others) {
+    weight = Math.min(weight, ticksToZone(path, other) / span);
+  }
+  if (me === null) {
+    return weight;
+  }
+  const step = next === undefined ? 0 : distance(start, next);
+  const behind = step === 0 ? 0 : 1 - (toMe - PICTURE_NEAR) / (step * gapTicks);
+  const returning = 1 - (ticksToZone(path, me) - RETURN_MARGIN_TICKS) / (PICTURE_CATCH_UP_RATE * gapTicks);
+  return Math.min(1, Math.max(weight, behind, returning));
+}
+
+// Подтверждённый тик сразу за картинкой чужих танков: по нему решается, что свой снаряд на броне прошёл мимо.
+function passedTickOf(clock: PictureClock): number {
+  return Math.ceil(clock.othersTick) + 1;
+}
+
 function tickFromWeight(clock: PictureClock, weight: number): number {
   return clock.othersTick + weight * (clock.myTick - clock.othersTick);
 }
@@ -82,6 +166,18 @@ function tickFromWeight(clock: PictureClock, weight: number): number {
 export function pictureTickAt(clock: PictureClock, point: Point): number {
   const toMe = clock.me === null ? Infinity : distance(point, clock.me);
   return tickFromWeight(clock, pictureWeight(toMe, nearest(point, clock.others)));
+}
+
+// Точка поля на экране: у своего танка сдвинута вместе с нарисованным танком — на смещение, умноженное на вес
+// «у своего танка»; у чужого не сдвигается.
+export function drawnNearOwn<P extends Point>(clock: PictureClock, point: P): P {
+  const { me, ownShift } = clock;
+  const isShifted = ownShift !== undefined && (ownShift.x !== 0 || ownShift.y !== 0);
+  if (me === null || !isShifted) {
+    return point;
+  }
+  const weight = pictureWeight(distance(point, me), nearest(point, clock.others));
+  return { ...point, x: point.x + ownShift.x * weight, y: point.y + ownShift.y * weight };
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -157,6 +253,10 @@ export class BulletTracks {
 
   lastTick(): number {
     return this.ticks.at(-1) ?? -Infinity;
+  }
+
+  clear(): void {
+    this.keep(() => false);
   }
 
   forgetFrom(tick: number): void {
@@ -254,6 +354,11 @@ export class BulletTracks {
     return null;
   }
 
+  // Первый записанный тик со снарядом; нет такого — null.
+  firstTick(id: number): number | null {
+    return this.ticks.find((tick) => this.byTick.get(tick)?.has(id) === true) ?? null;
+  }
+
   firstAt(id: number, tick: number): TrackPoint | null {
     for (const candidate of this.ticks) {
       const point = candidate >= tick ? this.byTick.get(candidate)?.get(id) : undefined;
@@ -294,27 +399,55 @@ export class BulletTracks {
   }
 }
 
+// Тик, до которого нужен будущий путь своих снарядов: окно подлёта от тика своего танка.
+export function flightEndTick(clock: PictureClock): number {
+  return Math.ceil(clock.myTick + PICTURE_APPROACH_SPAN * Math.max(0, clock.myTick - clock.othersTick)) + 1;
+}
+
+// Будущий путь своих снарядов: из тика поля они летят дальше по правилам движка без танков до тика endTick — с
+// отскоками от стен и гибелью о стену, которых ещё нет в дорожке.
+export function recordFlight(flight: BulletTracks, world: World, owner: number, endTick: number): void {
+  flight.clear();
+  const own = world.bullets.filter((bullet) => bullet.owner === owner).map((bullet) => ({ ...bullet }));
+  const ahead: World = { ...world, tanks: [], bullets: own };
+  flight.record(ahead.tick, ahead.bullets);
+  while (ahead.tick < endTick && ahead.bullets.length > 0) {
+    flyBullets(ahead);
+    flight.record(ahead.tick, ahead.bullets);
+  }
+}
+
 // Свой снаряд на броне: x, y — где нарисован; tank — где нарисован танк, на броне которого он стоит; offset — место
-// на броне от центра танка; heading — направление полёта в миг касания; deathTick — тик гибели снаряда, пропавшего из дорожек целиком: погибший в шаге рождения или
+// на броне от центра танка; sinceTick — тик картинки снаряда в миг касания; heading — направление полёта в миг
+// касания; deathTick — тик гибели снаряда, пропавшего из дорожек целиком: погибший в шаге рождения или
 // погашенный сервером до первого снимка с ним — тогда это тик последнего пришедшего снимка.
 interface Hold extends Point {
   tank: Point;
   offset: Point;
   sinceOthersTick: number;
+  sinceTick: number;
   heading: Point;
   deathTick?: number;
 }
 
-// drawn — где снаряд нарисован; hold — свой снаряд стоит на броне нарисованного танка; isHoldOver — стоял и больше
-// не встанет; lead — на сколько тиков свой снаряд рисуется впереди своего тика картинки.
+// drawn — где снаряд нарисован; hold — свой снаряд стоит на броне нарисованного танка; isHoldOver — стоял, а танк
+// пропал или снаряд дождался гибели, и больше не встанет; overDeath — тик гибели, которой снаряд дождался на броне:
+// досчёт своего танка переиграл её, и снаряд снова жив или гибнет позже — он снова встаёт на броню; isReleased — свой
+// снаряд уходил с брони «мимо»; lead — на сколько тиков свой снаряд рисуется впереди своего тика картинки.
 interface ShownTime {
   tick: number;
+  myTick: number;
   othersTick: number;
   drawn: Point | null;
   hold: Hold | null;
   isHoldOver: boolean;
+  overDeath?: number | undefined;
+  isReleased: boolean;
   lead?: number;
 }
+
+// Как снаряд показан в кадре; releaseTick — снаряд ушёл с брони, и его тик картинки переставлен сюда.
+type Shown = Omit<ShownTime, 'tick' | 'myTick' | 'othersTick' | 'isReleased'> & { releaseTick?: number };
 
 interface Contact extends Point {
   tank: Point;
@@ -367,6 +500,11 @@ function surfaceOf(point: Point, tank: Point): Point {
   };
 }
 
+// Насколько точка впереди места на броне по направлению полёта в миг касания.
+function alongHeading(point: Point, hold: Hold): number {
+  return (point.x - hold.x) * hold.heading.x + (point.y - hold.y) * hold.heading.y;
+}
+
 // Луч из точки по направлению проходит через окружность касания какого-нибудь танка впереди.
 function isAimedAtTank(from: Point, heading: Point, tanks: readonly Point[]): boolean {
   return tanks.some((tank) => {
@@ -376,15 +514,20 @@ function isAimedAtTank(from: Point, heading: Point, tanks: readonly Point[]): bo
   });
 }
 
-// Тик картинки каждого снаряда: у своего танка — его тик, у чужих — их, между — по весу; растёт не медленнее
-// PICTURE_MIN_TIME_RATE хода тика чужих и без верхнего ограничения — подлетая к своему танку, снаряд догоняет его
-// время. Тик чужих стоит (снимки задержались) — не растёт и тик картинки. myOwner — владелец своих снарядов.
+// Тик картинки каждого снаряда: у своего танка — его тик, у чужих — их, между — по весу; свой снаряд — во времени
+// своего танка, пока не подлетает к чужому. Растёт не медленнее PICTURE_MIN_TIME_RATE хода тика чужих; чужой снаряд —
+// без верхнего ограничения: подлетая к своему танку, он догоняет его время; свой вне зоны своего танка растёт не
+// быстрее тика своего танка и сокращает отставание от него не быстрее хода тика чужих — пролетев мимо чужого или
+// потеряв его из виду, догоняет своё время вдвое быстрее хода чужих, а не прыгает.
+// Тик чужих стоит (снимки задержались) — не растёт и тик картинки. myOwner — владелец своих снарядов; flight —
+// будущий путь своих снарядов за дорожкой (`recordFlight`), нет в нём снаряда — прямо прежним ходом.
 export class BulletPicture {
   private readonly shown = new Map<number, ShownTime>();
 
   constructor(
     private readonly tracks: BulletTracks,
     private readonly myOwner: number,
+    private readonly flight = new BulletTracks(),
   ) {}
 
   // confirmedTick — тик последнего снимка: дорожка до него включительно — решение сервера.
@@ -392,17 +535,31 @@ export class BulletPicture {
     const ids = this.tracks.idsBetween(clock.othersTick, clock.myTick);
     const bullets: PictureBullet[] = [];
     for (const id of ids) {
-      const tick = this.tickOf(id, clock);
-      const previous = this.shown.get(id);
+      const owner = (this.tracks.lastAt(id, clock.myTick) ?? this.tracks.firstAt(id, clock.othersTick))?.owner;
+      const isOwn = owner === this.myOwner;
+      const tick = this.tickOf(id, clock, isOwn);
+      const previous = this.revived(id, this.shown.get(id));
       const track = this.tracks.at(id, tick);
-      const isOwn = (this.tracks.lastAt(id, tick) ?? this.tracks.firstAt(id, tick))?.owner === this.myOwner;
-      const shown =
+      const { releaseTick, ...shown }: Shown =
         isOwn && previous?.isHoldOver !== true
           ? this.ownShown(id, tick, clock, confirmedTick, previous)
-          : { drawn: track, hold: null, isHoldOver: previous?.isHoldOver ?? false };
-      this.shown.set(id, { tick, othersTick: clock.othersTick, ...shown });
+          : {
+              drawn: track,
+              hold: null,
+              isHoldOver: previous?.isHoldOver ?? false,
+              overDeath: previous?.overDeath,
+            };
+      const shownTick = releaseTick ?? tick;
+      this.shown.set(id, {
+        tick: shownTick,
+        myTick: clock.myTick,
+        othersTick: clock.othersTick,
+        ...shown,
+        isReleased: releaseTick !== undefined || previous?.isReleased === true,
+      });
       if (shown.drawn !== null) {
-        bullets.push({ id, owner: track?.owner ?? this.myOwner, x: shown.drawn.x, y: shown.drawn.y, tick });
+        const owner = track?.owner ?? this.myOwner;
+        bullets.push({ id, owner, x: shown.drawn.x, y: shown.drawn.y, tick: shownTick });
       }
     }
     for (const [id, time] of this.shown) {
@@ -422,10 +579,23 @@ export class BulletPicture {
         this.shown.delete(id);
         continue;
       }
-      this.shown.set(id, { ...time, othersTick: clock.othersTick, ...held });
+      const isReleased = time.isReleased || held.releaseTick !== undefined;
+      this.shown.set(id, { ...time, myTick: clock.myTick, othersTick: clock.othersTick, ...held, isReleased });
       bullets.push({ id, owner: this.myOwner, x: drawn.x, y: drawn.y, tick: time.tick });
     }
     return bullets;
+  }
+
+  // Гибель, которой снаряд дождался на броне, досчёт переиграл: снаряд снова сам по себе, как отпущенный «мимо».
+  private revived(id: number, previous: ShownTime | undefined): ShownTime | undefined {
+    if (previous?.overDeath === undefined) {
+      return previous;
+    }
+    const death = this.tracks.deathTick(id);
+    if (death !== null && death <= previous.overDeath) {
+      return previous;
+    }
+    return { ...previous, isHoldOver: false, overDeath: undefined, isReleased: true };
   }
 
   // Свой выстрел подтверждён: снаряд продолжает в том же тике картинки под номером сервера.
@@ -439,21 +609,38 @@ export class BulletPicture {
   }
 
   // Расстояния до танков — от места, где снаряд нарисован сейчас; впервые показанный — от места в тике своего танка
-  // и в тике чужих. Снаряд, который в выбранном тике оказался бы в зоне своего танка, рисуется в тике своего танка:
-  // у своего танка картинка и сервер совпадают в каждом кадре.
-  private tickOf(id: number, clock: PictureClock): number {
+  // и в тике чужих (свой — от места в тике своего танка). Снаряд, который в выбранном тике оказался бы в зоне своего
+  // танка, рисуется в тике своего танка: у своего танка картинка и сервер совпадают в каждом кадре. Свой снаряд на
+  // броне — во времени места, как чужой: его время не уходит от времени танка под ним, и, отпущенный «мимо», он
+  // догоняет своё время, а не прыгает, — и в зоне своего танка, когда враг вплотную.
+  private tickOf(id: number, clock: PictureClock, isOwn: boolean): number {
     const previous = this.shown.get(id);
     const drawn = previous === undefined ? null : (previous.drawn ?? this.tracks.at(id, previous.tick));
     const atMine = drawn ?? this.tracks.at(id, clock.myTick) ?? this.tracks.lastAt(id, clock.myTick);
     const atOthers = drawn ?? this.tracks.at(id, clock.othersTick) ?? this.tracks.firstAt(id, clock.othersTick);
     const toMe = clock.me === null || atMine === null ? Infinity : distance(atMine, clock.me);
     const toOther = atOthers === null ? Infinity : nearest(atOthers, clock.others);
-    const target = tickFromWeight(clock, pictureWeight(toMe, toOther));
-    const floor =
-      previous === undefined
-        ? target
-        : previous.tick + PICTURE_MIN_TIME_RATE * Math.max(0, clock.othersTick - previous.othersTick);
-    const tick = Math.min(clock.myTick, Math.max(target, floor));
+    const gap = clock.myTick - clock.othersTick;
+    const drawnTick = previous === undefined ? clock.myTick : previous.tick + (previous.lead ?? 0);
+    const isFlyingOwn = isOwn && atMine !== null && (previous?.hold ?? null) === null;
+    const weight = isFlyingOwn
+      ? ownBulletWeight(this.pathOf(id, drawnTick, atMine, gap), clock.me, clock.others, gap)
+      : pictureWeight(toMe, toOther);
+    const target = tickFromWeight(clock, weight);
+    if (previous === undefined) {
+      return this.atMineOr(id, clock, Math.min(clock.myTick, target));
+    }
+    const othersStep = Math.max(0, clock.othersTick - previous.othersTick);
+    const floor = previous.tick + PICTURE_MIN_TIME_RATE * othersStep;
+    const ceiling = isOwn
+      ? previous.tick + Math.max(0, clock.myTick - previous.myTick) + (PICTURE_CATCH_UP_RATE - 1) * othersStep
+      : Infinity;
+    const tick = Math.min(clock.myTick, ceiling, Math.max(target, floor));
+    const isOffArmor = previous.isHoldOver || previous.isReleased;
+    return isOwn && isOffArmor ? tick : this.atMineOr(id, clock, tick);
+  }
+
+  private atMineOr(id: number, clock: PictureClock, tick: number): number {
     const point = this.tracks.at(id, tick);
     const isAtMine = clock.me !== null && point !== null && distance(point, clock.me) <= PICTURE_NEAR;
     return isAtMine ? clock.myTick : tick;
@@ -469,7 +656,7 @@ export class BulletPicture {
     clock: PictureClock,
     confirmedTick: number,
     previous: ShownTime | undefined,
-  ): Omit<ShownTime, 'tick' | 'othersTick'> {
+  ): Shown {
     const held = previous?.hold ?? null;
     if (held !== null) {
       return this.heldShown(id, tick, clock, confirmedTick, held);
@@ -494,6 +681,7 @@ export class BulletPicture {
         tank: contact.tank,
         offset,
         sinceOthersTick: clock.othersTick,
+        sinceTick: tick,
         heading,
       };
       return this.heldShown(id, tick, clock, confirmedTick, hold);
@@ -521,40 +709,144 @@ export class BulletPicture {
     if (!isNearTank) {
       return Math.max(0, was - PICTURE_MIN_TIME_RATE * step);
     }
-    return Math.min(LEAD_TICKS, was + LEAD_RATE * step);
+    return Math.min(LEAD_TICKS, was + PICTURE_LEAD_RATE * step);
   }
 
   // Стоит на броне, пока картинка у танка не дойдёт до тика гибели снаряда — в том же кадре вспышка попадания, — но
-  // не дольше предела ожидания. Танк едет — снаряд едет на его броне. Сервер решил «мимо» — снаряд летит дальше по
-  // дорожке, как только место в ней не позади брони, и больше не встаёт.
-  private heldShown(
-    id: number,
-    tick: number,
-    clock: PictureClock,
-    confirmedTick: number,
-    hold: Hold,
-  ): Omit<ShownTime, 'tick' | 'othersTick'> {
+  // не дольше предела ожидания. Танк едет — снаряд едет на его броне; танк пропал — пропадает и снаряд. Сервер решил
+  // «мимо» — снаряд уходит с брони по дорожке, как только место в ней не позади брони; дорожка повернула назад, не
+  // пройдя танк (отскок у самой брони), — как только снаряд в ней удаляется от танка.
+  private heldShown(id: number, tick: number, clock: PictureClock, confirmedTick: number, hold: Hold): Shown {
     const target = nearestPoint(hold.tank, clock.others);
     const death = hold.deathTick ?? this.tracks.deathTick(id);
-    const isOver =
-      target === null ||
-      clock.othersTick - hold.sinceOthersTick >= HOLD_MAX_TICKS ||
-      (death !== null && pictureTickAt(clock, target) > death - 1);
-    if (isOver) {
+    if (target === null || distance(target, hold.tank) > HOLD_TANK_REACH) {
       return { drawn: null, hold: null, isHoldOver: true };
     }
+    if (death !== null && pictureTickAt(clock, target) > death - 1) {
+      return { drawn: null, hold: null, isHoldOver: true, overDeath: death };
+    }
     const track = this.tracks.at(id, tick);
-    const isAhead = track !== null && (track.x - hold.x) * hold.heading.x + (track.y - hold.y) * hold.heading.y >= 0;
+    const isAhead = track !== null && alongHeading(track, hold) >= 0;
+    const passedTick = Math.min(clock.myTick, passedTickOf(clock));
     if (death === null && isAhead && this.isPassed(id, clock, confirmedTick, hold, target)) {
-      return { drawn: track, hold: null, isHoldOver: true };
+      const releaseTick = this.releaseTick(id, hold, tick, target, passedTick);
+      const drawn = this.tracks.at(id, releaseTick) ?? track;
+      return { drawn, hold: null, isHoldOver: false, releaseTick };
+    }
+    if (death === null && this.isLeaving(id, clock, confirmedTick, target)) {
+      const leaveTick = this.leaveTick(id, target, Math.max(tick, passedTick));
+      if (tick >= leaveTick) {
+        return { drawn: this.tracks.at(id, leaveTick), hold: null, isHoldOver: false, releaseTick: leaveTick };
+      }
+    }
+    if (clock.othersTick - hold.sinceOthersTick >= HOLD_MAX_TICKS) {
+      return { drawn: null, hold: null, isHoldOver: true };
     }
     const at = { x: target.x + hold.offset.x, y: target.y + hold.offset.y };
     return { drawn: at, hold: { ...hold, ...at, tank: target }, isHoldOver: false };
   }
 
+  // Тик, откуда снаряд уходит с брони: где дорожка, пройдя место на броне, в последний раз выходит из окружности
+  // касания танка target, — снаряд не проходит сквозь нарисованный танк: на картинке это попадание без урона.
+  // Танк, увёзший снаряд вбок, дорожка задевает и после места на броне. passedTick — тик, где дорожка уже за танком:
+  // поиск идёт от него, если в тике снаряда дорожка внутри окружности касания.
+  private releaseTick(id: number, hold: Hold, tick: number, target: Point, passedTick: number): number {
+    const isOutsideAt = (at: number): boolean => {
+      const point = this.tracks.at(id, at);
+      return point !== null && distance(point, target) > HOLD_CONTACT + RELEASE_CLEARANCE;
+    };
+    const crossing = this.crossingTick(id, hold, tick);
+    const latest = Math.max(tick, passedTick);
+    let outside = isOutsideAt(latest) ? latest : passedTick;
+    if (!isOutsideAt(outside)) {
+      return outside;
+    }
+    let inside = outside - RELEASE_SCAN_TICKS;
+    while (inside > crossing && isOutsideAt(inside)) {
+      outside = inside;
+      inside -= RELEASE_SCAN_TICKS;
+    }
+    if (inside <= crossing && isOutsideAt(crossing)) {
+      return crossing;
+    }
+    inside = Math.max(inside, crossing);
+    while (outside - inside > RELEASE_TICK_PRECISION) {
+      const middle = (inside + outside) / 2;
+      if (isOutsideAt(middle)) {
+        outside = middle;
+      } else {
+        inside = middle;
+      }
+    }
+    return outside;
+  }
+
+  // Последний тик не позже tick, где дорожка доходит до места на броне по ходу полёта, а не место дорожки в своём
+  // тике, которое за время на броне ушло вперёд. Поиск идёт назад от tick не дальше тиков, на которые танк отвёз место
+  // на броне назад от касания: до отскока дорожка тоже бывает впереди брони.
+  private crossingTick(id: number, hold: Hold, tick: number): number {
+    const isAheadAt = (at: number): boolean => {
+      const point = this.tracks.at(id, at);
+      return point !== null && alongHeading(point, hold) >= 0;
+    };
+    const touch = this.tracks.at(id, hold.sinceTick);
+    const next = this.tracks.at(id, hold.sinceTick + 1);
+    const step = touch === null || next === null ? 0 : distance(touch, next);
+    const dragged = touch === null || step === 0 ? 0 : Math.max(0, alongHeading(touch, hold)) / step;
+    const lookBack = RELEASE_LOOK_BACK_TICKS + Math.ceil(dragged);
+    const earliest = Math.max(hold.sinceTick - lookBack, this.tracks.firstTick(id) ?? tick);
+    let ahead = tick;
+    let behind = Math.max(earliest, tick - 1);
+    while (behind > earliest && isAheadAt(behind)) {
+      ahead = behind;
+      behind = Math.max(earliest, behind - 1);
+    }
+    if (isAheadAt(behind)) {
+      return behind;
+    }
+    while (ahead - behind > RELEASE_TICK_PRECISION) {
+      const middle = (behind + ahead) / 2;
+      if (isAheadAt(middle)) {
+        ahead = middle;
+      } else {
+        behind = middle;
+      }
+    }
+    return ahead;
+  }
+
+  // Самый ранний тик не позже latest, с которого дорожка вне окружности касания танка target и только удаляется от
+  // него: там снаряд, повернувший у брони назад, с неё уходит.
+  private leaveTick(id: number, target: Point, latest: number): number {
+    const distanceAt = (at: number): number => {
+      const point = this.tracks.at(id, at);
+      return point === null ? -Infinity : distance(point, target);
+    };
+    let leave = latest;
+    let earlier = leave - RELEASE_SCAN_TICKS;
+    while (distanceAt(earlier) > HOLD_CONTACT + RELEASE_CLEARANCE && distanceAt(earlier) < distanceAt(leave)) {
+      leave = earlier;
+      earlier -= RELEASE_SCAN_TICKS;
+    }
+    return leave;
+  }
+
+  // В подтверждённом тике сразу за картинкой танка снаряд жив, вне брони и удаляется от танка.
+  private isLeaving(id: number, clock: PictureClock, confirmedTick: number, target: Point): boolean {
+    const tick = passedTickOf(clock);
+    const point = tick <= confirmedTick ? this.tracks.at(id, tick) : null;
+    const before = this.tracks.at(id, tick - RELEASE_SCAN_TICKS);
+    return (
+      point !== null &&
+      before !== null &&
+      distance(point, target) > HOLD_CONTACT + RELEASE_CLEARANCE &&
+      distance(point, target) > distance(before, target)
+    );
+  }
+
   // В подтверждённом тике сразу за картинкой танка снаряд жив, вне брони и по ходу полёта уже за центром танка.
   private isPassed(id: number, clock: PictureClock, confirmedTick: number, hold: Hold, target: Point): boolean {
-    const tick = Math.ceil(clock.othersTick) + 1;
+    const tick = passedTickOf(clock);
     const point = tick <= confirmedTick ? this.tracks.at(id, tick) : null;
     return (
       point !== null &&
@@ -564,9 +856,37 @@ export class BulletPicture {
   }
 
   private headingOf(id: number, tick: number): Point {
-    const now = this.tracks.ahead(id, tick, Infinity);
-    const next = this.tracks.ahead(id, tick + 1, Infinity);
+    const now = this.tracks.at(id, tick) ?? this.tracks.ahead(id, tick, Infinity);
+    const next = this.tracks.at(id, tick + 1) ?? this.tracks.ahead(id, tick + 1, Infinity);
     return now === null || next === null ? { x: 0, y: 0 } : directionOf(now, next);
+  }
+
+  // Путь снаряда по тикам на окно подлёта вперёд от места start в тике картинки: дорожка, за ней — будущий путь;
+  // снаряд погиб — путь кончается. Снаряд родился позже тика картинки — путь от рождения: свой танк, вернувшись на
+  // поле, догоняет время предсказания, и свой выстрел рождается впереди его тика на картинке.
+  private pathOf(id: number, tick: number, start: Point, gapTicks: number): Point[] {
+    const from = Math.max(tick, this.tracks.firstTick(id) ?? tick);
+    const path = [start];
+    for (let ticks = 1; ticks <= PICTURE_APPROACH_SPAN * gapTicks; ticks++) {
+      const at = from + ticks;
+      const point = at <= this.tracks.lastTick() ? this.tracks.at(id, at) : this.beyondTrack(id, at);
+      if (point === null) {
+        break;
+      }
+      path.push(point);
+    }
+    return path;
+  }
+
+  private beyondTrack(id: number, tick: number): Point | null {
+    if (this.flight.firstTick(id) === null) {
+      return this.tracks.ahead(id, tick, Infinity);
+    }
+    const last = this.flight.lastTick();
+    if (tick <= last) {
+      return this.flight.at(id, tick);
+    }
+    return this.flight.at(id, last) === null ? null : this.flight.ahead(id, tick, Infinity);
   }
 }
 
@@ -598,7 +918,8 @@ export class EventSchedule<E extends Point> {
     this.waiting.push({ event, tick, place, addedAt: now });
   }
 
-  // Пришедшие события по порядку прихода; точка события о танке перенесена на нарисованный танк.
+  // Пришедшие события по порядку прихода; точка события о танке перенесена на нарисованный танк, точка события
+  // в поле сдвинута у своего танка, как снаряд.
   release(clock: PictureClock, drawnTank: (id: number) => Point | null, now: number): DueEvent<E>[] {
     const due: DueEvent<E>[] = [];
     const rest: WaitingEvent<E>[] = [];
@@ -611,7 +932,7 @@ export class EventSchedule<E extends Point> {
         rest.push(item);
         continue;
       }
-      due.push({ event: this.moved(item, drawn), tick: item.tick });
+      due.push({ event: this.moved(item, clock, drawn), tick: item.tick });
     }
     this.waiting = rest;
     return due;
@@ -629,8 +950,11 @@ export class EventSchedule<E extends Point> {
     return pictureTickAt(clock, drawn ?? item.event) > item.tick - 1;
   }
 
-  private moved(item: WaitingEvent<E>, drawn: Point | null): E {
+  private moved(item: WaitingEvent<E>, clock: PictureClock, drawn: Point | null): E {
     const { place, event } = item;
+    if (place.kind === 'point') {
+      return drawnNearOwn(clock, event);
+    }
     if (place.kind !== 'tank' || drawn === null) {
       return event;
     }
@@ -666,23 +990,27 @@ export function eventPlace(
   return { kind: 'point' };
 }
 
-// latestTick — тик последнего пришедшего снимка: досчитанное после него сервер ещё не подтвердил.
+// latestTick — тик последнего пришедшего снимка: досчитанное после него сервер ещё не подтвердил. me — нарисованный
+// свой танк, ownShift — его смещение от предсказанного.
 export interface PictureDebug {
   myTick: number;
   othersTick: number;
   latestTick: number;
   me: Point | null;
+  ownShift: Point;
   others: Point[];
   bullets: PictureBullet[];
 }
 
 // Нарисованный кадр для сквозной сверки с сервером.
 export function pictureDebug(clock: PictureClock, latestTick: number, bullets: readonly PictureBullet[]): PictureDebug {
+  const shift = clock.ownShift ?? { x: 0, y: 0 };
   return {
     myTick: clock.myTick,
     othersTick: clock.othersTick,
     latestTick,
-    me: clock.me === null ? null : { x: clock.me.x, y: clock.me.y },
+    me: clock.me === null ? null : { x: clock.me.x + shift.x, y: clock.me.y + shift.y },
+    ownShift: { x: shift.x, y: shift.y },
     others: clock.others.map((other) => ({ x: other.x, y: other.y })),
     bullets: bullets.map((bullet) => ({ ...bullet })),
   };

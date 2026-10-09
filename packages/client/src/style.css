@@ -898,9 +898,11 @@ body:has(.privacy-note:not([hidden])) .home {
 }
 
 .home {
+  --home-top: clamp(16px, 6vh, 64px);
+  position: relative;
   max-width: 480px;
   margin: 0 auto;
-  padding: clamp(16px, 6vh, 64px) 20px 32px;
+  padding: var(--home-top) 20px 32px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -2626,8 +2628,9 @@ body.watch #stage {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* Цель касания — не меньше 44 точек: кнопки, скорости, списки бойцов. */
-.watch-icon {
+/* Цель касания — не меньше 44 точек: кнопки, скорости, списки бойцов. Кнопка звука любого экрана — того же вида. */
+.watch-icon,
+.sound-toggle {
   flex: none;
   display: grid;
   place-items: center;
@@ -2647,14 +2650,16 @@ body.watch #stage {
     transform 0.12s ease-out;
 }
 
-.watch-icon svg {
+.watch-icon svg,
+.sound-toggle svg {
   grid-area: 1 / 1;
   width: 20px;
   height: 20px;
   fill: currentColor;
 }
 
-.watch-icon .watch-icon-stroke {
+.watch-icon .watch-icon-stroke,
+.sound-toggle .sound-icon-stroke {
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
@@ -2666,11 +2671,19 @@ body.watch #stage {
   border-color: rgba(232, 130, 90, 0.8);
 }
 
-.watch-icon:active {
+@media (hover: hover) {
+  .sound-toggle:hover {
+    border-color: rgba(232, 130, 90, 0.8);
+  }
+}
+
+.watch-icon:active,
+.sound-toggle:active {
   transform: scale(0.92);
 }
 
 .watch-icon:focus-visible,
+.sound-toggle:focus-visible,
 .watch-speed:focus-visible {
   outline: 2px solid #e8825a;
   outline-offset: 2px;
@@ -2692,17 +2705,38 @@ body.watch #stage {
   border-color: #e8825a;
 }
 
-.watch-sound .watch-icon-cross,
-.watch-sound.is-muted .watch-icon-waves {
+/* Звук выключен: динамик с крестиком вместо волн, значок приглушён. */
+.sound-toggle .sound-icon-cross,
+.sound-toggle.is-muted .sound-icon-waves {
   display: none;
 }
 
-.watch-sound.is-muted .watch-icon-cross {
+.sound-toggle.is-muted .sound-icon-cross {
   display: block;
 }
 
-.watch-sound.is-muted {
+.sound-toggle.is-muted {
   color: rgba(244, 241, 232, 0.5);
+}
+
+/* В бою — у правого края над шестерёнкой, её размера и фона, ниже «АВТО»: вдали от места большого пальца.
+   Выше интерфейса толпы, ниже панели настроек: открытая панель её накрывает. */
+.battle-sound {
+  position: fixed;
+  right: 10px;
+  bottom: 58px;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  background: rgba(0, 0, 0, 0.45);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* Главная: справа от заголовка, по центру его строки. */
+.home-sound {
+  position: absolute;
+  top: calc(var(--home-top) + 2px);
+  right: 20px;
 }
 
 .watch-pick {

@@ -4,6 +4,37 @@ import { decode, type Message } from '@tanks/shared/protocol';
 export interface NetProxyOptions {
   // Задержка каждого куска данных в каждую сторону, мс.
   delayMs?: number;
+  // Куски после задержки копятся и уходят разом на границах сетки с этим шагом, мс, — как сеть телефона,
+  // склеивающая пакеты в пачки.
+  burstMs?: number;
+  // Неровные пачки: шаг до каждой следующей границы сетки — случайный от `burstMs` до `burstMaxMs`, мс.
+  burstMaxMs?: number;
+  // Порт и адрес прослушивания; по умолчанию — случайный свободный порт только на этой машине.
+  port?: number;
+  host?: string;
+}
+
+type NetShapeOptions = Pick<NetProxyOptions, 'delayMs' | 'burstMs' | 'burstMaxMs'>;
+
+interface NetShape {
+  delayMs: number;
+  burstMs: number;
+  burstMaxMs: number;
+}
+
+interface HeldChunk {
+  dueAt: number;
+  chunk: Buffer;
+}
+
+// Очередь одного направления: срок следующего куска не раньше предыдущего (`lastDueAt`), поэтому порядок кусков
+// сохраняется и при смене сети на ходу. `edge` — граница сетки пачек, только растёт; null — сетка начнётся заново
+// с шагом новой сети.
+interface Lane {
+  held: HeldChunk[];
+  timer: NodeJS.Timeout | null;
+  edge: number | null;
+  lastDueAt: number;
 }
 
 // Сообщение сервера из соединения игры и момент, когда посредник его получил.
@@ -12,6 +43,8 @@ export interface TappedMessage {
   at: number;
 }
 
+const LOOPBACK = '127.0.0.1';
+const ANY_FREE_PORT = 0;
 const HEADER_END = '\r\n\r\n';
 const SWITCHING_PROTOCOLS = 'HTTP/1.1 101';
 const OPCODE_BINARY = 0x2;
@@ -85,26 +118,34 @@ class FrameTap {
 // TCP-посредник между браузером и сервером: пересылает и страницу, и соединение игры. Страница открывается через
 // его порт — иначе соединение игры пойдёт мимо. Разрыв закрывает обе стороны, как пропавшая сеть; молчание —
 // открытые соединения перестают пересылать, не закрываясь, и уже ждущие задержки куски не доходят. Пока `isRefusing` — новые соединения сразу закрываются,
-// как недоступная сеть. Задержка держит каждый кусок данных заданное время, порядок сохраняется; сообщения сервера
-// в соединении игры копятся в `serverMessages`.
+// как недоступная сеть. Задержка держит каждый кусок данных заданное время, порядок сохраняется; пачки — куски
+// после задержки уходят разом на границе сетки `burstMs`, у неровных пачек шаг сетки случайный до `burstMaxMs`.
+// `setShape` меняет сеть на ходу: следующие куски идут по новым правилам, уже ждущие — по старым.
+// Сообщения сервера в соединении игры копятся в `serverMessages`.
 export class NetProxy {
   isRefusing = false;
   readonly serverMessages: TappedMessage[] = [];
   private readonly sockets = new Set<Socket>();
   private readonly muted = new Set<Socket>();
-  private readonly delayed = new Set<NodeJS.Timeout>();
+  private readonly lanes = new Map<Socket, Lane>();
   private readonly accepted = new Set<Socket>();
 
   private constructor(
     private readonly server: Server,
     readonly port: number,
-    private readonly delayMs: number,
+    private shape: NetShape,
   ) {}
 
   static async start(targetPort: number, options: NetProxyOptions = {}): Promise<NetProxy> {
     const server = createServer();
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const proxy = new NetProxy(server, (server.address() as AddressInfo).port, options.delayMs ?? 0);
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(options.port ?? ANY_FREE_PORT, options.host ?? LOOPBACK, () => {
+        server.off('error', reject);
+        resolve();
+      });
+    });
+    const proxy = new NetProxy(server, (server.address() as AddressInfo).port, netShape(options));
     server.on('connection', (client) => {
       proxy.accepted.add(client);
       client.on('close', () => proxy.accepted.delete(client));
@@ -114,7 +155,14 @@ export class NetProxy {
   }
 
   get baseUrl(): string {
-    return `http://127.0.0.1:${String(this.port)}`;
+    return `http://${LOOPBACK}:${String(this.port)}`;
+  }
+
+  setShape(options: NetShapeOptions): void {
+    this.shape = netShape(options);
+    for (const lane of this.lanes.values()) {
+      lane.edge = null;
+    }
   }
 
   cut(): void {
@@ -156,7 +204,7 @@ export class NetProxy {
       client.destroy();
       return;
     }
-    const upstream = connect(targetPort, '127.0.0.1');
+    const upstream = connect(targetPort, LOOPBACK);
     const tap = new FrameTap((message) => {
       this.serverMessages.push({ message, at: performance.now() });
     });
@@ -174,29 +222,87 @@ export class NetProxy {
       from.on('error', () => to.destroy());
       from.on('close', () => {
         this.sockets.delete(from);
+        this.dropLane(from);
         to.destroy();
       });
     }
   }
 
   private forward(to: Socket, chunk: Buffer): void {
-    if (this.delayMs === 0) {
+    const { delayMs, burstMs } = this.shape;
+    const isHolding = (this.lanes.get(to)?.held.length ?? 0) > 0;
+    if (delayMs === 0 && burstMs === 0 && !isHolding) {
       to.write(chunk);
       return;
     }
-    const timer = setTimeout(() => {
-      this.delayed.delete(timer);
-      if (!to.destroyed) {
-        to.write(chunk);
+    this.hold(to, chunk);
+  }
+
+  private hold(to: Socket, chunk: Buffer): void {
+    const { delayMs, burstMs, burstMaxMs } = this.shape;
+    let lane = this.lanes.get(to);
+    if (lane === undefined) {
+      lane = { held: [], timer: null, edge: null, lastDueAt: 0 };
+      this.lanes.set(to, lane);
+    }
+    let dueAt = Math.max(performance.now() + delayMs, lane.lastDueAt);
+    if (burstMs > 0) {
+      let edge = lane.edge ?? Math.ceil(dueAt / burstMs) * burstMs;
+      while (edge < dueAt) {
+        edge += burstMs + Math.random() * (burstMaxMs - burstMs);
       }
-    }, this.delayMs);
-    this.delayed.add(timer);
+      lane.edge = edge;
+      dueAt = edge;
+    }
+    lane.lastDueAt = dueAt;
+    lane.held.push({ dueAt, chunk });
+    this.scheduleLane(to, lane);
+  }
+
+  private scheduleLane(to: Socket, lane: Lane): void {
+    const [next] = lane.held;
+    if (lane.timer !== null || next === undefined) {
+      return;
+    }
+    lane.timer = setTimeout(
+      () => {
+        lane.timer = null;
+        this.releaseLane(to, lane);
+      },
+      Math.max(0, next.dueAt - performance.now()),
+    );
+  }
+
+  private releaseLane(to: Socket, lane: Lane): void {
+    const now = performance.now();
+    const dueCount = lane.held.findIndex((held) => held.dueAt > now);
+    const due = lane.held.splice(0, dueCount < 0 ? lane.held.length : dueCount);
+    if (!to.destroyed && due.length > 0) {
+      to.write(Buffer.concat(due.map((held) => held.chunk)));
+    }
+    this.scheduleLane(to, lane);
+  }
+
+  private dropLane(socket: Socket): void {
+    const timer = this.lanes.get(socket)?.timer ?? null;
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+    this.lanes.delete(socket);
   }
 
   private dropDelayed(): void {
-    for (const timer of this.delayed) {
-      clearTimeout(timer);
+    for (const socket of [...this.lanes.keys()]) {
+      this.dropLane(socket);
     }
-    this.delayed.clear();
   }
+}
+
+function netShape(options: NetShapeOptions): NetShape {
+  const burstMs = options.burstMs ?? 0;
+  return {
+    delayMs: options.delayMs ?? 0,
+    burstMs,
+    burstMaxMs: Math.max(burstMs, options.burstMaxMs ?? burstMs),
+  };
 }

@@ -9,9 +9,10 @@ import {
   worldDigest,
   type Action,
   type FfaMatch,
+  type RoundRules,
   type Stats,
 } from '../engine/index.js';
-import { quantizeAction } from './codec.js';
+import { formatJournalRules, quantizeAction } from './codec.js';
 import {
   FFA_JOURNAL,
   FFA_LEAVE_IDLE,
@@ -38,6 +39,7 @@ const ROSTER: FfaJournalPlayer[] = [
 ];
 const LATE_STATS: Stats = { armor: 4, engine: 4, gun: 1, reload: 1 };
 const FIGHT_START_TICK = 3;
+const RULES: RoundRules = { wallSlidePercent: 30, shotLeadTicks: 0, shotInheritPercent: 0 };
 const COUNTDOWN_LEAVE = { tick: 2, id: 6 };
 const SILENT = { from: 120, to: 160, id: 3 };
 
@@ -48,6 +50,7 @@ interface Leave {
 }
 
 interface Scenario {
+  rules: RoundRules;
   roster: FfaJournalPlayer[];
   seconds: number;
   joins: { tick: number; player: FfaJournalPlayer }[];
@@ -57,6 +60,7 @@ interface Scenario {
 }
 
 const PLAIN: Scenario = {
+  rules: RULES,
   roster: ROSTER,
   seconds: MATCH_SECONDS,
   joins: [{ tick: 50, player: { id: 7, stats: LATE_STATS } }],
@@ -69,6 +73,7 @@ const PLAIN: Scenario = {
 
 // Чётные номера — боты; бот входит посреди боя и уступает место, в финал входят человек и бот.
 const WITH_BOTS: Scenario = {
+  rules: RULES,
   roster: ROSTER.map((entry) => ({ ...entry, isBot: entry.id % 2 === 0 })),
   seconds: 60,
   joins: [{ tick: 50, player: { id: 8, stats: LATE_STATS, isBot: true } }],
@@ -146,7 +151,7 @@ function writeMatch(index: number, firstTick: number, endTick: number | null, sc
     map,
     roster.map((entry) => ({ ...entry, name: `#${String(entry.id)}` })),
     SEED,
-    { wallSlidePercent: 30 },
+    scenario.rules,
     scenario.seconds,
   );
   const present = new Set(roster.map((entry) => entry.id));
@@ -277,6 +282,34 @@ describe('журнал боя толпы', () => {
     const unmarked = written.lines.map((text) => text.replace(/:b(?=,|$)/g, '').replace(/ bot=1$/, ''));
     const [blind] = replayFfaJournal([GAME_START, ...unmarked]).matches;
     expect(blind?.mismatches.length).toBeGreaterThan(0);
+  });
+
+  it('матч с догоном 2 прогоняется по полю lead строки game start; без поля — расходится', () => {
+    const rules: RoundRules = { wallSlidePercent: 30, shotLeadTicks: 2, shotInheritPercent: 0 };
+    const written = writeMatch(1, 10, null, { ...WITH_BOTS, rules });
+    const leadStart = line(0, `${FFA_JOURNAL.gameStart} mode=ffa size=10 ${formatJournalRules(rules)}`);
+    expect(leadStart).toContain('rules=30 lead=2');
+    const [result] = replayFfaJournal([leadStart, ...written.lines]).matches;
+    expect(result?.isComplete).toBe(true);
+    expect(result?.mismatches).toEqual([]);
+    expect(result?.sums).toBe(Math.ceil(written.match.world.tick / TICK_RATE));
+
+    const [oldFormat] = replayFfaJournal([GAME_START, ...written.lines]).matches;
+    expect(oldFormat?.mismatches.length).toBeGreaterThan(0);
+  });
+
+  it('матч со снарядом со скоростью танка прогоняется по полю inherit строки game start; без поля — расходится', () => {
+    const rules: RoundRules = { wallSlidePercent: 30, shotLeadTicks: 0, shotInheritPercent: 100 };
+    const written = writeMatch(1, 10, null, { ...WITH_BOTS, rules });
+    const inheritStart = line(0, `${FFA_JOURNAL.gameStart} mode=ffa size=10 ${formatJournalRules(rules)}`);
+    expect(inheritStart).toContain('rules=30 lead=0 inherit=100');
+    const [result] = replayFfaJournal([inheritStart, ...written.lines]).matches;
+    expect(result?.isComplete).toBe(true);
+    expect(result?.mismatches).toEqual([]);
+    expect(result?.sums).toBe(Math.ceil(written.match.world.tick / TICK_RATE));
+
+    const [oldFormat] = replayFfaJournal([GAME_START, ...written.lines]).matches;
+    expect(oldFormat?.mismatches.length).toBeGreaterThan(0);
   });
 
   it('прогон отдаёт каждый шаг: тики игры подряд, события шага', () => {

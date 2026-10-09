@@ -16,6 +16,8 @@ import { showCameraLab } from './lab.js';
 import { defaultSettings, SettingsStore } from './settings.js';
 import { SettingsPanel } from './settingsPanel.js';
 import { mountPrivacyNote } from './privacyNote.js';
+import { deviceSound } from './soundSetting.js';
+import { mountSoundToggle } from './soundToggle.js';
 import { RIVALS, rivalBadge, rivalInfo, rivalOf, rivalRoomCode, type Rival } from './rival.js';
 import { mountStatsPicker, statsLeft } from './statsPicker.js';
 import { Telemetry } from './telemetry.js';
@@ -126,6 +128,7 @@ function showHome(): void {
   nickname.value = localStorage.getItem(NICKNAME_KEY) ?? '';
   startVisit(localStorage, nickname.value, clientInfo);
   mountPrivacyNote(byId('privacy-note', HTMLElement), byId('privacy-note-close', HTMLButtonElement), localStorage);
+  mountSoundToggle(byId('home-sound', HTMLButtonElement), deviceSound());
   // Ник на устройстве сразу: главная перезагружается сама, когда выходит новая сборка.
   nickname.addEventListener('input', () => {
     localStorage.setItem(NICKNAME_KEY, nickname.value);
@@ -283,6 +286,7 @@ function startDuel(roomCode: string): void {
   const settingsToggle = byId('settings-toggle', HTMLButtonElement);
   settingsToggle.hidden = false;
   byId('menu', HTMLAnchorElement).hidden = false;
+  mountSoundToggle(byId('sound-toggle', HTMLButtonElement), deviceSound());
   const panel = new SettingsPanel(byId('settings', HTMLElement), settingsToggle, store, {
     isTouchDevice: hasTouch,
     hasCameraGroup: true,
@@ -338,6 +342,7 @@ async function startFfa(route: FfaRoute): Promise<void> {
   settingsToggle.hidden = false;
   const menu = byId('menu', HTMLAnchorElement);
   menu.hidden = false;
+  mountSoundToggle(byId('sound-toggle', HTMLButtonElement), deviceSound());
   menu.addEventListener('click', (event) => {
     event.preventDefault();
     game.leave();
@@ -385,6 +390,7 @@ async function startWatch(): Promise<void> {
     },
     localStorage,
     watchModule.browserWatchDeps(canvas),
+    deviceSound(),
   );
   bindRotateHint(byId('rotate', HTMLElement));
   Object.assign(window, { tanksGame: game });
@@ -404,6 +410,10 @@ if (duelMatch?.[1] !== undefined) {
   showCameraLab(byId('lab', HTMLElement));
 } else if (labKind === 'fx') {
   showFxLab(byId('lab', HTMLElement));
+} else if (labKind === 'lag') {
+  void import('./lagLab/lagLab.js').then(({ showLagLab }) => {
+    showLagLab(byId('lab', HTMLElement));
+  });
 } else if (labKind === 'frames' && query.get('set') === 'ffa') {
   void import('./frameStand/ffaStand.js').then(({ showFfaFrameStand }) => {
     showFfaFrameStand(byId('lab', HTMLElement));

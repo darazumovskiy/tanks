@@ -5,7 +5,7 @@ import { connect as connectTcp } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { TICK_RATE } from '@tanks/shared/engine';
+import { DEFAULT_RULES, DEFAULT_STATS, deriveStats, DT, TICK_RATE } from '@tanks/shared/engine';
 import {
   botRoomCode,
   FfaPhase,
@@ -271,9 +271,9 @@ describe('переключатели общей игры из окружения
   // С бюджетом 1 мс за проход решает один бот из шести, остальные пропускают; с бюджетом 33 мс — почти никто.
   const TIGHT_SKIP_LEAD = 2;
 
-  async function restart(ffaEnv: Record<string, string>): Promise<void> {
+  async function restart(env: Record<string, string>): Promise<void> {
     await app.close();
-    app = createApp({ ffaEnv, tickMs: TICK_MS, botClock: threadCpuMs });
+    app = createApp({ env, tickMs: TICK_MS, botClock: threadCpuMs });
     port = await app.listen(0, '127.0.0.1');
   }
 
@@ -339,8 +339,8 @@ describe('переключатели общей игры из окружения
 
   // Медиана прохода хода ботов и пропуски решений на тик за полсекунды боя ffa10 с шестью ботами. Проход меряется
   // процессорным временем потока, пропуски — от бюджета, поэтому посторонняя нагрузка машины на них не влияет.
-  async function botPass(ffaEnv: Record<string, string>): Promise<{ medianMs: number; skipsPerTick: number }> {
-    await restart({ FFA_LOBBY_WAIT_SECONDS: '1', ...ffaEnv });
+  async function botPass(env: Record<string, string>): Promise<{ medianMs: number; skipsPerTick: number }> {
+    await restart({ FFA_LOBBY_WAIT_SECONDS: '1', ...env });
     const client = await connect();
     client.join('ffa10');
     await stateOf(client, FfaPhase.Fight);
@@ -385,20 +385,20 @@ describe('переключатели общей игры из окружения
     ['FFA_BOT_SLOWDOWN', 'быстро'],
     ['FFA_BOT_SLOWDOWN', '101'],
   ])('%s=«%s» — createApp бросает ошибку с именем переменной', (name, value) => {
-    expect(() => createApp({ ffaEnv: { [name]: value } })).toThrow(name);
+    expect(() => createApp({ env: { [name]: value } })).toThrow(name);
   });
 
   it.each([
     [{ FFA_IDLE_WARN_SECONDS: '25' }],
     [{ FFA_IDLE_KICK_SECONDS: '10' }],
     [{ FFA_IDLE_WARN_SECONDS: '3', FFA_IDLE_KICK_SECONDS: '3' }],
-  ])('предупреждение не раньше выкидывания (%o) — ошибка с именами переменных', (ffaEnv) => {
-    expect(() => createApp({ ffaEnv })).toThrow(/FFA_IDLE_WARN_SECONDS.*FFA_IDLE_KICK_SECONDS/);
+  ])('предупреждение не раньше выкидывания (%o) — ошибка с именами переменных', (env) => {
+    expect(() => createApp({ env })).toThrow(/FFA_IDLE_WARN_SECONDS.*FFA_IDLE_KICK_SECONDS/);
   });
 
   it('граничные значения принимаются: минимум 10, длительность 2184 с, бюджет ботов 33 мс, замедление 100', async () => {
     await createApp({
-      ffaEnv: { FFA_MINIMUM: '10', FFA_MATCH_SECONDS: '2184', FFA_BOT_BUDGET_MS: '33', FFA_BOT_SLOWDOWN: '100' },
+      env: { FFA_MINIMUM: '10', FFA_MATCH_SECONDS: '2184', FFA_BOT_BUDGET_MS: '33', FFA_BOT_SLOWDOWN: '100' },
     }).close();
   });
 });
@@ -423,7 +423,7 @@ describe('вход в комнату', () => {
     expect(start.tanks[1].nickname).toBe('Боб');
     expect(start.score).toEqual([0, 0]);
     expect(start.countdownTicks).toBe(FAST_ROOM.countdownTicks);
-    expect(start.rules).toEqual({ wallSlidePercent: 0 });
+    expect(start.rules).toEqual({ wallSlidePercent: 0, shotLeadTicks: 0, shotInheritPercent: 0 });
     expect(app.stats().rooms).toBe(1);
   });
 
@@ -558,7 +558,7 @@ describe('вход в комнату', () => {
     expect((await c.nextOfType(MessageType.Error)).code).toBe(ErrorCode.BadMessage);
 
     const d = await connect();
-    d.sendRaw(new Uint8Array([MessageType.Welcome, 0, 0]));
+    d.sendRaw(new Uint8Array([MessageType.Welcome, 0, 0, 0]));
     expect((await d.nextOfType(MessageType.Error)).code).toBe(ErrorCode.BadMessage);
   });
 
@@ -673,7 +673,7 @@ describe('журнал игры', () => {
       expect(line).toMatch(LINE);
     }
     const text = lines.join('\n');
-    expect(text).toContain(`S gt=0 tc=00:00 game start room=srvlog p0=Алиса p1=Боб rules=0`);
+    expect(text).toContain(`S gt=0 tc=00:00 game start room=srvlog p0=Алиса p1=Боб rules=0 lead=0 inherit=0`);
     expect(text).toContain('round start idx=0 map=0 score=0:0');
     expect(text).toMatch(/tick rt=\d+ ph=c late=\d+\.\d a0=0\.00,0\.00,0\.00,0 ack0=0 in0=0 sil0=\d p0=140\.0,450\.0/);
     expect(text).toMatch(/tick rt=\d+ ph=f .*a0=1\.00,0\.00,0\.00,1 ack0=1 in0=1 /);
@@ -708,13 +708,34 @@ describe('журнал игры', () => {
 
   it('правила процесса уходят в RoundStart и в строку game start', async () => {
     await app.close();
-    app = createApp({ logDir, rules: { wallSlidePercent: 50 }, room: FAST_ROOM, tickMs: TICK_MS });
+    app = createApp({ logDir, rules: { ...DEFAULT_RULES, wallSlidePercent: 50 }, room: FAST_ROOM, tickMs: TICK_MS });
     port = await app.listen(0, '127.0.0.1');
     const [a] = await joinedPair('rules');
-    expect(lastRoundStart.rules).toEqual({ wallSlidePercent: 50 });
+    expect(lastRoundStart.rules).toEqual({ wallSlidePercent: 50, shotLeadTicks: 0, shotInheritPercent: 0 });
     await snapshotAfterCountdown(a);
     await app.close();
-    expect(logLines(lastRoundStart.gameId).join('\n')).toContain('game start room=rules p0=Алиса p1=Боб rules=50');
+    expect(logLines(lastRoundStart.gameId).join('\n')).toContain(
+      'game start room=rules p0=Алиса p1=Боб rules=50 lead=0 inherit=0',
+    );
+  });
+
+  it('SHOT_LEAD_TICKS ставит догон поверх правил процесса: RoundStart и строка game start', async () => {
+    await app.close();
+    app = createApp({
+      logDir,
+      rules: { ...DEFAULT_RULES, wallSlidePercent: 50 },
+      env: { SHOT_LEAD_TICKS: '2' },
+      room: FAST_ROOM,
+      tickMs: TICK_MS,
+    });
+    port = await app.listen(0, '127.0.0.1');
+    const [a] = await joinedPair('leadrules');
+    expect(lastRoundStart.rules).toEqual({ wallSlidePercent: 50, shotLeadTicks: 2, shotInheritPercent: 0 });
+    await snapshotAfterCountdown(a);
+    await app.close();
+    expect(logLines(lastRoundStart.gameId).join('\n')).toContain(
+      'game start room=leadrules p0=Алиса p1=Боб rules=50 lead=2 inherit=0',
+    );
   });
 
   it('отвергает недопустимый ключ или источник, слишком большое тело и не-POST', async () => {
@@ -819,5 +840,218 @@ describe('бой', () => {
     a.input({ throttle: 1 });
     a.send({ type: MessageType.Ping, clientTime: 1 });
     await expect(a.next(200)).rejects.toThrow();
+  });
+});
+
+describe('догон снаряда', () => {
+  const WAIT_MS = 10_000;
+  const LEAD_TICKS = 2;
+  // Снимок после тика выстрела: обычный снаряд прошёл один шаг, догнанный — ещё LEAD_TICKS.
+  const PLAIN_AGE = DT;
+  const LEAD_AGE = (LEAD_TICKS + 1) * DT;
+  let logDir: string;
+
+  beforeEach(async () => {
+    await app.close();
+    logDir = mkdtempSync(join(tmpdir(), 'tanks-lead-'));
+  });
+
+  afterEach(async () => {
+    await app.close();
+    rmSync(logDir, { recursive: true, force: true });
+  });
+
+  async function start(env: Record<string, string>): Promise<void> {
+    app = createApp({ logDir, env, room: FAST_ROOM, random: seededRandom(42), tickMs: TICK_MS });
+    port = await app.listen(0, '127.0.0.1');
+  }
+
+  function gameLog(gameId: string): string {
+    return readFileSync(join(logDir, `${gameId}.log`), 'utf8');
+  }
+
+  it.each([['-1'], ['7'], ['1.5'], ['два']])(
+    'SHOT_LEAD_TICKS=«%s» — createApp бросает ошибку с именем переменной',
+    (value) => {
+      expect(() => createApp({ env: { SHOT_LEAD_TICKS: value } })).toThrow('SHOT_LEAD_TICKS');
+    },
+  );
+
+  it.each([
+    ['', 0],
+    ['0', 0],
+    ['6', 6],
+  ])('SHOT_LEAD_TICKS=«%s» — догон %i в RoundStart', async (value, expected) => {
+    await start({ SHOT_LEAD_TICKS: value });
+    const human = await connect();
+    human.join(botRoomCode(1, 'lead'), 'Дима');
+    expect((await human.nextOfType(MessageType.RoundStart)).rules.shotLeadTicks).toBe(expected);
+  });
+
+  it('дуэль с двойником при догоне 2: снаряд человека рождается на два тика дальше, снаряд двойника — нет', async () => {
+    await start({ SHOT_LEAD_TICKS: String(LEAD_TICKS) });
+    const human = await connect();
+    human.join(twinRoomCode('lead'), 'Дима');
+    const roundStart = await human.nextOfType(MessageType.RoundStart);
+    expect(roundStart.rules).toEqual({ wallSlidePercent: 0, shotLeadTicks: LEAD_TICKS, shotInheritPercent: 0 });
+    const firstAge = new Map<number, number>();
+    const seen = new Set<number>();
+    for (let i = 0; i < TWIN_WATCH_SNAPSHOTS && firstAge.size < 2; i++) {
+      const snapshot = await human.nextOfType(MessageType.Snapshot);
+      human.input({ isFiring: true });
+      for (const bullet of snapshot.bullets) {
+        if (!seen.has(bullet.id) && !firstAge.has(bullet.owner)) {
+          firstAge.set(bullet.owner, bullet.age);
+        }
+        seen.add(bullet.id);
+      }
+    }
+    expect(firstAge.get(1)).toBeCloseTo(LEAD_AGE, 9);
+    expect(firstAge.get(0)).toBeCloseTo(PLAIN_AGE, 9);
+    await app.close();
+    expect(gameLog(roundStart.gameId)).toContain(`p1=Дима rules=0 lead=${String(LEAD_TICKS)} inherit=0`);
+  });
+
+  it('бой толпы при догоне 2: правило в FfaWelcome и game start; снаряд человека дальше, снаряд бота — нет', async () => {
+    await start({
+      SHOT_LEAD_TICKS: String(LEAD_TICKS),
+      FFA_SERVER_BOTS: '0',
+      FFA_MINIMUM: '2',
+      FFA_LOBBY_WAIT_SECONDS: '1',
+    });
+    const human = await connect();
+    human.join('ffa10', 'Дима');
+    const welcome = await human.nextOfType(MessageType.FfaWelcome);
+    expect(welcome.rules).toEqual({ wallSlidePercent: 0, shotLeadTicks: LEAD_TICKS, shotInheritPercent: 0 });
+    const bot = await connect();
+    bot.join('ffa10', 'Бот', undefined, undefined, '', true);
+    const botId = (await bot.nextOfType(MessageType.FfaWelcome)).playerId;
+    const firstAge = new Map<number, number>();
+    const deadline = Date.now() + WAIT_MS;
+    while (firstAge.size < 2 && Date.now() < deadline) {
+      const snapshot = await human.nextOfType(MessageType.FfaSnapshot, WAIT_MS);
+      human.input({ isFiring: true });
+      for (const message of bot.takeQueued()) {
+        if (message.type === MessageType.FfaSnapshot) {
+          bot.input({ isFiring: true });
+        }
+      }
+      for (const birth of snapshot.births) {
+        if (!firstAge.has(birth.owner)) {
+          firstAge.set(birth.owner, birth.age);
+        }
+      }
+    }
+    expect(firstAge.get(welcome.playerId)).toBeCloseTo(LEAD_AGE, 9);
+    expect(firstAge.get(botId)).toBeCloseTo(PLAIN_AGE, 9);
+    await app.close();
+    expect(gameLog(welcome.gameId)).toContain(
+      `game start mode=ffa size=10 rules=0 lead=${String(LEAD_TICKS)} inherit=0`,
+    );
+  });
+});
+
+describe('снаряд со скоростью танка', () => {
+  const INHERIT_PERCENT = 100;
+  const BULLET_SPEED = deriveStats(DEFAULT_STATS).bulletSpeed;
+  // Сколько снимков газовать до выстрела: танк успевает разогнаться.
+  const GAS_SNAPSHOTS = 20;
+  let logDir: string;
+
+  beforeEach(async () => {
+    await app.close();
+    logDir = mkdtempSync(join(tmpdir(), 'tanks-inherit-'));
+  });
+
+  afterEach(async () => {
+    await app.close();
+    rmSync(logDir, { recursive: true, force: true });
+  });
+
+  async function start(env: Record<string, string>): Promise<void> {
+    app = createApp({ logDir, env, room: FAST_ROOM, random: seededRandom(42), tickMs: TICK_MS });
+    port = await app.listen(0, '127.0.0.1');
+  }
+
+  it.each([['-1'], ['101'], ['1.5'], ['сто']])(
+    'SHOT_INHERIT_PERCENT=«%s» — createApp бросает ошибку с именем переменной',
+    (value) => {
+      expect(() => createApp({ env: { SHOT_INHERIT_PERCENT: value } })).toThrow('SHOT_INHERIT_PERCENT');
+    },
+  );
+
+  it.each([
+    ['', 0],
+    ['0', 0],
+    ['50', 50],
+  ])('SHOT_INHERIT_PERCENT=«%s» — наследование %i в RoundStart', async (value, expected) => {
+    await start({ SHOT_INHERIT_PERCENT: value });
+    const human = await connect();
+    human.join(botRoomCode(1, 'inhr'), 'Дима');
+    expect((await human.nextOfType(MessageType.RoundStart)).rules.shotInheritPercent).toBe(expected);
+  });
+
+  it('при 100 снаряд едущего человека получает скорость танка; правило в RoundStart и game start', async () => {
+    await start({ SHOT_INHERIT_PERCENT: String(INHERIT_PERCENT) });
+    const human = await connect();
+    human.join(botRoomCode(1, 'inhr'), 'Дима');
+    const roundStart = await human.nextOfType(MessageType.RoundStart);
+    expect(roundStart.rules).toEqual({ wallSlidePercent: 0, shotLeadTicks: 0, shotInheritPercent: INHERIT_PERCENT });
+    const mySide = 1;
+    let gasLeft = GAS_SNAPSHOTS;
+    let carried: { vx: number; vy: number; expectedVx: number; expectedVy: number } | null = null;
+    for (let i = 0; i < TWIN_WATCH_SNAPSHOTS && carried === null; i++) {
+      const snapshot = await human.nextOfType(MessageType.Snapshot);
+      const me = snapshot.tanks[mySide];
+      const born = snapshot.bullets.find((bullet) => bullet.owner === mySide);
+      if (born !== undefined) {
+        carried = {
+          vx: born.vx,
+          vy: born.vy,
+          expectedVx: Math.cos(me.turret) * BULLET_SPEED + Math.cos(me.heading) * me.speed,
+          expectedVy: Math.sin(me.turret) * BULLET_SPEED + Math.sin(me.heading) * me.speed,
+        };
+      }
+      const isMoving = snapshot.tick > roundStart.countdownTicks;
+      gasLeft -= isMoving ? 1 : 0;
+      human.input({ throttle: 1, turretTurn: 0.5, isFiring: gasLeft <= 0 });
+    }
+    expect(carried).not.toBeNull();
+    expect(carried?.vx).toBeCloseTo(carried?.expectedVx ?? NaN, 6);
+    expect(carried?.vy).toBeCloseTo(carried?.expectedVy ?? NaN, 6);
+    expect(Math.hypot(carried?.vx ?? 0, carried?.vy ?? 0)).not.toBeCloseTo(BULLET_SPEED, 0);
+    await app.close();
+    expect(readFileSync(join(logDir, `${roundStart.gameId}.log`), 'utf8')).toContain(
+      `p1=Дима rules=0 lead=0 inherit=${String(INHERIT_PERCENT)}`,
+    );
+  });
+});
+
+describe('сглаживание дёрганой сети', () => {
+  beforeEach(async () => {
+    await app.close();
+  });
+
+  async function start(env: Record<string, string>): Promise<void> {
+    app = createApp({ env, room: FAST_ROOM, random: seededRandom(42), tickMs: TICK_MS });
+    port = await app.listen(0, '127.0.0.1');
+  }
+
+  it.each([['2'], ['да'], ['on']])('NET_SMOOTHING=«%s» — createApp бросает ошибку с именем переменной', (value) => {
+    expect(() => createApp({ env: { NET_SMOOTHING: value } })).toThrow('NET_SMOOTHING');
+  });
+
+  it.each([
+    ['', false],
+    ['0', false],
+    ['1', true],
+  ])('NET_SMOOTHING=«%s» — признак %s в Welcome дуэли и FfaWelcome', async (value, expected) => {
+    await start({ NET_SMOOTHING: value });
+    const duelist = await connect();
+    duelist.join('smooth', 'Дима');
+    expect((await duelist.nextOfType(MessageType.Welcome)).hasNetSmoothing).toBe(expected);
+    const fighter = await connect();
+    fighter.join('ffa10', 'Дима');
+    expect((await fighter.nextOfType(MessageType.FfaWelcome)).hasNetSmoothing).toBe(expected);
   });
 });

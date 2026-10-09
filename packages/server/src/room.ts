@@ -16,9 +16,9 @@ import {
 import {
   duelSide,
   encode,
+  formatJournalRules,
   gameTimecode,
   MessageType,
-  rulesToByte,
   toSnapshotEvent,
   type RoomStateMessage,
   type RoundStartMessage,
@@ -69,6 +69,7 @@ interface Player {
   connection: Connection;
   nickname: string;
   stats: Stats;
+  isBot: boolean;
   input: InputChannel;
 }
 
@@ -124,19 +125,23 @@ export class Room {
   private readonly log: GameLog;
   private readonly dropCounter: InputDropCounter;
   private readonly rules: Readonly<RoundRules>;
+  private readonly hasNetSmoothing: boolean;
 
+  // hasNetSmoothing — сглаживание дёрганой сети: очередь команд растёт на пачках, клиент узнаёт признак из Welcome.
   constructor(
     code: string,
     options: RoomOptions = DEFAULT_ROOM_OPTIONS,
     log: GameLog = NO_LOG,
     dropCounter: InputDropCounter = NO_DROP_COUNTER,
     rules: Readonly<RoundRules> = DEFAULT_RULES,
+    hasNetSmoothing = false,
   ) {
     this.code = code;
     this.options = options;
     this.log = log;
     this.dropCounter = dropCounter;
     this.rules = rules;
+    this.hasNetSmoothing = hasNetSmoothing;
   }
 
   get isEmpty(): boolean {
@@ -157,16 +162,23 @@ export class Room {
     return null;
   }
 
-  join(side: Side, connection: Connection, nickname: string, stats: Stats): Seat {
+  // isBot — место занимает бот лестницы или двойник: его снаряды не догоняются.
+  join(side: Side, connection: Connection, nickname: string, stats: Stats, isBot = false): Seat {
     const player: Player = {
       side,
       connection,
       nickname: sanitizeNickname(nickname),
       stats: sanitizeStats(stats),
-      input: createInputChannel(this.tick),
+      isBot,
+      input: createInputChannel(this.tick, this.hasNetSmoothing),
     };
     this.players[side] = player;
-    this.sendTo(player, { type: MessageType.Welcome, side, roomCode: this.code });
+    this.sendTo(player, {
+      type: MessageType.Welcome,
+      side,
+      roomCode: this.code,
+      hasNetSmoothing: this.hasNetSmoothing,
+    });
     this.broadcast(this.roomStateMessage());
     const [a, b] = this.players;
     if (a !== null && b !== null) {
@@ -279,8 +291,8 @@ export class Room {
     return createRound(
       mapIndex,
       [
-        { name: a.nickname, stats: a.stats },
-        { name: b.nickname, stats: b.stats },
+        { name: a.nickname, stats: a.stats, isBot: a.isBot },
+        { name: b.nickname, stats: b.stats, isBot: b.isBot },
       ],
       this.rules,
     );
@@ -297,9 +309,7 @@ export class Room {
       phaseTicksLeft: this.options.countdownTicks,
     };
     this.duel = duel;
-    this.writeLog(
-      `game start room=${this.code} p0=${a.nickname} p1=${b.nickname} rules=${String(rulesToByte(this.rules))}`,
-    );
+    this.writeLog(`game start room=${this.code} p0=${a.nickname} p1=${b.nickname} ${formatJournalRules(this.rules)}`);
     this.startRound(duel);
   }
 
@@ -322,7 +332,7 @@ export class Room {
       mapIndex: plan.mapIndex,
       countdownTicks: this.options.countdownTicks,
       score: [this.score[0], this.score[1]],
-      rules: { wallSlidePercent: this.rules.wallSlidePercent },
+      rules: { ...this.rules },
       tanks: [
         { nickname: a.nickname, stats: a.stats },
         { nickname: b.nickname, stats: b.stats },

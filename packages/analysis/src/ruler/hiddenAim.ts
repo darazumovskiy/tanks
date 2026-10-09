@@ -1,5 +1,6 @@
 import {
   isSegmentWithin,
+  NO_CARRY,
   normalizeAngle,
   TANK_HIT_RADIUS,
   traceShot,
@@ -36,7 +37,7 @@ export function ricochetAnglesOf(map: BattleMap, me: Point, enemy: Point, bullet
   const angles: number[] = [];
   for (let step = 0; step < RICOCHET_STEPS; step++) {
     const angle = normalizeAngle((FULL_TURN * step) / RICOCHET_STEPS);
-    const [first, second] = traceShot(map, me, angle, bulletSpeed).segments;
+    const [first, second] = traceShot(map, me, angle, bulletSpeed, NO_CARRY).segments;
     if (first === undefined || second === undefined || isSegmentWithin(first, enemy, TANK_HIT_RADIUS)) {
       continue;
     }

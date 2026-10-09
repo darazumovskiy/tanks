@@ -1,13 +1,18 @@
 import {
   clamp,
+  isCarried,
+  leadShot,
   MUZZLE_OFFSET,
   normalizeAngle,
+  shotCarry,
+  shotFlight,
   TANK_HIT_RADIUS,
   TANK_RADIUS,
   TICK_RATE,
   type Action,
   type BotView,
   type BulletView,
+  type LeadSolution,
   type Point,
   type Stats,
   type TankView,
@@ -26,7 +31,6 @@ const WAYPOINT_REACHED = 14;
 const REVERSE_ANGLE = 2.2;
 const STEER_GAIN = 3;
 const CREEP_THROTTLE = 0.15;
-const LEAD_ITERATIONS = 4;
 const TURRET_GAIN = 8;
 const SHOT_PAD = 6;
 const THREAT_HORIZON_S = 0.9;
@@ -186,17 +190,21 @@ function driveTo(me: TankView, x: number, y: number): Drive {
   return { throttle: Math.cos(diff) > 0.5 ? 1 : CREEP_THROTTLE, turn: clamp(diff * STEER_GAIN, -1, 1) };
 }
 
-// quality — учитываемая доля скорости цели: 0 даёт текущее положение, 1 — полное упреждение.
-function leadPoint(me: TankView, enemy: TankView, quality: number): Point {
-  const bulletSpeed = me.stats.bulletSpeed;
-  let x = enemy.x;
-  let y = enemy.y;
-  for (let i = 0; i < LEAD_ITERATIONS; i++) {
-    const flight = Math.hypot(x - me.x, y - me.y) / bulletSpeed;
-    x = enemy.x + enemy.vx * quality * flight;
-    y = enemy.y + enemy.vy * quality * flight;
+// quality — учитываемая доля скорости цели: 0 даёт текущее положение, 1 — полное упреждение. Свой снос бот
+// учитывает всегда: он знает, как едет сам.
+function leadOf(me: TankView, enemy: TankView, quality: number, carry: Point): LeadSolution {
+  const velocity = { x: enemy.vx * quality, y: enemy.vy * quality };
+  return leadShot(me, enemy, velocity, me.stats.bulletSpeed, carry);
+}
+
+// Куда полетит снаряд противника: по стволу, а при сносе — со сносом его танка.
+function shotAngleOf(tank: TankView, inheritPercent: number): number {
+  const carry = shotCarry(tank, inheritPercent);
+  if (!isCarried(carry)) {
+    return tank.turret;
   }
-  return { x, y };
+  const flight = shotFlight(tank.turret, tank.stats.bulletSpeed, carry);
+  return Math.atan2(flight.dirY, flight.dirX);
 }
 
 // Ближайший по времени снаряд, который пройдёт меньше THREAT_MISS от центра в ближайшие THREAT_HORIZON_S.
@@ -315,17 +323,18 @@ export class HunterBrain implements BotBrain {
     }
     this.wasReloading = !isReady;
 
-    const target = leadPoint(me, enemy, this.isLeadingShot ? this.profile.leadQuality : 0);
-    const wanted = Math.atan2(target.y - me.y, target.x - me.x) + this.aimNoise;
+    const carry = shotCarry(me, view.shotInheritPercent);
+    const { aim, meet } = leadOf(me, enemy, this.isLeadingShot ? this.profile.leadQuality : 0, carry);
+    const wanted = Math.atan2(aim.y - me.y, aim.x - me.x) + this.aimNoise;
     const turretDiff = normalizeAngle(wanted - me.turret);
     const turretTurn = clamp(turretDiff * TURRET_GAIN, -1, 1);
     const muzzleX = me.x + Math.cos(me.turret) * MUZZLE_OFFSET;
     const muzzleY = me.y + Math.sin(me.turret) * MUZZLE_OFFSET;
     const isAimed = Math.abs(turretDiff) < this.profile.fireWindowRad;
     const muzzle = { x: muzzleX, y: muzzleY };
-    const isLineClear = isClear(arena.walls, muzzleX, muzzleY, target.x, target.y, SHOT_PAD);
+    const isLineClear = isClear(arena.walls, muzzleX, muzzleY, meet.x, meet.y, SHOT_PAD);
     const isSafe =
-      this.isCarelessShot || !isReturningShot(arena.walls, me, muzzle, me.turret, me.stats.bulletSpeed, enemy);
+      this.isCarelessShot || !isReturningShot(arena.walls, me, muzzle, me.turret, me.stats.bulletSpeed, carry, enemy);
     if (!isReady || !isAimed || !isLineClear || !isSafe) {
       return { turretTurn, isFiring: false };
     }
@@ -415,7 +424,8 @@ export class HunterBrain implements BotBrain {
   private isEnemyAboutToFire(view: BotView): boolean {
     const { me, enemy } = view;
     const distance = Math.hypot(me.x - enemy.x, me.y - enemy.y);
-    const aimError = Math.abs(normalizeAngle(Math.atan2(me.y - enemy.y, me.x - enemy.x) - enemy.turret));
+    const shotAngle = shotAngleOf(enemy, view.shotInheritPercent);
+    const aimError = Math.abs(normalizeAngle(Math.atan2(me.y - enemy.y, me.x - enemy.x) - shotAngle));
     const isAimedAtMe = aimError < READY_POSE_AIM_RAD;
     return distance < READY_POSE_DISTANCE && isAimedAtMe && enemy.reloadLeft < READY_POSE_RELOAD_S;
   }

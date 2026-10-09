@@ -1,7 +1,17 @@
+import { MUZZLE_OFFSET, type Field, type Point } from '@tanks/shared/engine';
 import { EventFlag, type TankSnapshot } from '@tanks/shared/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DecalLayer } from './decals.js';
-import { Effects, KILL_MARK, KILL_WORDS, type FxAnnouncement, type FxEvent, type FxEventOptions } from './effects.js';
+import {
+  Effects,
+  KILL_MARK,
+  KILL_WORDS,
+  type FxAnnouncement,
+  type FxEvent,
+  type FxEventOptions,
+  type FxTank,
+} from './effects.js';
+import { MUZZLE_EXIT_S } from './muzzleExit.js';
 
 const COLORS: Readonly<Record<number, string>> = { 3: '#4fc3c9', 7: '#e8825a' };
 const NAMES: Readonly<Record<number, string>> = { 3: 'Вася', 7: 'Петя' };
@@ -11,6 +21,11 @@ const SELF_HIT: FxAnnouncement = { kind: 'selfHit', size: 1, duration: 1 };
 const ZONE_START: FxAnnouncement = { kind: 'zoneStart', size: 1, duration: 1 };
 const ANNOUNCE_WIDTH = 1000;
 const ANNOUNCE_Y = 200;
+const OPEN_FIELD: Field = { width: 3000, height: 3000, walls: [] };
+const FRAME_S = 0.016;
+// Длина штриха искры — её скорость за это время: так рисунок выдаёт собственную скорость искры.
+const SPARK_STREAK_S = 0.035;
+const BULLET_CORE_RADIUS = 4;
 
 class FakeDecals implements DecalLayer {
   readonly calls: string[] = [];
@@ -92,6 +107,23 @@ function popupTexts(effects: Effects): DrawnText[] {
   return texts;
 }
 
+function fxTank(overrides: Partial<FxTank> = {}): FxTank {
+  return {
+    id: 7,
+    x: 400,
+    y: 300,
+    heading: 0,
+    turret: Math.PI / 2,
+    speed: 0,
+    hp: 100,
+    maxHp: 140,
+    isAlive: true,
+    bulletSpeed: 500,
+    shotInheritPercent: 100,
+    ...overrides,
+  };
+}
+
 function snapshotTank(overrides: Partial<TankSnapshot> = {}): TankSnapshot {
   return { x: 500, y: 400, heading: 0.5, turret: 0, speed: 120, hp: 100, reloadLeft: 0, isAlive: true, ...overrides };
 }
@@ -106,7 +138,7 @@ describe('эффекты без своего холста', () => {
     const effects = makeEffects();
     effects.onEvent(fxEvent('death'), QUIET);
     effects.onEvent(fxEvent('impact'), QUIET);
-    effects.update(0.016, [{ id: 7, x: 400, y: 300, hp: 0, maxHp: 140, isAlive: false }]);
+    effects.update(0.016, [fxTank({ hp: 0, isAlive: false })]);
     expect(createElement).not.toHaveBeenCalled();
   });
 });
@@ -237,7 +269,7 @@ describe('эффекты по номерам танков', () => {
     expect(effects.tankFx(7)).toMatchObject({ recoil: 1, flash: 0 });
     expect(effects.tankFx(42)).toMatchObject({ recoil: 0, flash: 1 });
     expect(effects.tankFx(3)).toMatchObject({ recoil: 0, flash: 0, ghostHp: null });
-    effects.update(0.1, [{ id: 42, x: 0, y: 0, hp: 80, maxHp: 140, isAlive: true }]);
+    effects.update(0.1, [fxTank({ id: 42, x: 0, y: 0, hp: 80 })]);
     expect(effects.tankFx(42).flash).toBeCloseTo(0.3);
     expect(effects.tankFx(42).ghostHp).toBe(80);
     expect(effects.tankFx(7).recoil).toBe(1);
@@ -345,7 +377,7 @@ describe('хвост снаряда', () => {
 
   function drawAt(effects: Effects, id: number, x: number): number {
     const { ctx, strokes } = strokeCounter();
-    effects.drawBullets(ctx, [{ id, x, y: 0, color: '#ffffff' }]);
+    effects.drawBullets(ctx, [{ id, owner: 1, x, y: 0, color: '#ffffff' }], OPEN_FIELD);
     return strokes();
   }
 
@@ -362,5 +394,225 @@ describe('хвост снаряда', () => {
     drawAt(effects, 900, 0);
     drawAt(effects, 900, 10);
     expect(drawAt(effects, 5, 20)).toBe(0);
+  });
+});
+
+interface DrawnSpark extends Point {
+  vx: number;
+  vy: number;
+}
+
+interface DrawnParticles {
+  flashes: Point[];
+  smokes: Point[];
+  sparks: DrawnSpark[];
+}
+
+// Холст, который запоминает круги частиц по слою смешения и штрихи искр; градиенты — заглушки.
+function drawnParticles(effects: Effects): DrawnParticles {
+  const drawn: DrawnParticles = { flashes: [], smokes: [], sparks: [] };
+  let streakFrom: Point | null = null;
+  const state: Record<string | symbol, unknown> = {};
+  const ctx = new Proxy(state, {
+    get: (target, key) => {
+      if (key === 'createRadialGradient') {
+        return () => ({ addColorStop: (): void => undefined });
+      }
+      if (key === 'arc') {
+        return (x: number, y: number): void => {
+          const layer = target.globalCompositeOperation === 'lighter' ? drawn.flashes : drawn.smokes;
+          layer.push({ x, y });
+        };
+      }
+      if (key === 'moveTo') {
+        return (x: number, y: number): void => {
+          streakFrom = { x, y };
+        };
+      }
+      if (key === 'lineTo') {
+        return (x: number, y: number): void => {
+          if (streakFrom === null) {
+            return;
+          }
+          drawn.sparks.push({
+            ...streakFrom,
+            vx: (streakFrom.x - x) / SPARK_STREAK_S,
+            vy: (streakFrom.y - y) / SPARK_STREAK_S,
+          });
+        };
+      }
+      return key in target ? target[key] : (): void => undefined;
+    },
+    set: (target, key, value) => {
+      target[key] = value;
+      return true;
+    },
+  }) as unknown as CanvasRenderingContext2D;
+  effects.drawParticles(ctx);
+  return drawn;
+}
+
+// Ядра снарядов: круг радиуса ядра в месте, где снаряд нарисован.
+function drawnBulletCores(effects: Effects, bullets: Parameters<Effects['drawBullets']>[1]): Point[] {
+  const cores: Point[] = [];
+  const state: Record<string | symbol, unknown> = {};
+  const ctx = new Proxy(state, {
+    get: (target, key) => {
+      if (key === 'createRadialGradient') {
+        return () => ({ addColorStop: (): void => undefined });
+      }
+      if (key === 'arc') {
+        return (x: number, y: number, radius: number): void => {
+          if (radius === BULLET_CORE_RADIUS) {
+            cores.push({ x, y });
+          }
+        };
+      }
+      return key in target ? target[key] : (): void => undefined;
+    },
+    set: (target, key, value) => {
+      target[key] = value;
+      return true;
+    },
+  }) as unknown as CanvasRenderingContext2D;
+  effects.drawBullets(ctx, bullets, OPEN_FIELD);
+  return cores;
+}
+
+function muzzleOfTank(tank: FxTank): Point {
+  return { x: tank.x + Math.cos(tank.turret) * MUZZLE_OFFSET, y: tank.y + Math.sin(tank.turret) * MUZZLE_OFFSET };
+}
+
+function driven(tank: FxTank, seconds: number, turn = 0): FxTank {
+  return {
+    ...tank,
+    x: tank.x + Math.cos(tank.heading) * tank.speed * seconds,
+    y: tank.y + Math.sin(tank.heading) * tank.speed * seconds,
+    turret: tank.turret + turn,
+  };
+}
+
+function shotOf(tank: FxTank): FxEvent {
+  const muzzle = muzzleOfTank(tank);
+  return fxEvent('shot', {
+    tank: tank.id,
+    x: muzzle.x,
+    y: muzzle.y,
+    value: tank.turret,
+    dx: Math.cos(tank.turret),
+    dy: Math.sin(tank.turret),
+  });
+}
+
+// Перпендикуляр от точки до луча: 0 — точка на прямой луча.
+function offRay(point: Point, from: Point, angle: number): number {
+  return Math.abs((point.x - from.x) * Math.sin(angle) - (point.y - from.y) * Math.cos(angle));
+}
+
+describe('выстрел привязан к нарисованному стрелку', () => {
+  const MOVING = fxTank({ heading: 0, speed: 220, turret: Math.PI / 2 });
+
+  it('M1 вспышка весь свой век стоит на дуле едущего танка, который поворачивает башню; без стрелка — в точке события', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const effects = makeEffects();
+    effects.update(0, [MOVING]);
+    effects.onEvent(shotOf(MOVING), QUIET);
+    for (let step = 1; step <= 5; step++) {
+      const tank = driven(MOVING, step * FRAME_S, (0.3 * step) / 5);
+      effects.update(FRAME_S, [tank]);
+      const [flash] = drawnParticles(effects).flashes;
+      const muzzle = muzzleOfTank(tank);
+      expect(flash?.x).toBeCloseTo(muzzle.x, 6);
+      expect(flash?.y).toBeCloseTo(muzzle.y, 6);
+    }
+
+    const alone = makeEffects();
+    alone.onEvent(fxEvent('shot', { x: 123, y: 456 }), QUIET);
+    alone.update(FRAME_S, []);
+    expect(drawnParticles(alone).flashes).toEqual([{ x: 123, y: 456 }]);
+  });
+
+  it('M2 искры летят по пути снаряда относительно танка и едут с ним: при 100 % — по стволу, без правила — с отставанием на ход танка', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    for (const shotInheritPercent of [100, 0]) {
+      const tank = { ...MOVING, shotInheritPercent };
+      const effects = makeEffects();
+      effects.update(0, [tank]);
+      effects.onEvent(shotOf(tank), QUIET);
+      const heading = shotInheritPercent === 100 ? tank.turret : Math.atan2(tank.bulletSpeed, -tank.speed);
+      const steps = 12;
+      for (let step = 1; step <= steps; step++) {
+        effects.update(FRAME_S, [driven(tank, step * FRAME_S)]);
+      }
+      const muzzle = muzzleOfTank(driven(tank, steps * FRAME_S));
+      const { sparks } = drawnParticles(effects);
+      expect(sparks).toHaveLength(6);
+      for (const spark of sparks) {
+        expect(Math.atan2(spark.vy, spark.vx)).toBeCloseTo(heading, 6);
+        expect(offRay(spark, muzzle, heading)).toBeLessThan(1e-6);
+      }
+    }
+  });
+
+  it('M2 стоящий танк — искры по стволу, как прежде', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const tank = fxTank({ speed: 0, turret: 0.7, shotInheritPercent: 0 });
+    const effects = makeEffects();
+    effects.update(0, [tank]);
+    effects.onEvent(shotOf(tank), QUIET);
+    effects.update(FRAME_S, [tank]);
+    for (const spark of drawnParticles(effects).sparks) {
+      expect(Math.atan2(spark.vy, spark.vx)).toBeCloseTo(0.7, 6);
+    }
+  });
+
+  it('M3 дымок выстрела едет за танком на половине его хода', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const smokesAfter = (tank: FxTank): Point[] => {
+      const effects = makeEffects();
+      effects.update(0, [tank]);
+      effects.onEvent(shotOf(tank), QUIET);
+      const steps = 20;
+      for (let step = 1; step <= steps; step++) {
+        effects.update(FRAME_S, [driven(tank, step * FRAME_S)]);
+      }
+      return drawnParticles(effects).smokes;
+    };
+    const moving = smokesAfter(MOVING);
+    const standing = smokesAfter({ ...MOVING, speed: 0 });
+    expect(moving).toHaveLength(3);
+    moving.forEach((smoke, index) => {
+      const still = standing[index];
+      expect(smoke.x - (still?.x ?? NaN)).toBeCloseTo(MOVING.speed * 0.5 * 20 * FRAME_S, 6);
+      expect(smoke.y - (still?.y ?? NaN)).toBeCloseTo(0, 6);
+    });
+  });
+});
+
+describe('снаряд выходит из дула', () => {
+  const SHOOTER = fxTank({ id: 3, heading: 0, speed: 220, turret: Math.PI / 2 });
+
+  it('M4 первый кадр — на дуле, хвост от дула, к концу выхода — на своём месте', () => {
+    const effects = makeEffects();
+    effects.update(0, [SHOOTER]);
+    const muzzle = muzzleOfTank(SHOOTER);
+    const born = { x: muzzle.x, y: muzzle.y + 80 };
+    const [first] = drawnBulletCores(effects, [{ id: 9, owner: 3, ...born, color: '#ffffff' }]);
+    expect(first?.x).toBeCloseTo(muzzle.x, 6);
+    expect(first?.y).toBeCloseTo(muzzle.y, 6);
+    const ageS = MUZZLE_EXIT_S + FRAME_S;
+    effects.update(ageS, [driven(SHOOTER, ageS)]);
+    const later = { x: born.x + 220 * ageS, y: born.y + 500 * ageS };
+    const [settled] = drawnBulletCores(effects, [{ id: 9, owner: 3, ...later, color: '#ffffff' }]);
+    expect(settled).toEqual(later);
+  });
+
+  it('M5 в упор: путь задевает другой танк — снаряд с первого кадра на своём месте', () => {
+    const effects = makeEffects();
+    const muzzle = muzzleOfTank(SHOOTER);
+    const victim = fxTank({ id: 4, x: muzzle.x, y: muzzle.y + 60 });
+    effects.update(0, [SHOOTER, victim]);
+    const born = { x: muzzle.x, y: muzzle.y + 20 };
+    expect(drawnBulletCores(effects, [{ id: 9, owner: 3, ...born, color: '#ffffff' }])).toEqual([born]);
   });
 });

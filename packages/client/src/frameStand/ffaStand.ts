@@ -4,6 +4,7 @@ import {
   DEFAULT_STATS,
   deriveStats,
   ffaMap,
+  NO_CARRY,
   TICK_RATE,
   zoneRadiusAt,
   type FfaSize,
@@ -223,6 +224,7 @@ function helpersOf(
       field: ffaMap(frame.size),
       shooter: { x: me.x, y: me.y, turret: me.turret },
       bulletSpeed: BULLET_SPEED,
+      carry: NO_CARRY,
       targets,
       hasLeadHint: false,
     }),
@@ -268,7 +270,10 @@ function playFrame(target: StandTarget, frame: FfaStandFrame, zone: ZonePlan): v
       pending.shift();
     }
     const view = viewAt(frame, zone, t);
-    effects.update(FRAME_S, view.tanks);
+    effects.update(
+      FRAME_S,
+      view.tanks.map((tank) => ({ ...tank, bulletSpeed: BULLET_SPEED, shotInheritPercent: 0 })),
+    );
     if (steps - step > DRAWN_FRAMES) {
       continue;
     }

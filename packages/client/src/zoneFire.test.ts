@@ -1,4 +1,4 @@
-import { ARENA, MAPS, TANK_HIT_RADIUS, type Field } from '@tanks/shared/engine';
+import { ARENA, leadShot, MAPS, NO_CARRY, TANK_HIT_RADIUS, type Field } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
 import { enemyLeadPoint, type AimLineEnemy } from './aimLine.js';
 import { isShotInZone, ZONE_FIRE_MAX_RANGE, type ZoneFireInput } from './zoneFire.js';
@@ -15,7 +15,14 @@ const SWEEP_STEP = 0.0005;
 
 function input(turret: number, enemy: AimLineEnemy | null, overrides: Partial<ZoneFireInput> = {}): ZoneFireInput {
   const targets = enemy === null ? [] : [enemy];
-  return { field: POLYGON, shooter: { ...SHOOTER, turret }, bulletSpeed: BULLET_SPEED, targets, ...overrides };
+  return {
+    field: POLYGON,
+    shooter: { ...SHOOTER, turret },
+    bulletSpeed: BULLET_SPEED,
+    carry: NO_CARRY,
+    targets,
+    ...overrides,
+  };
 }
 
 function angleTo(point: { x: number; y: number }): number {
@@ -30,7 +37,7 @@ function rayDistance(turret: number, point: { x: number; y: number }): number {
 }
 
 function leadOf(enemy: AimLineEnemy): { x: number; y: number } {
-  const lead = enemyLeadPoint(SHOOTER, enemy, BULLET_SPEED);
+  const lead = enemyLeadPoint(SHOOTER, enemy, BULLET_SPEED, NO_CARRY);
   if (lead === null) {
     throw new Error('противник слишком медленный для упреждения');
   }
@@ -81,6 +88,15 @@ describe('isShotInZone', () => {
     expect(isShotInZone(input(0, null, { targets: [aside, STANDING] }))).toBe(true);
     expect(isShotInZone(input(0, null, { targets: [STANDING, aside] }))).toBe(true);
     expect(isShotInZone(input(0, null, { targets: [aside, far], field: OPEN_FIELD }))).toBe(false);
+  });
+
+  it('снаряд со скоростью танка: ствол на точку наводки со сносом по едущей цели — в зоне; без сноса — нет', () => {
+    const carry = { x: 0, y: -176 };
+    const velocity = { x: 0, y: CROSSING.speed };
+    const { aim } = leadShot(SHOOTER, CROSSING, velocity, BULLET_SPEED, carry);
+    const turret = angleTo(aim);
+    expect(isShotInZone(input(turret, CROSSING, { field: OPEN_FIELD, carry }))).toBe(true);
+    expect(isShotInZone(input(turret, CROSSING, { field: OPEN_FIELD }))).toBe(false);
   });
 
   it('дуло в стене — не в зоне', () => {

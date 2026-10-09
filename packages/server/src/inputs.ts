@@ -6,6 +6,12 @@ export const INPUT_TIMEOUT_TICKS = 15;
 // Команда ждёт своего тика не дольше 100 мс: пары и тройки, которыми сеть телефона склеивает команды, умещаются,
 // а после паузы в сотни миллисекунд ждать всю пачку дороже, чем потерять её начало.
 export const INPUT_QUEUE_LIMIT = 3;
+// Сглаживание дёрганой сети: пока команды приходят пачками, очередь держит пачку после паузы 200 мс целиком.
+// Пачка — больше команд в одном тике, чем очередь из трёх принимает с пустого места; без пачек столько тиков —
+// сеть снова ровная.
+export const INPUT_QUEUE_BURST_LIMIT = 6;
+export const INPUT_BURST_SIZE = INPUT_QUEUE_LIMIT + 1;
+export const INPUT_BURST_CALM_TICKS = 2 * TICK_RATE;
 // Одна команда в очереди после применения — обычный запас против дрожания сети: тик задержки на сервере, который
 // предсказание скрывает. Очередь, которая столько тиков не опускалась ниже INPUT_BACKLOG_MIN, держит стойкий запас:
 // без слива поздняя пачка навсегда добавила бы тики задержки.
@@ -28,7 +34,9 @@ export interface InputDrop {
 // Поток команд одного игрока: принятые ждут в очереди и применяются по одной за тик — столько же шагов, сколько
 // предсказал клиент; применённая подтверждается в снимке (ackSeq). backlogSinceTick — с какого тика очередь после
 // применения не опускалась ниже INPUT_BACKLOG_MIN; spareSinceTick — с какого тика после каждого применения в очереди
-// оставалась команда. lastAction — действие самой команды, без перенесённого выстрела.
+// оставалась команда. lastAction — действие самой команды, без перенесённого выстрела. isAdaptive — сглаживание
+// дёрганой сети: queueLimit растёт на пачках; arrivalTick и arrivalsAtTick — сколько команд пришло в тике arrivalTick,
+// burstTick — тик последней пачки.
 export interface InputChannel {
   lastSeq: number;
   lastInputTick: number;
@@ -40,9 +48,14 @@ export interface InputChannel {
   lastAction: Action;
   inputsThisSecond: number;
   inputsThisTick: number;
+  isAdaptive: boolean;
+  queueLimit: number;
+  arrivalTick: number;
+  arrivalsAtTick: number;
+  burstTick: number;
 }
 
-export function createInputChannel(tick: number): InputChannel {
+export function createInputChannel(tick: number, isAdaptive: boolean): InputChannel {
   return {
     lastSeq: 0,
     lastInputTick: 0,
@@ -54,7 +67,31 @@ export function createInputChannel(tick: number): InputChannel {
     lastAction: { ...IDLE_ACTION },
     inputsThisSecond: 0,
     inputsThisTick: 0,
+    isAdaptive,
+    queueLimit: INPUT_QUEUE_LIMIT,
+    arrivalTick: tick,
+    arrivalsAtTick: 0,
+    burstTick: tick,
   };
+}
+
+// Пачка поднимает предел до того, как её команды проверены на переполнение. Предел опускается, только когда очередь
+// вместе с новой командой в него помещается: длинную очередь укорачивают слив и пропуск шага, а не выброс разом.
+function adaptQueueLimit(channel: InputChannel, tick: number): void {
+  if (!channel.isAdaptive) {
+    return;
+  }
+  channel.arrivalsAtTick = channel.arrivalTick === tick ? channel.arrivalsAtTick + 1 : 1;
+  channel.arrivalTick = tick;
+  if (channel.arrivalsAtTick >= INPUT_BURST_SIZE) {
+    channel.queueLimit = INPUT_QUEUE_BURST_LIMIT;
+    channel.burstTick = tick;
+    return;
+  }
+  const isCalm = tick - channel.burstTick > INPUT_BURST_CALM_TICKS;
+  if (isCalm && channel.queue.length < INPUT_QUEUE_LIMIT) {
+    channel.queueLimit = INPUT_QUEUE_LIMIT;
+  }
 }
 
 // Выброшенные команды — самые старые; их выстрел достаётся следующей, иначе короткое нажатие огня пропало бы.
@@ -83,8 +120,9 @@ export function offerInput(
   channel.lastSeq = seq;
   channel.lastInputTick = tick;
   channel.inputsThisTick++;
+  adaptQueueLimit(channel, tick);
   channel.queue.push({ seq, action });
-  const drops = dropOldest(channel, channel.queue.length - INPUT_QUEUE_LIMIT, 'overflow');
+  const drops = dropOldest(channel, channel.queue.length - channel.queueLimit, 'overflow');
   const hasStandingBacklog =
     channel.queue.length > INPUT_BACKLOG_MIN && tick - channel.backlogSinceTick > INPUT_BACKLOG_TICKS;
   if (!hasStandingBacklog) {

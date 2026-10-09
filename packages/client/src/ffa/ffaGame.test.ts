@@ -9,6 +9,8 @@ import {
   FFA,
   IDLE_ACTION,
   makeTank,
+  MUZZLE_OFFSET,
+  NO_CARRY,
   normalizeAngle,
   stepWorld,
   TANK_HIT_RADIUS,
@@ -27,6 +29,7 @@ import {
   FfaInviteMiss,
   FfaPhase,
   MessageType,
+  toFfaSnapshotEvent,
   type ClientMessage,
   type FfaSnapshotEvent,
   type FfaSnapshotMessage,
@@ -41,6 +44,7 @@ import { StampDecals } from '../render/stampDecals.js';
 import { enemyLeadPoint } from '../aimLine.js';
 import { defaultSettings, type Settings } from '../settings.js';
 import { Sfx, SOUND_DURATIONS } from '../sfx.js';
+import { SoundSetting } from '../soundSetting.js';
 import { Telemetry } from '../telemetry.js';
 import { installFakeAudio, type FakeAudio } from '../testing/fakeAudio.js';
 import { snapshotOf } from '../testing/ffaServer.js';
@@ -209,7 +213,7 @@ function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings>
         effects = new Effects(new StampDecals(), colorOf, nameOf);
         return effects;
       },
-      createSfx: () => new Sfx(() => document.visibilityState === 'hidden'),
+      createSfx: () => new Sfx(() => document.visibilityState === 'hidden', sound),
       createDiag: (roomCode) =>
         new DiagLog(roomCode, {
           post: (url, body) => {
@@ -273,7 +277,12 @@ function makeGame(storedToken = '', isTouch = false, settings: Partial<Settings>
   };
 }
 
-function welcome(playerId = ME, token = 'пропуск', inviteMiss: FfaInviteMiss = FfaInviteMiss.None): ServerMessage {
+function welcome(
+  playerId = ME,
+  token = 'пропуск',
+  inviteMiss: FfaInviteMiss = FfaInviteMiss.None,
+  hasNetSmoothing = false,
+): ServerMessage {
   return {
     type: MessageType.FfaWelcome,
     playerId,
@@ -282,6 +291,7 @@ function welcome(playerId = ME, token = 'пропуск', inviteMiss: FfaInviteM
     size: SIZE,
     rules: DEFAULT_RULES,
     inviteMiss,
+    hasNetSmoothing,
   };
 }
 
@@ -373,10 +383,10 @@ class TestServer {
   }
 }
 
-function enterFight(harness: Harness, world: World, own: FfaPlayerState = 'alive'): void {
+function enterFight(harness: Harness, world: World, own: FfaPlayerState = 'alive', hasNetSmoothing = false): void {
   const socket = harness.socket();
   socket.open();
-  socket.receive(welcome());
+  socket.receive(welcome(ME, 'пропуск', FfaInviteMiss.None, hasNetSmoothing));
   socket.receive(roster([ME, ENEMY, 6]));
   socket.receive(state(FfaPhase.Fight, 3600));
   socket.receive(matchStart());
@@ -410,10 +420,12 @@ function setHidden(isHidden: boolean): void {
 }
 
 let audio: FakeAudio;
+let sound = new SoundSetting(null);
 
 beforeEach(() => {
   vi.useFakeTimers();
   audio = installFakeAudio();
+  sound = new SoundSetting(null);
   clock = 1000;
   pendingFrame = null;
   setHidden(false);
@@ -628,6 +640,53 @@ describe('камера на старте и после появления, ку�
     harness.socket().receive(snapshotOf(world, { events: [event('spawn', ME, 600, 1100)] }));
     expectEaseIn(harness);
     expect(meOf(harness)).toMatchObject({ x: 600, y: 1100 });
+  });
+
+  it('сглаживание сети: поправка своего танка — линия выстрела идёт от нарисованного танка', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 1100, 650), tank(ENEMY, 2000, 1200)]);
+    enterFight(harness, world, 'alive', true);
+    harness.frames(2);
+    const own = world.tanks.find((candidate) => candidate.id === ME);
+    if (own === undefined) {
+      throw new Error('своего танка нет');
+    }
+    own.x += 40;
+    step(world);
+    harness.socket().receive(snapshotOf(world));
+    harness.frames(1);
+    const drawn = (harness.state().picture as { me: { x: number; y: number } }).me;
+    const start = harness.renderer.last?.aimLine?.segments[0] ?? { x1: NaN, y1: NaN };
+    const fromDrawn = Math.hypot(start.x1 - drawn.x, start.y1 - drawn.y);
+    const fromPredicted = Math.hypot(start.x1 - meOf(harness).x, start.y1 - meOf(harness).y);
+    expect(fromDrawn).toBeCloseTo(MUZZLE_OFFSET, 6);
+    expect(Math.abs(fromPredicted - MUZZLE_OFFSET)).toBeGreaterThan(30);
+  });
+
+  it('сглаживание сети: поправка своего танка — камера идёт за нарисованным танком и не прыгает', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 1100, 650), tank(ENEMY, 2000, 1200)]);
+    enterFight(harness, world, 'alive', true);
+    harness.frames(CAMERA_SETTLE_FRAMES);
+    const before = harness.state().viewCenter as { x: number; y: number };
+    const own = world.tanks.find((candidate) => candidate.id === ME);
+    if (own === undefined) {
+      throw new Error('своего танка нет');
+    }
+    own.x += 40;
+    step(world);
+    harness.socket().receive(snapshotOf(world));
+    harness.frames(1);
+    const state = harness.state();
+    const picture = state.picture as { me: { x: number }; ownShift: { x: number } };
+    expect(state.hasNetSmoothing).toBe(true);
+    expect(state.interpolationTicks).toBe(2);
+    expect(picture.ownShift.x).toBeLessThan(-30);
+    expect(meOf(harness).x + picture.ownShift.x).toBeCloseTo(picture.me.x, 9);
+    expect((state.viewCenter as { x: number }).x - before.x).toBeLessThan(10);
+    harness.frames(10);
+    expect((harness.state().picture as { ownShift: { x: number } }).ownShift.x).toBe(0);
+    expect((harness.state().viewCenter as { x: number }).x - before.x).toBeCloseTo(40, 6);
   });
 
   it('гибель и появление без кадра между ними (вкладка была скрыта): сдвиг выходит из нуля', () => {
@@ -877,6 +936,45 @@ describe('журнал клиента', () => {
     expect(line).toMatch(new RegExp(` mode=ffa size=${String(SIZE)} dev=${DEVICE_ID}$`));
   });
 
+  it('строка секунды — самая большая поправка своего танка и самая длинная пауза между снимками за секунду', async () => {
+    const harness = makeGame();
+    const me = tank(ME, 600, 650);
+    const world = arena([me, tank(ENEMY, 900, 650)]);
+    enterFight(harness, world);
+    const socket = harness.socket();
+    clock += 250;
+    stepWorld(
+      world,
+      world.tanks.map(() => IDLE_ACTION),
+    );
+    socket.receive(snapshotOf(world));
+    me.x += 20;
+    stepWorld(
+      world,
+      world.tanks.map(() => IDLE_ACTION),
+    );
+    socket.receive(snapshotOf(world));
+    harness.frames(70);
+    await vi.advanceTimersByTimeAsync(1000);
+    const line = sentWith(harness, ' sec ')
+      .body.split('\n')
+      .find((text) => text.includes(' sec '));
+    const match = / corr=(\d+\.\d) gap=(\d+)$/.exec(line ?? '');
+    expect(Number(match?.[1])).toBeGreaterThan(19);
+    expect(Number(match?.[2])).toBe(Math.round(FRAME_MS + 250));
+  });
+
+  it('сглаживание сети: строка секунды кончается отставанием чужих', async () => {
+    const harness = makeGame();
+    enterFight(harness, arena([tank(ME, 600, 650), tank(ENEMY, 900, 650)]), 'alive', true);
+    harness.frames(70);
+    await vi.advanceTimersByTimeAsync(1000);
+    const line = sentWith(harness, ' sec ')
+      .body.split('\n')
+      .find((text) => text.includes(' sec '));
+    expect(line).toMatch(/ gap=\d+ ilag=2\.0$/);
+  });
+
   it('возврат тем же номером — источник прежний; место ушло — строки идут под новым номером до закрытия', async () => {
     const harness = makeGame();
     harness.socket().open();
@@ -887,6 +985,34 @@ describe('журнал клиента', () => {
     expect(sentWith(harness, 'outcome=lost').url).toBe('/log?key=K7QX&src=C9');
     harness.game.close();
     expect(sentWith(harness, ' close').url).toBe('/log?key=K7QX&src=C9');
+  });
+});
+
+describe('звук устройства', () => {
+  it('клавиша M выключает и включает звук: выключенный — ни одного голоса, включённый — снова звучит', () => {
+    const harness = makeGame();
+    const world = arena([tank(ME, 600, 650), tank(ENEMY, 900, 650)]);
+    enterFight(harness, world);
+    const socket = harness.socket();
+    const enemyShot = (): void => {
+      stepWorld(
+        world,
+        world.tanks.map(() => IDLE_ACTION),
+      );
+      socket.receive(snapshotOf(world, { events: [event('shot', ENEMY, 930, 650)] }));
+      harness.frames(PICTURE_FRAMES);
+    };
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM' }));
+    expect(sound.isMuted).toBe(true);
+    expect(harness.state().isMuted).toBe(true);
+    enemyShot();
+    expect(audio.outputs).toHaveLength(0);
+    expect(harness.state().voices).toBe(0);
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM' }));
+    expect(sound.isMuted).toBe(false);
+    expect(harness.state().isMuted).toBe(false);
+    enemyShot();
+    expect(audio.outputs.length).toBeGreaterThan(0);
   });
 });
 
@@ -929,7 +1055,7 @@ describe('вкладка скрылась', () => {
     const world = arena([tank(ME, 600, 650), tank(ENEMY, 900, 650)]);
     enterFight(harness, world);
     const socket = harness.socket();
-    window.dispatchEvent(new MouseEvent('mousedown'));
+    window.dispatchEvent(new PointerEvent('pointerdown'));
     harness.frames(6);
     const onEvent = vi.spyOn(harness.effects, 'onEvent');
     setHidden(true);
@@ -1959,7 +2085,7 @@ describe('помощники боя', () => {
     if (seen === undefined) {
       throw new Error('врага нет в снимке');
     }
-    const lead = enemyLeadPoint({ x: 300, y: 1000 }, seen, deriveStats(DEFAULT_STATS).bulletSpeed);
+    const lead = enemyLeadPoint({ x: 300, y: 1000 }, seen, deriveStats(DEFAULT_STATS).bulletSpeed, NO_CARRY);
     expect(Math.abs((lead?.y ?? 0) - 1000)).toBeLessThan(TANK_HIT_RADIUS);
     expect(Math.abs(seen.y - 1000)).toBeGreaterThan(TANK_HIT_RADIUS);
     expect(harness.state().aimLine).toEqual({ state: 'none', targetId: null });
@@ -2246,5 +2372,232 @@ describe('картинка совпадает с сервером', () => {
 
   it('снимок с запасом команд — пропущен ровно один шаг ввода; повтор флага до подтверждения — без пропуска', () => {
     expect(inputsAfterSnapshot(true)).toBe(inputsAfterSnapshot(false) - 1);
+  });
+});
+
+describe('попадание по своему танку по касанию', () => {
+  const DELAY_TICKS = 4;
+  const ENEMY_FIRE: Action = { ...IDLE_ACTION, isFiring: true };
+  const MAX_TICKS = 90;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  interface TouchRun {
+    harness: Harness;
+    // Тик сервера с попаданием по своему танку; шаг сценария и тик последнего пришедшего снимка в кадре первого
+    // эффекта попадания.
+    hitTick: number | null;
+    touchStep: number | null;
+    deliveredAtTouch: number | null;
+    hitEffects: () => FfaSnapshotEvent[];
+    hitSounds: () => number;
+  }
+
+  // Враг в 400 стреляет один раз в свой стоящий танк; снимки приходят на DELAY_TICKS тиков позже, команды сервер
+  // подтверждает сразу. hiddenAt — с этого шага вкладка скрыта на два шага: кадры стоят, снимки идут.
+  function enemyShot(hiddenAt: number | null = null): TouchRun {
+    const play = vi.spyOn(Sfx.prototype, 'play');
+    play.mockClear();
+    const harness = makeGame();
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyQ' }));
+    const world = arena([tank(ME, 300, 1000), tank(ENEMY, 700, 1000, Math.PI)]);
+    enterFight(harness, world);
+    harness.frames(PICTURE_FRAMES);
+    const socket = harness.socket();
+    const tracker = new BulletTracker();
+    tracker.diff(world.bullets);
+    const onEvent = vi.spyOn(harness.effects, 'onEvent');
+    const hitEffects = (): FfaSnapshotEvent[] =>
+      onEvent.mock.calls.map(([fx]) => fx as FfaSnapshotEvent).filter((fx) => fx.kind === 'hit' && fx.tank === ME);
+    const hitSounds = (): number => play.mock.calls.filter(([name]) => name === 'hit').length;
+    const queue: FfaSnapshotMessage[] = [];
+    let hitTick: number | null = null;
+    let delivered = world.tick;
+    let deliveredAtTouch: number | null = null;
+    let touchStep: number | null = null;
+    for (let tick = 0; tick < MAX_TICKS; tick++) {
+      const isHidden = hiddenAt !== null && tick >= hiddenAt && tick < hiddenAt + 2;
+      if (hiddenAt !== null && tick === hiddenAt) {
+        setHidden(true);
+      }
+      if (hiddenAt !== null && tick === hiddenAt + 2) {
+        setHidden(false);
+      }
+      const events = stepWorld(
+        world,
+        world.tanks.map((candidate) => (candidate.id === ENEMY && tick === 0 ? ENEMY_FIRE : IDLE_ACTION)),
+      );
+      if (events.some((fx) => fx.type === 'hit' && fx.tank === ME)) {
+        hitTick = world.tick;
+      }
+      queue.push(
+        snapshotOf(world, {
+          ackSeq: socket.inputs.at(-1)?.seq ?? 0,
+          changes: tracker.diff(world.bullets),
+          events: events.map(toFfaSnapshotEvent),
+        }),
+      );
+      const due = queue.length > DELAY_TICKS ? queue.shift() : undefined;
+      if (due !== undefined) {
+        socket.receive(due);
+        delivered = due.tick;
+      }
+      if (isHidden) {
+        clock += TICK_MS;
+        continue;
+      }
+      for (let frame = 0; frame < 2; frame++) {
+        harness.frames(1);
+        if (deliveredAtTouch === null && hitEffects().length > 0) {
+          deliveredAtTouch = delivered;
+          touchStep = tick;
+        }
+      }
+    }
+    return { harness, hitTick, touchStep, deliveredAtTouch, hitEffects, hitSounds };
+  }
+
+  it('C23 эффект и звук — в кадре касания, до снимка с попаданием; снимок их не повторяет; счётчики в отладке', () => {
+    const { harness, hitTick, deliveredAtTouch, hitEffects, hitSounds } = enemyShot();
+    expect(hitTick).not.toBeNull();
+    expect(deliveredAtTouch).toBeLessThan(hitTick ?? -Infinity);
+    expect(hitEffects()).toHaveLength(1);
+    expect(hitEffects()[0]?.value).toBe(deriveStats(DEFAULT_STATS).damage);
+    expect(hitSounds()).toBe(1);
+    expect(harness.state().ownHits).toEqual({ played: 1, confirmed: 1, cancelled: 0, served: 1, doubles: 0 });
+  });
+
+  it('C23 вкладка скрылась на шаге касания: после возврата касание не играется, попадание играет снимок — одно', () => {
+    const baseline = enemyShot();
+    const run = enemyShot(baseline.touchStep);
+    expect(run.harness.state().ownHits).toEqual({ played: 0, confirmed: 0, cancelled: 0, served: 1, doubles: 0 });
+    expect(run.hitEffects()).toHaveLength(1);
+    expect(run.deliveredAtTouch).toBe(baseline.hitTick);
+    expect(run.hitSounds()).toBe(1);
+  });
+});
+
+describe('свой выстрел по предсказанию', () => {
+  const DELAY_TICKS = 4;
+  const STEPS = 30;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  interface ShotRun {
+    harness: Harness;
+    // Тик сервера со своим выстрелом; тик последнего пришедшего снимка в кадре первого эффекта своего выстрела и
+    // был ли в этом кадре свой снаряд.
+    serverShotTick: number | null;
+    deliveredAtShot: number | null;
+    hasBulletAtShot: boolean;
+    shotEffects: () => FfaSnapshotEvent[];
+    shotSounds: () => number;
+  }
+
+  // Свой танк стреляет одним нажатием; сервер применяет команды по одной за тик, снимки приходят на DELAY_TICKS тиков
+  // позже. С reloadAt сервер держит перезарядку до этого шага, а на нём снимает её и стоит, не применяя команду: выстрел
+  // впервые находит переигрывание; isHiding — вкладка скрыта два шага с прихода снимка этого шага.
+  function ownShot(reloadAt: number | null = null, isHiding = false): ShotRun {
+    const play = vi.spyOn(Sfx.prototype, 'play');
+    play.mockClear();
+    const harness = makeGame();
+    const me = tank(ME, 300, 1000);
+    if (reloadAt !== null) {
+      me.reloadLeft = (STEPS * TICK_MS) / 1000;
+    }
+    const world = arena([me, tank(ENEMY, 1500, 1500)]);
+    enterFight(harness, world);
+    harness.frames(PICTURE_FRAMES);
+    const socket = harness.socket();
+    const tracker = new BulletTracker();
+    tracker.diff(world.bullets);
+    const onEvent = vi.spyOn(harness.effects, 'onEvent');
+    const shotEffects = (): FfaSnapshotEvent[] =>
+      onEvent.mock.calls.map(([fx]) => fx as FfaSnapshotEvent).filter((fx) => fx.kind === 'shot' && fx.tank === ME);
+    const shotSounds = (): number => play.mock.calls.filter(([name]) => name === 'shot').length;
+    const hiddenAt = reloadAt !== null && isHiding ? reloadAt + DELAY_TICKS : null;
+    const queue: FfaSnapshotMessage[] = [];
+    let applied = socket.inputs.length;
+    let ackSeq = socket.inputs.at(-1)?.seq ?? 0;
+    let serverShotTick: number | null = null;
+    let delivered = world.tick;
+    let deliveredAtShot: number | null = null;
+    let hasBulletAtShot = false;
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
+    for (let step = 0; step < STEPS; step++) {
+      const isHidden = hiddenAt !== null && step >= hiddenAt && step < hiddenAt + 2;
+      if (step === hiddenAt) {
+        setHidden(true);
+        window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space' }));
+      }
+      if (hiddenAt !== null && step === hiddenAt + 2) {
+        setHidden(false);
+      }
+      const isServerIdle = step === reloadAt;
+      if (isServerIdle) {
+        me.reloadLeft = 0;
+      }
+      const input = isServerIdle ? undefined : socket.inputs[applied];
+      if (input !== undefined) {
+        applied++;
+        ackSeq = input.seq;
+      }
+      const events = stepWorld(
+        world,
+        world.tanks.map((candidate) => (candidate.id === ME ? (input?.action ?? IDLE_ACTION) : IDLE_ACTION)),
+      );
+      if (events.some((fx) => fx.type === 'shot' && fx.tank === ME)) {
+        serverShotTick ??= world.tick;
+      }
+      queue.push(
+        snapshotOf(world, { ackSeq, changes: tracker.diff(world.bullets), events: events.map(toFfaSnapshotEvent) }),
+      );
+      const due = queue.length > DELAY_TICKS ? queue.shift() : undefined;
+      if (due !== undefined) {
+        socket.receive(due);
+        delivered = due.tick;
+      }
+      if (isHidden) {
+        clock += TICK_MS;
+        continue;
+      }
+      for (let frame = 0; frame < 2; frame++) {
+        harness.frames(1);
+        if (deliveredAtShot === null && shotEffects().length > 0) {
+          deliveredAtShot = delivered;
+          hasBulletAtShot = harness.renderer.last?.view.bullets.some((bullet) => bullet.owner === ME) ?? false;
+        }
+      }
+      if (step === 0 && reloadAt === null) {
+        window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space' }));
+      }
+    }
+    return { harness, serverShotTick, deliveredAtShot, hasBulletAtShot, shotEffects, shotSounds };
+  }
+
+  it('C26 отдача, вспышка и звук — в кадре, где снаряд появился у ствола, до снимка; снимок их не повторяет', () => {
+    const { harness, serverShotTick, deliveredAtShot, hasBulletAtShot, shotEffects, shotSounds } = ownShot();
+    expect(serverShotTick).not.toBeNull();
+    expect(deliveredAtShot).toBeLessThan(serverShotTick ?? -Infinity);
+    expect(hasBulletAtShot).toBe(true);
+    expect(shotEffects()).toHaveLength(1);
+    expect(shotSounds()).toBe(1);
+    expect(harness.state().ownShots).toEqual({ played: 1, confirmed: 1, unconfirmed: 0 });
+  });
+
+  it('C26 выстрел найден переигрыванием: играется до снимка; вкладка скрыта — после возврата не играется ни по досчёту, ни по снимку', () => {
+    const visible = ownShot(6);
+    expect(visible.shotEffects()).toHaveLength(1);
+    expect(visible.deliveredAtShot).toBeLessThan(visible.serverShotTick ?? -Infinity);
+    expect(visible.harness.state().ownShots).toEqual({ played: 1, confirmed: 1, unconfirmed: 0 });
+    const hidden = ownShot(6, true);
+    expect(hidden.serverShotTick).not.toBeNull();
+    expect(hidden.shotEffects()).toHaveLength(0);
+    expect(hidden.shotSounds()).toBe(0);
+    expect(hidden.harness.state().ownShots).toEqual({ played: 0, confirmed: 1, unconfirmed: 0 });
   });
 });

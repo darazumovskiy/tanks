@@ -1,12 +1,13 @@
 import {
   isSegmentWithin,
   isTraceReturning,
-  leadPoint,
+  leadShot,
   TANK_HIT_RADIUS,
   traceShot,
   type Field,
   type Point,
   type ShotSegment,
+  type ShotTrace,
 } from '@tanks/shared/engine';
 
 // Хвост после отскока — ровно столько, чтобы показать направление рикошета, не рисуя второй путь через поле.
@@ -24,6 +25,8 @@ export interface AimLineEnemy extends Point {
 export interface AimPathInput {
   shooter: Point;
   bulletSpeed: number;
+  // Снос своего снаряда скоростью своего танка (`shotCarry` по правилам боя).
+  carry: Point;
   // Живые чужие танки в кадре; пусто — целей нет, линия без состояний.
   targets: readonly AimLineEnemy[];
   hasLeadHint: boolean;
@@ -87,13 +90,14 @@ function tailOf(returning: ShotSegment | undefined): ShotSegment | null {
   };
 }
 
-// Точка упреждения по курсу и скорости противника; `null`, пока он слишком медленный, чтобы она отличалась от корпуса.
-export function enemyLeadPoint(shooter: Point, enemy: AimLineEnemy, bulletSpeed: number): Point | null {
+// Точка упреждения — где противник встретит снаряд, по его курсу и скорости; `null`, пока он слишком медленный,
+// чтобы она отличалась от корпуса. Со сносом она лежит на пути снаряда, а не на линии ствола.
+export function enemyLeadPoint(shooter: Point, enemy: AimLineEnemy, bulletSpeed: number, carry: Point): Point | null {
   if (Math.abs(enemy.speed) < LEAD_MIN_SPEED) {
     return null;
   }
   const velocity = { x: Math.cos(enemy.heading) * enemy.speed, y: Math.sin(enemy.heading) * enemy.speed };
-  return leadPoint(shooter, enemy, velocity, bulletSpeed);
+  return leadShot(shooter, enemy, velocity, bulletSpeed, carry).meet;
 }
 
 interface SegmentHit<T> {
@@ -140,19 +144,19 @@ function leadPoints(input: AimPathInput): Point[] {
   if (!input.hasLeadHint) {
     return [];
   }
-  return input.targets.flatMap((target) => enemyLeadPoint(input.shooter, target, input.bulletSpeed) ?? []);
+  return input.targets.flatMap((target) => enemyLeadPoint(input.shooter, target, input.bulletSpeed, input.carry) ?? []);
 }
 
 export function computeAimLine(input: AimLineInput): AimLine {
-  const { field, shooter, bulletSpeed } = input;
-  return aimLineOnPath(traceShot(field, shooter, shooter.turret, bulletSpeed).segments, input);
+  const { field, shooter, bulletSpeed, carry } = input;
+  return aimLineOnPath(traceShot(field, shooter, shooter.turret, bulletSpeed, carry), input);
 }
 
 // Упреждение считается по прямой, поэтому проверяется только на первом отрезке: после отскока путь длиннее
 // прямой и формула не годится. Цель на первом отрезке принимает снаряд на себя — возврат в свой корпус не грозит.
-export function aimLineOnPath(path: readonly ShotSegment[], input: AimPathInput): AimLine {
+export function aimLineOnPath(trace: ShotTrace, input: AimPathInput): AimLine {
   const { shooter, targets } = input;
-  const [first, returning] = path;
+  const [first, returning] = trace.segments;
   if (first === undefined) {
     return EMPTY;
   }
@@ -162,7 +166,7 @@ export function aimLineOnPath(path: readonly ShotSegment[], input: AimPathInput)
   }
   const tail = tailOf(returning);
   const shown = tail === null ? [first] : [first, tail];
-  const isReturning = isTraceReturning(path, shooter, null);
+  const isReturning = isTraceReturning(trace, shooter, null);
   const onTail = firstOnSegment(tail, targets);
   if (onTail !== null) {
     return { segments: shown, state: 'onTarget', mark: onTail.mark, isReturning };

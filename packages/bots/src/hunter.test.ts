@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   botView,
   createRound,
+  DEFAULT_RULES,
   stepRound,
   TICK_RATE,
   type Action,
@@ -365,5 +366,102 @@ describe('Охотник на крафтовых видах', () => {
 
     ready.tick = READY_POSE_HALF_PERIOD_TICKS;
     expect(Math.sign(brainOf(ace).tick(ready).turn)).toBe(-Math.sign(step.turn));
+  });
+});
+
+describe('Охотник и снаряд со скоростью танка', () => {
+  const FULL = 100;
+  const MAX_SPEED = 176;
+
+  // Бот едет вниз на полном ходу, стоящая цель справа, башня на ней.
+  function drivingView(): BotView {
+    const view = duelView(300);
+    view.me.heading = Math.PI / 2;
+    view.me.speed = MAX_SPEED;
+    view.me.vx = 0;
+    view.me.vy = MAX_SPEED;
+    return view;
+  }
+
+  it('на ходу ствол уходит против своего сноса; без правила — прямо на цель', () => {
+    const plainProfile = { ...HUNTER, leadChance: 0 };
+    const carried = drivingView();
+    carried.shotInheritPercent = FULL;
+    const aimed = brainOf(plainProfile).tick(carried);
+    expect(aimed.turretTurn).toBe(-1);
+    expect(aimed.isFiring).toBe(false);
+    expect(brainOf(plainProfile).tick(drivingView()).isFiring).toBe(true);
+  });
+
+  it('на движке: едущий бот попадает по стоящей цели', () => {
+    const round = createRound(
+      POLYGON,
+      [
+        { name: 'Бот', stats: SHOOTER },
+        { name: 'Цель', stats: SHOOTER },
+      ],
+      { ...DEFAULT_RULES, shotInheritPercent: FULL },
+    );
+    round.map = { ...round.map, walls: [] };
+    const [me, enemy] = round.tanks;
+    me.x = 400;
+    me.y = 200;
+    me.heading = Math.PI / 2;
+    me.speed = MAX_SPEED;
+    enemy.x = 900;
+    enemy.y = 450;
+    const brain = brainOf({ ...HUNTER, leadChance: 0, fireWindowRad: 0.02 });
+    const idle: Action = { throttle: 0, turn: 0, turretTurn: 0, isFiring: false };
+    for (let tick = 0; tick < 3 * TICK_RATE; tick++) {
+      const action = brain.tick(botView(round, 0));
+      stepRound(round, [{ ...action, throttle: 1, turn: 0 }, idle]);
+    }
+    for (let tick = 0; tick < 2 * TICK_RATE; tick++) {
+      stepRound(round, [idle, idle]);
+    }
+    expect(me.tally.shots).toBeGreaterThan(0);
+    expect(me.tally.hits).toBe(me.tally.shots);
+  });
+
+  // Стена сверху, противник справа на той же высоте; ствол — в стену.
+  function wallAboveView(turret: number, heading: number): BotView {
+    const view = duelView(500);
+    view.me.y = 345;
+    view.me.turret = turret;
+    view.me.heading = heading;
+    view.me.speed = MAX_SPEED;
+    view.me.vx = Math.cos(heading) * MAX_SPEED;
+    view.me.vy = Math.sin(heading) * MAX_SPEED;
+    view.enemy.y = 345;
+    view.arena.walls = [{ x: 0, y: 100, w: 1600, h: 40 }];
+    view.shotInheritPercent = FULL;
+    return view;
+  }
+
+  it('выстрел в стену поперёк хода вернётся в едущий танк, хотя путь по полю уходит мимо места выстрела — не стреляет', () => {
+    const careful = { ...HUNTER, fireWindowRad: Math.PI };
+    expect(brainOf(careful).tick(wallAboveView(-Math.PI / 2, 0)).isFiring).toBe(false);
+  });
+
+  it('танк отъезжает от стены: снаряд почти в стену без правила вернулся бы, с правилом — танк уезжает от возврата', () => {
+    const careful = { ...HUNTER, fireWindowRad: Math.PI };
+    const view = wallAboveView(-Math.PI / 2 + 0.07, Math.PI / 2);
+    expect(brainOf(careful).tick(view).isFiring).toBe(true);
+    expect(brainOf(careful).tick({ ...view, shotInheritPercent: 0 }).isFiring).toBe(false);
+  });
+
+  it('поза готовности уровня 9: противник целится со сносом — шаг вбок; ствол на боте, но снос уводит мимо — шага нет', () => {
+    const ace = PROFILES[9];
+    const ready = duelView(450);
+    ready.shotInheritPercent = FULL;
+    ready.enemy.heading = Math.PI / 2;
+    ready.enemy.speed = MAX_SPEED;
+    ready.enemy.vy = MAX_SPEED;
+    ready.enemy.reloadLeft = 0.05;
+    const across = Math.sqrt(ready.enemy.stats.bulletSpeed ** 2 - MAX_SPEED ** 2);
+    ready.enemy.turret = Math.atan2(-MAX_SPEED, -across);
+    expect(Math.abs(brainOf(ace).tick(ready).turn)).toBeGreaterThan(0.5);
+    ready.enemy.turret = Math.PI;
+    expect(Math.abs(brainOf(ace).tick(ready).turn)).toBeLessThan(0.1);
   });
 });

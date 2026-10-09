@@ -170,7 +170,7 @@ describe('NetClient', () => {
 
   it('входящие сообщения раскладываются по обработчикам, понг меряет задержку', () => {
     latest().open();
-    latest().receive(encode({ type: MessageType.Welcome, side: 1, roomCode: 'abc' }));
+    latest().receive(encode({ type: MessageType.Welcome, side: 1, roomCode: 'abc', hasNetSmoothing: false }));
     expect(onWelcome).toHaveBeenCalledWith(expect.objectContaining({ side: 1 }));
     latest().receive(encode({ type: MessageType.Pong, clientTime: 940, serverTick: 77 }));
     expect(client.rttMs).toBe(60);
@@ -362,6 +362,7 @@ describe('NetClient в общем бою', () => {
       size: 10,
       rules: DEFAULT_RULES,
       inviteMiss: FfaInviteMiss.None,
+      hasNetSmoothing: false,
     });
 
   beforeEach(() => {

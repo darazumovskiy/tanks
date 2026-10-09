@@ -1,6 +1,6 @@
 import type { Action, EndReason, FfaPlayerState, FfaSize, RoundRules, Side, Stats, ZonePlan } from '../engine/index.js';
 
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 11;
 
 export const MessageType = {
   Join: 1,
@@ -56,10 +56,13 @@ export interface LeaveMessage {
   type: typeof MessageType.Leave;
 }
 
+// hasNetSmoothing — сервер сглаживает дёрганую сеть: клиент плавно поправляет свой танк и подстраивает отставание
+// чужих под неровность снимков.
 export interface WelcomeMessage {
   type: typeof MessageType.Welcome;
   side: Side;
   roomCode: string;
+  hasNetSmoothing: boolean;
 }
 
 export interface RoomSlot {
@@ -209,6 +212,7 @@ export const FfaInviteMiss = {
 } as const;
 export type FfaInviteMiss = (typeof FfaInviteMiss)[keyof typeof FfaInviteMiss];
 
+// hasNetSmoothing — как у Welcome дуэли.
 export interface FfaWelcomeMessage {
   type: typeof MessageType.FfaWelcome;
   playerId: number;
@@ -217,6 +221,7 @@ export interface FfaWelcomeMessage {
   size: FfaSize;
   rules: RoundRules;
   inviteMiss: FfaInviteMiss;
+  hasNetSmoothing: boolean;
 }
 
 // ticksLeft — тиков до конца фазы; в лобби — до старта, null — старт ещё не назначен.

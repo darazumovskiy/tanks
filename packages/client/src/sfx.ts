@@ -1,5 +1,6 @@
 import { ARENA } from '@tanks/shared/engine';
 import { EventFlag, type SnapshotEvent } from '@tanks/shared/protocol';
+import { deviceSound, type SoundSetting } from './soundSetting.js';
 
 export type SoundName =
   'shot' | 'ricochet' | 'impact' | 'hit' | 'zoneTick' | 'death' | 'clash' | 'pickup' | 'beep' | 'go' | 'alarm' | 'win';
@@ -45,12 +46,35 @@ function isDocumentHidden(): boolean {
   return document.visibilityState === 'hidden';
 }
 
+function release(audio: Audio, output: GainNode): void {
+  output.gain.setTargetAtTime(0, audio.ctx.currentTime, VOICE_RELEASE_S);
+}
+
+interface Sounding {
+  output: GainNode;
+  endsAt: number;
+}
+
 // Громкость и панорама приходят от вызывающего: дуэль считает их по полю, толпа — по экрану. Скрытая вкладка молчит.
+// Выключенный звук на устройстве молчит, а выключение глушит звучащие звуки.
 export class Sfx {
   private audio: Audio | null = null;
-  isMuted = false;
+  private sounding: Sounding[] = [];
 
-  constructor(private readonly isHidden: () => boolean = isDocumentHidden) {}
+  constructor(
+    private readonly isHidden: () => boolean = isDocumentHidden,
+    private readonly sound: SoundSetting = deviceSound(),
+  ) {
+    sound.onChange((isMuted) => {
+      if (isMuted) {
+        this.silence();
+      }
+    });
+  }
+
+  get isMuted(): boolean {
+    return this.sound.isMuted;
+  }
 
   unlock(): void {
     if (this.audio === null) {
@@ -72,9 +96,19 @@ export class Sfx {
     }
   }
 
-  toggle(): boolean {
-    this.isMuted = !this.isMuted;
-    return this.isMuted;
+  toggle(): void {
+    this.sound.toggle();
+  }
+
+  private silence(): void {
+    const audio = this.audio;
+    if (audio === null) {
+      return;
+    }
+    for (const { output } of this.sounding) {
+      release(audio, output);
+    }
+    this.sounding = [];
   }
 
   private out(audio: Audio, pan: number, gain: number): GainNode {
@@ -147,9 +181,12 @@ export class Sfx {
       return null;
     }
     const output = this.synth(audio, name, pan, volume);
+    const now = audio.ctx.currentTime;
+    this.sounding = this.sounding.filter((voice) => voice.endsAt > now);
+    this.sounding.push({ output, endsAt: now + SOUND_DURATIONS[name] });
     return {
       stop: (): void => {
-        output.gain.setTargetAtTime(0, audio.ctx.currentTime, VOICE_RELEASE_S);
+        release(audio, output);
       },
     };
   }

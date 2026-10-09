@@ -38,7 +38,7 @@ function ffaJournal(): string {
     ffaMap(10),
     ROSTER.map((entry) => ({ ...entry, name: 'x' })),
     SEED,
-    { wallSlidePercent: 30 },
+    { wallSlidePercent: 30, shotLeadTicks: 0, shotInheritPercent: 0 },
   );
   const lines = [
     line(0, `${FFA_JOURNAL.gameStart} mode=ffa size=10 rules=30`),

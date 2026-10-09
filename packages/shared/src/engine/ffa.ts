@@ -18,10 +18,8 @@ import { chooseSpawn, chooseStartPlaces } from './spawn.js';
 // alive — танк на поле; wreck — подбит, ещё на поле; waiting — ждёт возрождения; spectator — зритель до конца матча.
 export type FfaPlayerState = 'alive' | 'wreck' | 'waiting' | 'spectator';
 
-// Без isBot — человек.
 export interface FfaSetup extends TankSetup {
   id: number;
-  isBot?: boolean;
 }
 
 export interface FfaPlayer {
@@ -120,7 +118,7 @@ function playerById(match: FfaMatch, id: number): FfaPlayer | undefined {
 }
 
 function placeTank(match: FfaMatch, player: FfaPlayer, place: Spawn): Tank {
-  const tank = makeTank({ name: player.name, stats: player.stats }, player.id, place);
+  const tank = makeTank({ name: player.name, stats: player.stats, isBot: player.isBot }, player.id, place);
   tank.shieldLeft = FFA.shieldSeconds;
   match.world.tanks.push(tank);
   player.state = 'alive';

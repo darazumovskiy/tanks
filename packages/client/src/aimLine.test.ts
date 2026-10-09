@@ -1,9 +1,12 @@
 import {
   ARENA,
   BULLET_RADIUS,
+  isSegmentWithin,
   leadPoint,
+  leadShot,
   MAPS,
   MUZZLE_OFFSET,
+  NO_CARRY,
   TANK_HIT_RADIUS,
   traceShot,
   type Field,
@@ -33,6 +36,7 @@ function input(overrides: Partial<DuelInput> & Pick<DuelInput, 'shooter'>): AimL
   return {
     field: POLYGON,
     bulletSpeed: BULLET_SPEED,
+    carry: NO_CARRY,
     hasLeadHint: false,
     ...rest,
     targets: enemy === null ? [] : [enemy],
@@ -40,7 +44,7 @@ function input(overrides: Partial<DuelInput> & Pick<DuelInput, 'shooter'>): AimL
 }
 
 function crowdInput(shooter: AimLineInput['shooter'], targets: readonly AimLineEnemy[], field = POLYGON): AimLineInput {
-  return { field, shooter, bulletSpeed: BULLET_SPEED, targets, hasLeadHint: false };
+  return { field, shooter, bulletSpeed: BULLET_SPEED, carry: NO_CARRY, targets, hasLeadHint: false };
 }
 
 describe('computeAimLine — геометрия', () => {
@@ -146,7 +150,7 @@ describe('computeAimLine и firstTargetOnPath — толпа', () => {
   const shooterAtTail = { x: 140, y: 450, turret: -deg(150) };
 
   function pathOf(shooter: AimLineInput['shooter']): ShotSegment[] {
-    return traceShot(POLYGON, shooter, shooter.turret, BULLET_SPEED).segments;
+    return traceShot(POLYGON, shooter, shooter.turret, BULLET_SPEED, NO_CARRY).segments;
   }
 
   function tailPoint(distance: number): AimLineEnemy {
@@ -205,7 +209,7 @@ describe('computeAimLine и firstTargetOnPath — толпа', () => {
 describe('computeAimLine — «упреждаю»', () => {
   const shooter = { x: 140, y: 450 };
   const crossing: AimLineEnemy = { x: 700, y: 450, heading: Math.PI / 2, speed: 150 };
-  const lead = leadPoint(shooter, crossing, { x: 0, y: crossing.speed }, BULLET_SPEED);
+  const lead = leadPoint(shooter, crossing, { x: 0, y: crossing.speed }, BULLET_SPEED, NO_CARRY);
   const turretAtLead = Math.atan2(lead.y - shooter.y, lead.x - shooter.x);
 
   it('башня на точке упреждения: с флагом — «упреждаю» и засечка у точки, без флага — ничего', () => {
@@ -233,10 +237,53 @@ describe('computeAimLine — «упреждаю»', () => {
 
   it('скорость ниже порога — «упреждаю» не показывается', () => {
     const slow: AimLineEnemy = { ...crossing, speed: 20 };
-    const slowLead = leadPoint(shooter, slow, { x: 0, y: slow.speed }, BULLET_SPEED);
+    const slowLead = leadPoint(shooter, slow, { x: 0, y: slow.speed }, BULLET_SPEED, NO_CARRY);
     expect(Math.abs(slowLead.y - slow.y)).toBeLessThan(TANK_HIT_RADIUS);
     const turret = Math.atan2(slow.y + 40 - shooter.y, slow.x - shooter.x);
     const line = computeAimLine(input({ shooter: { ...shooter, turret }, enemy: slow, hasLeadHint: true }));
     expect(line.state).toBe('none');
+  });
+});
+
+describe('computeAimLine — снаряд со скоростью танка', () => {
+  const open: Field = { width: ARENA.width, height: ARENA.height, walls: [] };
+  // Свой танк едет вниз на полном ходу и получает его снаряду целиком.
+  const carry = { x: 0, y: 176 };
+
+  it('путь первого отрезка — по стволу со сносом; без сноса — по стволу', () => {
+    const shooter = { x: 200, y: 200, turret: 0 };
+    const carried = computeAimLine(input({ field: open, shooter, carry })).segments[0];
+    const plain = computeAimLine(input({ field: open, shooter })).segments[0];
+    const angleOf = (segment: ShotSegment | undefined): number =>
+      Math.atan2((segment?.y2 ?? 0) - (segment?.y1 ?? 0), (segment?.x2 ?? 0) - (segment?.x1 ?? 0));
+    expect(angleOf(carried)).toBeCloseTo(Math.atan2(carry.y, BULLET_SPEED), 9);
+    expect(angleOf(plain)).toBe(0);
+  });
+
+  it('ствол на точку наводки со сносом — «упреждаю», засечка у точки встречи', () => {
+    const shooter = { x: 140, y: 450 };
+    const crossing: AimLineEnemy = { x: 700, y: 300, heading: Math.PI, speed: 150 };
+    const solution = leadShot(shooter, crossing, { x: -crossing.speed, y: 0 }, BULLET_SPEED, carry);
+    const turret = Math.atan2(solution.aim.y - shooter.y, solution.aim.x - shooter.x);
+    const line = computeAimLine(
+      input({ field: open, shooter: { ...shooter, turret }, carry, enemy: crossing, hasLeadHint: true }),
+    );
+    expect(line.state).toBe('lead');
+    const markDistance = Math.hypot((line.mark?.x ?? 0) - solution.meet.x, (line.mark?.y ?? 0) - solution.meet.y);
+    expect(markDistance).toBeCloseTo(TANK_HIT_RADIUS, 6);
+    const ignoringCarry = computeAimLine(
+      input({ field: open, shooter: { ...shooter, turret }, enemy: crossing, hasLeadHint: true }),
+    );
+    expect(ignoringCarry.state).toBe('none');
+  });
+
+  it('опасный хвост: выстрел в стену поперёк хода возвращается в едущий танк', () => {
+    const field: Field = { width: ARENA.width, height: ARENA.height, walls: [{ x: 0, y: 100, w: 1600, h: 40 }] };
+    const shooter = { x: 300, y: 400, turret: -Math.PI / 2 };
+    const sideways = { x: 176, y: 0 };
+    const line = computeAimLine(input({ field, shooter, carry: sideways }));
+    expect(line.isReturning).toBe(true);
+    const returning = traceShot(field, shooter, shooter.turret, BULLET_SPEED, sideways).segments[1];
+    expect(returning === undefined ? true : isSegmentWithin(returning, shooter, TANK_HIT_RADIUS)).toBe(false);
   });
 });

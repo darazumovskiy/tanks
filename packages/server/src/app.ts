@@ -2,7 +2,15 @@ import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
-import { DEFAULT_RULES, FFA_SIZES, TICK_RATE, type FfaSize, type RoundRules } from '@tanks/shared/engine';
+import {
+  DEFAULT_RULES,
+  FFA_SIZES,
+  SHOT_INHERIT_MAX_PERCENT,
+  SHOT_LEAD_MAX_TICKS,
+  TICK_RATE,
+  type FfaSize,
+  type RoundRules,
+} from '@tanks/shared/engine';
 import {
   decode,
   encode,
@@ -40,7 +48,8 @@ import {
 // trustedProxies — адреса соединений, которым верим в X-Forwarded-For; умолчание — Caddy на этой же машине.
 // visitLimits — визитов в минуту с адреса и в сутки на сервер; wallClock — часы визитов в мс от эпохи.
 // rules — правила движка для всех комнат процесса.
-// ffaEnv — переключатели общей игры строками окружения (ключ — имя переменной) поверх `ffa`; пусто — умолчание.
+// env — настройки процесса строками окружения (ключ — имя переменной): переключатели общей игры поверх `ffa`, догон
+// снаряда и скорость танка у снаряда поверх `rules`, сглаживание дёрганой сети `NET_SMOOTHING`; пусто — умолчание.
 // botClock — часы бюджета хода ботов в мс; умолчание — время процесса.
 // systemRoot — корень файловой системы, из которого /metrics читает давление на процессор и steal; умолчание — `/`.
 export interface AppOptions {
@@ -54,7 +63,7 @@ export interface AppOptions {
   rules?: RoundRules;
   room?: RoomOptions;
   ffa?: FfaOptions;
-  ffaEnv?: Readonly<Record<string, string | undefined>>;
+  env?: Readonly<Record<string, string | undefined>>;
   tickMs?: number;
   random?: () => number;
   silenceTimeoutMs?: number;
@@ -95,8 +104,16 @@ const FFA_ENV = {
   botBudgetMs: 'FFA_BOT_BUDGET_MS',
   botSlowdown: 'FFA_BOT_SLOWDOWN',
 } as const;
+const SHOT_LEAD_ENV = 'SHOT_LEAD_TICKS';
+const SHOT_INHERIT_ENV = 'SHOT_INHERIT_PERCENT';
+const NET_SMOOTHING_ENV = 'NET_SMOOTHING';
+// 0 — догон выключен.
+const SHOT_LEAD_MIN_TICKS = 0;
+// 0 — снаряд летит только по стволу.
+const SHOT_INHERIT_MIN_PERCENT = 0;
 const SWITCH_ON = '1';
 const SWITCH_OFF = '0';
+const POSITIVE_MIN = 1;
 // Минимум один на все размеры, поэтому не больше самой маленькой игры.
 const FFA_MINIMUM_LIMIT = Math.min(...FFA_SIZES);
 // ticksLeft и idleTicksLeft уходят двумя байтами, а 0xFFFF там значит «нет»: длительность в тиках меньше него.
@@ -105,21 +122,21 @@ const FFA_SECONDS_LIMIT = Math.floor((NO_ID - 1) / TICK_RATE);
 const BOT_BUDGET_LIMIT_MS = Math.floor(1000 / TICK_RATE);
 const BOT_SLOWDOWN_LIMIT = 100;
 
-type FfaEnv = Readonly<Record<string, string | undefined>>;
+type ServerEnv = Readonly<Record<string, string | undefined>>;
 
-function envInteger(env: FfaEnv, name: string, limit: number): number | null {
+function envInteger(env: ServerEnv, name: string, min: number, limit: number): number | null {
   const raw = env[name];
   if (raw === undefined || raw === '') {
     return null;
   }
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > limit) {
-    throw new Error(`${name} должен быть целым от 1 до ${String(limit)}, получено «${raw}»`);
+  if (!Number.isInteger(value) || value < min || value > limit) {
+    throw new Error(`${name} должен быть целым от ${String(min)} до ${String(limit)}, получено «${raw}»`);
   }
   return value;
 }
 
-function envSwitch(env: FfaEnv, name: string): boolean | null {
+function envSwitch(env: ServerEnv, name: string): boolean | null {
   const raw = env[name];
   if (raw === undefined || raw === '') {
     return null;
@@ -134,21 +151,21 @@ function ticksOr(seconds: number | null, fallback: number): number {
   return seconds === null ? fallback : seconds * TICK_RATE;
 }
 
-function ffaOptionsFromEnv(base: FfaOptions, env: FfaEnv): FfaOptions {
-  const minimum = envInteger(env, FFA_ENV.minimum, FFA_MINIMUM_LIMIT);
-  const matchSeconds = envInteger(env, FFA_ENV.matchSeconds, FFA_SECONDS_LIMIT);
-  const lobbyWaitSeconds = envInteger(env, FFA_ENV.lobbyWaitSeconds, FFA_SECONDS_LIMIT);
-  const resultsSeconds = envInteger(env, FFA_ENV.resultsSeconds, FFA_SECONDS_LIMIT);
-  const idleWarnSeconds = envInteger(env, FFA_ENV.idleWarnSeconds, FFA_SECONDS_LIMIT);
-  const idleKickSeconds = envInteger(env, FFA_ENV.idleKickSeconds, FFA_SECONDS_LIMIT);
+function ffaOptionsFromEnv(base: FfaOptions, env: ServerEnv): FfaOptions {
+  const minimum = envInteger(env, FFA_ENV.minimum, POSITIVE_MIN, FFA_MINIMUM_LIMIT);
+  const matchSeconds = envInteger(env, FFA_ENV.matchSeconds, POSITIVE_MIN, FFA_SECONDS_LIMIT);
+  const lobbyWaitSeconds = envInteger(env, FFA_ENV.lobbyWaitSeconds, POSITIVE_MIN, FFA_SECONDS_LIMIT);
+  const resultsSeconds = envInteger(env, FFA_ENV.resultsSeconds, POSITIVE_MIN, FFA_SECONDS_LIMIT);
+  const idleWarnSeconds = envInteger(env, FFA_ENV.idleWarnSeconds, POSITIVE_MIN, FFA_SECONDS_LIMIT);
+  const idleKickSeconds = envInteger(env, FFA_ENV.idleKickSeconds, POSITIVE_MIN, FFA_SECONDS_LIMIT);
   const idleWarnTicks = ticksOr(idleWarnSeconds, base.idleWarnTicks);
   const idleKickTicks = ticksOr(idleKickSeconds, base.idleKickTicks);
   const isIdleSet = idleWarnSeconds !== null || idleKickSeconds !== null;
   if (isIdleSet && idleWarnTicks >= idleKickTicks) {
     throw new Error(`${FFA_ENV.idleWarnSeconds} должен быть меньше ${FFA_ENV.idleKickSeconds}`);
   }
-  const botBudgetMs = envInteger(env, FFA_ENV.botBudgetMs, BOT_BUDGET_LIMIT_MS);
-  const botSlowdown = envInteger(env, FFA_ENV.botSlowdown, BOT_SLOWDOWN_LIMIT);
+  const botBudgetMs = envInteger(env, FFA_ENV.botBudgetMs, POSITIVE_MIN, BOT_BUDGET_LIMIT_MS);
+  const botSlowdown = envInteger(env, FFA_ENV.botSlowdown, POSITIVE_MIN, BOT_SLOWDOWN_LIMIT);
   const minimums: Readonly<Record<FfaSize, number>> =
     minimum === null ? base.minimum : { 10: minimum, 30: minimum, 50: minimum };
   return {
@@ -162,6 +179,16 @@ function ffaOptionsFromEnv(base: FfaOptions, env: FfaEnv): FfaOptions {
     idleKickTicks,
     botBudgetMs: botBudgetMs ?? base.botBudgetMs,
     botSlowdown: botSlowdown ?? base.botSlowdown,
+  };
+}
+
+function rulesFromEnv(base: Readonly<RoundRules>, env: ServerEnv): RoundRules {
+  const shotLeadTicks = envInteger(env, SHOT_LEAD_ENV, SHOT_LEAD_MIN_TICKS, SHOT_LEAD_MAX_TICKS);
+  const shotInheritPercent = envInteger(env, SHOT_INHERIT_ENV, SHOT_INHERIT_MIN_PERCENT, SHOT_INHERIT_MAX_PERCENT);
+  return {
+    ...base,
+    shotLeadTicks: shotLeadTicks ?? base.shotLeadTicks,
+    shotInheritPercent: shotInheritPercent ?? base.shotInheritPercent,
   };
 }
 
@@ -191,7 +218,9 @@ function toBytes(data: RawData): Uint8Array {
 }
 
 export function createApp(options: AppOptions = {}): App {
-  const ffaOptions = ffaOptionsFromEnv(options.ffa ?? DEFAULT_FFA_OPTIONS, options.ffaEnv ?? {});
+  const env = options.env ?? {};
+  const ffaOptions = ffaOptionsFromEnv(options.ffa ?? DEFAULT_FFA_OPTIONS, env);
+  const rules = rulesFromEnv(options.rules ?? DEFAULT_RULES, env);
   const fileLog = options.logDir === undefined ? null : new FileGameLog(options.logDir);
   const log: GameLog = fileLog ?? NO_LOG;
   const visitLog = options.logDir === undefined ? null : new FileGameLog(join(options.logDir, VISITS_DIR));
@@ -209,8 +238,9 @@ export function createApp(options: AppOptions = {}): App {
     options.random ?? Math.random,
     log,
     metrics,
-    options.rules ?? DEFAULT_RULES,
+    rules,
     ffaOptions,
+    envSwitch(env, NET_SMOOTHING_ENV) ?? false,
   );
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
   const botClock = options.botClock ?? ((): number => performance.now());

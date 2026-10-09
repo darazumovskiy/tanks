@@ -12,6 +12,7 @@ import {
   decode,
   encode,
   MessageType,
+  toSnapshotEvent,
   type ClientMessage,
   type InputMessage,
   type ServerMessage,
@@ -22,11 +23,12 @@ import { DiagLog } from './diag.js';
 import { Game, type DuelRendererLike } from './game.js';
 import type { SocketLike } from './net.js';
 import type { Camera } from './render/camera.js';
-import { Effects } from './render/effects.js';
+import { Effects, type FxEventOptions } from './render/effects.js';
 import { PREDICTED_BULLET_ID_BASE } from './predictedShots.js';
 import { StampDecals } from './render/stampDecals.js';
 import { defaultSettings } from './settings.js';
 import { Sfx } from './sfx.js';
+import { SoundSetting } from './soundSetting.js';
 import { Telemetry } from './telemetry.js';
 import { installFakeAudio, type FakeAudio } from './testing/fakeAudio.js';
 
@@ -102,8 +104,10 @@ class FakeRenderer implements DuelRendererLike {
 
 // mine — действие своего танка на сервере в этом тике.
 interface Harness {
+  game: Game;
   socket: FakeSocket;
   sfx: Sfx;
+  sound: SoundSetting;
   diag: DiagLog;
   effects: Effects;
   round: Round;
@@ -167,7 +171,8 @@ function startDuel(): Harness {
   document.body.append(canvas, overlay, roundEnd);
   let socket: FakeSocket | null = null;
   let effects: Effects | null = null;
-  const sfx = new Sfx(() => document.visibilityState === 'hidden');
+  const sound = new SoundSetting(null);
+  const sfx = new Sfx(() => document.visibilityState === 'hidden', sound);
   const diag = new DiagLog('test', { post: () => Promise.resolve(true), beacon: () => true });
   const game = new Game(
     {
@@ -216,7 +221,7 @@ function startDuel(): Harness {
     { name: 'Дима', stats: DEFAULT_STATS },
     { name: 'Бублик', stats: DEFAULT_STATS },
   ]);
-  opened.receive({ type: MessageType.Welcome, side: 0, roomCode: 'test' });
+  opened.receive({ type: MessageType.Welcome, side: 0, roomCode: 'test', hasNetSmoothing: false });
   opened.receive({
     type: MessageType.RoundStart,
     gameId: 'K7QX',
@@ -231,8 +236,10 @@ function startDuel(): Harness {
     ],
   });
   const harness: Harness = {
+    game,
     socket: opened,
     sfx,
+    sound,
     diag,
     effects: created,
     round,
@@ -352,5 +359,131 @@ describe('проводка дуэли', () => {
     expect(serverId).toBeDefined();
     expect(rename).toHaveBeenCalledTimes(1);
     expect(rename).toHaveBeenCalledWith(shot.seq + PREDICTED_BULLET_ID_BASE, serverId);
+  });
+
+  it('клавиша M выключает и включает звук устройства: выключенный не звучит, включённый — снова звучит', () => {
+    const harness = startDuel();
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM' }));
+    expect(harness.sound.isMuted).toBe(true);
+    expect(harness.game.debugState()?.isMuted).toBe(true);
+    harness.snapshot({ events: [enemyHit(harness.round)] });
+    harness.frames(PICTURE_FRAMES);
+    expect(audio.outputs).toHaveLength(0);
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM' }));
+    expect(harness.sound.isMuted).toBe(false);
+    expect(harness.game.debugState()?.isMuted).toBe(false);
+    harness.snapshot({ events: [enemyHit(harness.round)] });
+    harness.frames(PICTURE_FRAMES);
+    expect(audio.outputs.length).toBeGreaterThan(0);
+  });
+});
+
+describe('попадание по своему танку по касанию', () => {
+  const DELAY_TICKS = 4;
+  const FIRE: Action = { ...IDLE_ACTION, isFiring: true };
+  const MAX_TICKS = 90;
+
+  it('эффект с тряской и звук — в кадре касания, до снимка с попаданием; снимок их не повторяет; счётчики в отладке', () => {
+    const harness = startDuel();
+    const { round, socket } = harness;
+    Object.assign(round.tanks[0], { x: 240, y: 100, heading: Math.PI / 2, turret: 0 });
+    Object.assign(round.tanks[1], { x: 1180, y: 100, heading: Math.PI, turret: Math.PI });
+    const onEvent = vi.spyOn(harness.effects, 'onEvent');
+    const sounds = vi.spyOn(harness.sfx, 'events');
+    const hitEffects = (): FxEventOptions[] =>
+      onEvent.mock.calls.filter(([fx]) => fx.kind === 'hit' && fx.tank === 0).map(([, options]) => options);
+    const hitSounds = (): number =>
+      sounds.mock.calls.flatMap(([due]) => due).filter((event) => event.kind === 'hit' && event.side === 0).length;
+    const queue: SnapshotMessage[] = [];
+    let hitTick: number | null = null;
+    let delivered = round.tick;
+    let deliveredAtTouch: number | null = null;
+    for (let tick = 0; tick < MAX_TICKS; tick++) {
+      const events = stepRound(round, [IDLE_ACTION, tick === 0 ? FIRE : IDLE_ACTION]);
+      if (events.some((event) => event.type === 'hit' && event.tank === 0)) {
+        hitTick = round.tick;
+      }
+      queue.push(snapshotOf(round, socket.inputs.at(-1)?.seq ?? 0, events.map(toSnapshotEvent), false));
+      const due = queue.length > DELAY_TICKS ? queue.shift() : undefined;
+      if (due !== undefined) {
+        socket.receive(due);
+        delivered = due.tick;
+      }
+      for (let frame = 0; frame < 2; frame++) {
+        harness.frames(1);
+        if (deliveredAtTouch === null && hitEffects().length > 0) {
+          deliveredAtTouch = delivered;
+        }
+      }
+    }
+    expect(hitTick).not.toBeNull();
+    expect(deliveredAtTouch).toBeLessThan(hitTick ?? -Infinity);
+    expect(hitEffects()).toHaveLength(1);
+    expect(hitEffects()[0]?.shake).toBeGreaterThan(0);
+    expect(hitSounds()).toBe(1);
+    expect(harness.game.debugState()?.ownHits).toEqual({
+      played: 1,
+      confirmed: 1,
+      cancelled: 0,
+      served: 1,
+      doubles: 0,
+    });
+  });
+});
+
+describe('свой выстрел по предсказанию', () => {
+  const DELAY_TICKS = 4;
+  const STEPS = 20;
+
+  it('тряска, вспышка, отдача и звук — в кадре, где снаряд появился у ствола; снимок их не повторяет; счётчики в отладке', () => {
+    const harness = startDuel();
+    const { round, socket } = harness;
+    Object.assign(round.tanks[0], { x: 240, y: 100, heading: Math.PI / 2, turret: 0 });
+    Object.assign(round.tanks[1], { x: 1180, y: 100, heading: Math.PI, turret: Math.PI });
+    const onEvent = vi.spyOn(harness.effects, 'onEvent');
+    const sounds = vi.spyOn(harness.sfx, 'events');
+    const shotEffects = (): FxEventOptions[] =>
+      onEvent.mock.calls.filter(([fx]) => fx.kind === 'shot' && fx.tank === 0).map(([, options]) => options);
+    const shotSounds = (): number =>
+      sounds.mock.calls.flatMap(([due]) => due).filter((event) => event.kind === 'shot' && event.side === 0).length;
+    const queue: SnapshotMessage[] = [];
+    let applied = socket.inputs.length;
+    let ackSeq = socket.inputs.at(-1)?.seq ?? 0;
+    let serverShotTick: number | null = null;
+    let delivered = round.tick;
+    let deliveredAtShot: number | null = null;
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
+    for (let tick = 0; tick < STEPS; tick++) {
+      const input = socket.inputs[applied];
+      if (input !== undefined) {
+        applied++;
+        ackSeq = input.seq;
+      }
+      const events = stepRound(round, [input?.action ?? IDLE_ACTION, IDLE_ACTION]);
+      if (events.some((event) => event.type === 'shot' && event.tank === 0)) {
+        serverShotTick ??= round.tick;
+      }
+      queue.push(snapshotOf(round, ackSeq, events.map(toSnapshotEvent), false));
+      const due = queue.length > DELAY_TICKS ? queue.shift() : undefined;
+      if (due !== undefined) {
+        socket.receive(due);
+        delivered = due.tick;
+      }
+      for (let frame = 0; frame < 2; frame++) {
+        harness.frames(1);
+        if (deliveredAtShot === null && shotEffects().length > 0) {
+          deliveredAtShot = delivered;
+        }
+      }
+      if (tick === 0) {
+        window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space' }));
+      }
+    }
+    expect(serverShotTick).not.toBeNull();
+    expect(deliveredAtShot).toBeLessThan(serverShotTick ?? -Infinity);
+    expect(shotEffects()).toHaveLength(1);
+    expect(shotEffects()[0]?.shake).toBeGreaterThan(0);
+    expect(shotSounds()).toBe(1);
+    expect(harness.game.debugState()?.ownShots).toEqual({ played: 1, confirmed: 1, unconfirmed: 0 });
   });
 });

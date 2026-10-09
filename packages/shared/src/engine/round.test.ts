@@ -1,15 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { ACCEL, DT, TANK_RADIUS, WALL_HIT_SPEED_FACTOR, WALL_SLIDE_MAX_PERCENT } from './constants.js';
-import { createRound, IDLE_ACTION, stepRound, type Round, type RoundEvent, type RoundRules } from './round.js';
+import {
+  createRound,
+  DEFAULT_RULES,
+  IDLE_ACTION,
+  stepRound,
+  type Round,
+  type RoundEvent,
+  type RoundRules,
+} from './round.js';
 
 const POLYGON = 0;
 const LABYRINTH = 1;
 const STATS = { armor: 3, engine: 3, gun: 2, reload: 2 };
 const MAX_SPEED = 176;
 const FULL_THROTTLE = { ...IDLE_ACTION, throttle: 1 };
-const NO_SLIDE: RoundRules = { wallSlidePercent: 0 };
-const HALF_SLIDE: RoundRules = { wallSlidePercent: 50 };
-const FULL_SLIDE: RoundRules = { wallSlidePercent: WALL_SLIDE_MAX_PERCENT };
+const NO_SLIDE: RoundRules = { ...DEFAULT_RULES, wallSlidePercent: 0 };
+const HALF_SLIDE: RoundRules = { ...DEFAULT_RULES, wallSlidePercent: 50 };
+const FULL_SLIDE: RoundRules = { ...DEFAULT_RULES, wallSlidePercent: WALL_SLIDE_MAX_PERCENT };
 const DEG_45 = Math.PI / 4;
 const DEG_30 = Math.PI / 6;
 const TOP_EDGE_Y = TANK_RADIUS;
@@ -77,14 +85,16 @@ describe('правила раунда', () => {
       { name: 'A', stats: STATS },
       { name: 'B', stats: STATS },
     ]);
-    expect(round.rules).toEqual({ wallSlidePercent: 0 });
+    expect(round.rules).toEqual({ wallSlidePercent: 0, shotLeadTicks: 0, shotInheritPercent: 0 });
   });
 
   it('правила копируются в раунд', () => {
-    const rules: RoundRules = { wallSlidePercent: 50 };
+    const rules: RoundRules = { wallSlidePercent: 50, shotLeadTicks: 2, shotInheritPercent: 100 };
     const round = roundWith(POLYGON, rules, { x: 800, y: 450, heading: 0 });
     rules.wallSlidePercent = 0;
-    expect(round.rules.wallSlidePercent).toBe(50);
+    rules.shotLeadTicks = 0;
+    rules.shotInheritPercent = 0;
+    expect(round.rules).toEqual({ wallSlidePercent: 50, shotLeadTicks: 2, shotInheritPercent: 100 });
   });
 });
 
@@ -121,7 +131,7 @@ describe('скольжение вдоль стен', () => {
   it('равновесная скорость у края растёт с процентом скольжения', () => {
     const pose: Pose = { x: 400, y: 80, heading: -DEG_45 };
     const speeds = [0, 25, 50, 75, 100].map((wallSlidePercent) => {
-      const round = roundWith(POLYGON, { wallSlidePercent }, pose);
+      const round = roundWith(POLYGON, { ...DEFAULT_RULES, wallSlidePercent }, pose);
       drive(round, 60);
       return round.tanks[0].speed;
     });

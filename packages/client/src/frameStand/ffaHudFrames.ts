@@ -139,6 +139,7 @@ function joined(
       size,
       rules: DEFAULT_RULES,
       inviteMiss,
+      hasNetSmoothing: false,
     },
     welcomedAt,
   );

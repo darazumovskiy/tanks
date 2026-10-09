@@ -9,7 +9,7 @@ import { TwinBrain } from '@tanks/bots/twin';
 import type { TwinProfile } from '@tanks/bots/twin';
 import { createBot } from '@tanks/server/bots/ladder';
 import { Room } from '@tanks/server/room';
-import { createRandom, nextRandom, ROUND_SECONDS, TICK_RATE, type Side } from '@tanks/shared/engine';
+import { createRandom, DEFAULT_RULES, nextRandom, ROUND_SECONDS, TICK_RATE, type Side } from '@tanks/shared/engine';
 import { botRoomCode } from '@tanks/shared/protocol';
 import { TwinPlayer } from '../player.js';
 import { TWIN_NICK, twinSelection } from '../profile.js';
@@ -62,10 +62,13 @@ function commandPrint(lines: readonly string[]): number {
 export function playGame(plan: GamePlan, profile: TwinProfile, logDir: string | null): GameResult {
   const roomCode = botRoomCode(plan.level, ROOM_SUFFIX);
   const log = new MemoryGameLog(plan.id, roomCode);
-  const room = new Room(roomCode, STAND_ROOM, log, undefined, { wallSlidePercent: plan.condition.wallSlidePercent });
+  const room = new Room(roomCode, STAND_ROOM, log, undefined, {
+    ...DEFAULT_RULES,
+    wallSlidePercent: plan.condition.wallSlidePercent,
+  });
   const botSide: Side = plan.twinSide === 0 ? 1 : 0;
   createBot(plan.level, seededRandom(plan.botSeed), (connection, nickname, stats) =>
-    room.join(botSide, connection, nickname, stats),
+    room.join(botSide, connection, nickname, stats, true),
   );
   const twin = new TwinPlayer({
     profile,

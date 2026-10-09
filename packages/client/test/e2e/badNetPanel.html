@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0f0d" />
+    <title>Пульт · Плохая сеть</title>
+    <link rel="stylesheet" href="/fonts/fonts.css" />
+    <style>
+      :root {
+        --bg: #0b0f0d;
+        --card: #121815;
+        --raised: #18201c;
+        --text: #f4f1e8;
+        --muted: rgba(244, 241, 232, 0.55);
+        --line: rgba(255, 255, 255, 0.1);
+        --edge: rgba(255, 255, 255, 0.16);
+        --accent: #e8825a;
+        --accent-soft: rgba(232, 130, 90, 0.16);
+        --danger: #e8645a;
+        --head-font: 'Russo One', 'Arial Black', sans-serif;
+        --text-font: 'Inter', 'Segoe UI', system-ui, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(120% 60% at 50% -10%, rgba(232, 130, 90, 0.09), transparent 60%), var(--bg);
+        color: var(--text);
+        font: 500 15px/1.4 var(--text-font);
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .panel {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: max(18px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 28px
+          max(16px, env(safe-area-inset-left));
+      }
+
+      .head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      h1 {
+        margin: 0;
+        font: 400 24px/1.1 var(--head-font);
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      .head-sub {
+        margin: 0;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      h2 {
+        margin: 0 0 10px;
+        font: 400 13px/1.2 var(--head-font);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(244, 241, 232, 0.7);
+      }
+
+      .layout {
+        display: grid;
+        gap: 12px;
+      }
+
+      .column {
+        display: grid;
+        gap: 12px;
+        align-content: start;
+      }
+
+      @media (min-width: 720px) {
+        .layout {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      .card {
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--card);
+      }
+
+      .now-line {
+        margin: 0;
+        font: 400 17px/1.3 var(--head-font);
+        letter-spacing: 0.02em;
+      }
+
+      .now-part {
+        white-space: nowrap;
+      }
+
+      .now-line b {
+        font-weight: 400;
+        color: var(--accent);
+      }
+
+      .now-stat,
+      .hint {
+        margin: 8px 0 0;
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .now-stat strong {
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      .notice {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px;
+        border: 1px solid rgba(232, 130, 90, 0.55);
+        border-radius: 12px;
+        background: var(--accent-soft);
+        font-size: 14px;
+        animation: notice-in 200ms ease-out;
+      }
+
+      .notice.is-error {
+        border-color: rgba(232, 100, 90, 0.7);
+        background: rgba(232, 100, 90, 0.14);
+      }
+
+      .notice-spinner {
+        flex: none;
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(232, 130, 90, 0.3);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      .notice-text small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .links {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .links + h2 {
+        margin-top: 16px;
+      }
+
+      .link {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 8px 12px;
+        border: 1px solid var(--edge);
+        border-radius: 10px;
+        background: var(--raised);
+        color: var(--text);
+        font-weight: 600;
+        text-decoration: none;
+        transition:
+          border-color 160ms ease,
+          transform 120ms ease;
+      }
+
+      .link.is-bad {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #1b0f09;
+      }
+
+      .link:hover {
+        border-color: rgba(232, 130, 90, 0.7);
+      }
+
+      .link:active,
+      .option:active:not(:disabled) {
+        transform: scale(0.97);
+      }
+
+      .options {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
+        gap: 8px;
+      }
+
+      .options.is-pairs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .options.is-triples {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .options.is-pings {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      @media (min-width: 720px) {
+        .options.is-pings {
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+        }
+      }
+
+      .option {
+        min-height: 46px;
+        padding: 8px 10px;
+        border: 1px solid var(--edge);
+        border-radius: 10px;
+        background: var(--raised);
+        color: var(--text);
+        font: 600 14px/1.2 var(--text-font);
+        cursor: pointer;
+        touch-action: manipulation;
+        transition:
+          border-color 160ms ease,
+          background 160ms ease,
+          color 160ms ease,
+          opacity 160ms ease,
+          transform 120ms ease;
+      }
+
+      .option:hover:not(:disabled) {
+        border-color: rgba(232, 130, 90, 0.6);
+      }
+
+      .option[aria-pressed='true'] {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        box-shadow: inset 0 0 0 1px var(--accent);
+        color: #ffd8c6;
+      }
+
+      .option:disabled {
+        cursor: default;
+        opacity: 0.4;
+      }
+
+      .option:focus-visible,
+      .link:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes notice-in {
+        from {
+          opacity: 0;
+          transform: translateY(-4px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="panel">
+      <header class="head">
+        <h1>Плохая сеть</h1>
+        <p class="head-sub">Пульт стенда</p>
+      </header>
+      <div class="layout">
+        <div class="column">
+          <section class="card">
+            <h2>Сейчас</h2>
+            <p class="now-line" id="now-line">Связываюсь со стендом…</p>
+            <p class="now-stat" id="now-ping"></p>
+            <p class="now-stat" id="now-stat"></p>
+          </section>
+          <div class="notice" id="notice" role="status" hidden>
+            <span class="notice-spinner" id="notice-spinner" hidden></span>
+            <span class="notice-text" id="notice-text"></span>
+          </div>
+          <section class="card">
+            <h2>Играть через плохую сеть</h2>
+            <div class="links">
+              <a class="link is-bad" id="bad-ffa" target="_blank" rel="noopener">Бой толпы</a>
+              <a class="link is-bad" id="bad-home" target="_blank" rel="noopener">Главная</a>
+            </div>
+            <h2>Напрямую для сравнения</h2>
+            <div class="links">
+              <a class="link" id="direct-ffa" target="_blank" rel="noopener">Бой толпы</a>
+              <a class="link" id="direct-home" target="_blank" rel="noopener">Главная</a>
+            </div>
+            <p class="hint" id="addresses"></p>
+          </section>
+        </div>
+        <div class="column">
+          <section class="card">
+            <h2>Пинг</h2>
+            <div class="options is-pings" id="ping-options"></div>
+            <p class="hint" id="ping-hint"></p>
+          </section>
+          <section class="card">
+            <h2>Неровность</h2>
+            <div class="options is-triples">
+              <button type="button" class="option" data-jitter="even">Ровно</button>
+              <button type="button" class="option" data-jitter="light">Лёгкая</button>
+              <button type="button" class="option" data-jitter="phone">Как телефон ночью</button>
+            </div>
+            <p class="hint" id="jitter-hint"></p>
+          </section>
+          <section class="card">
+            <h2>Лаг-компенсация</h2>
+            <div class="options" id="lead-options"></div>
+            <p class="hint" id="lead-hint"></p>
+          </section>
+          <section class="card">
+            <h2>Снаряд со скоростью танка</h2>
+            <div class="options is-triples" id="inherit-options"></div>
+            <p class="hint" id="inherit-hint"></p>
+          </section>
+          <section class="card">
+            <h2>Сглаживание сети</h2>
+            <div class="options is-pairs" id="smoothing-options">
+              <button type="button" class="option" data-smoothing="false">Выкл</button>
+              <button type="button" class="option" data-smoothing="true">Вкл</button>
+            </div>
+            <p class="hint" id="smoothing-hint"></p>
+          </section>
+        </div>
+      </div>
+    </main>
+    <script>
+      const POLL_MS = 2000;
+      const FFA_PATH = '/ffa/10';
+      const LEAD_CHOICES = [0, 1, 2, 3];
+      const INHERIT_CHOICES = [0, 50, 100];
+      const INHERIT_HINTS = {
+        0: 'Снаряд летит только по стволу, как на боевом сервере: на ходу вбок он отстаёт от ствола.',
+        50: 'Снаряд получает половину скорости танка: на ходу отстаёт от ствола вдвое меньше.',
+        100: 'Снаряд получает всю скорость танка: на ходу летит по линии ствола, вперёд — дальше, назад — ближе.',
+      };
+      const PING_CHOICES = [0, 50, 80, 100, 150, 200, 300];
+      const SMOOTHING_HINTS = {
+        false: 'Как на боевом сервере: на пачках чужие замирают и прыгают, свой танк дёргается от поправок.',
+        true: 'Чужие едут плавно, но позже; свой танк не прыгает.',
+      };
+      const RESTART_HINT =
+        'Вкладка с игрой переподключается за пару секунд и попадает в новый бой — шедший бой обрывается. Обновлять вкладку не нужно.';
+
+      const byId = (id) => document.getElementById(id);
+      let state = null;
+      let isSending = false;
+
+      function steps(count) {
+        const tens = count % 100;
+        const ones = count % 10;
+        if (tens >= 11 && tens <= 14) {
+          return `${count} шагов`;
+        }
+        if (ones === 1) {
+          return `${count} шаг`;
+        }
+        if (ones >= 2 && ones <= 4) {
+          return `${count} шага`;
+        }
+        return `${count} шагов`;
+      }
+
+      function leadHint(ticks) {
+        if (ticks === 0) {
+          return 'Выключена, как на боевом сервере.';
+        }
+        return `Возвращает стрелку ${ticks * 33} мс опоздания: снаряд рождается на ${steps(ticks)} дальше — по едущим попадать легче при плохой связи.`;
+      }
+
+      function inheritText(percent) {
+        return percent === 0 ? 'Выкл' : `${percent} %`;
+      }
+
+      function inheritHint(percent) {
+        return INHERIT_HINTS[percent] ?? `Снаряд получает ${percent} % скорости танка.`;
+      }
+
+      function timeText(at) {
+        return new Date(at).toLocaleTimeString('ru-RU');
+      }
+
+      function setLink(id, port, path) {
+        const link = byId(id);
+        link.href = `${location.protocol}//${location.hostname}:${port}${path}`;
+      }
+
+      function renderLinks() {
+        setLink('bad-ffa', state.proxyPort, FFA_PATH);
+        setLink('bad-home', state.proxyPort, '/');
+        setLink('direct-ffa', state.directPort, FFA_PATH);
+        setLink('direct-home', state.directPort, '/');
+        byId('addresses').textContent =
+          `Через плохую сеть — ${location.hostname}:${state.proxyPort}, напрямую — ${location.hostname}:${state.directPort}.`;
+      }
+
+      function renderChoices(boxId, presets, current, key, label) {
+        const choices = [...new Set([...presets, current])].sort((a, b) => a - b);
+        const box = byId(boxId);
+        if (box.dataset.choices === choices.join(',')) {
+          return;
+        }
+        box.dataset.choices = choices.join(',');
+        box.replaceChildren(
+          ...choices.map((value) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'option';
+            button.dataset[key] = String(value);
+            button.textContent = label(value);
+            return button;
+          }),
+        );
+      }
+
+      function pingHint() {
+        if (state.pingMs === 0) {
+          return 'Без задержки: данные проходят сразу.';
+        }
+        return `Задержка туда и обратно: посредник держит данные по ${state.pingMs / 2} мс в каждую сторону.`;
+      }
+
+      function jitterAdded() {
+        return Math.round(state.jitterAddedMs / 10) * 10;
+      }
+
+      function jitterHint() {
+        if (state.jitter === 'even') {
+          return 'Данные идут ровно, без пачек — пинг в игре как задан.';
+        }
+        return `Пачки — данные копятся и уходят кучкой, как у мобильной связи. Сами добавляют к пингу в среднем около ${jitterAdded()} мс: в игре будет около ${state.pingMs + jitterAdded()}, то меньше, то больше.`;
+      }
+
+      function measuredText() {
+        const measured = state.measuredPing;
+        if (measured === null) {
+          return ['Меряю пинг через посредника…'];
+        }
+        return [
+          'Замер через посредника: ',
+          Object.assign(document.createElement('strong'), { textContent: `${measured.medianMs} мс` }),
+          ` — последние ${measured.samples} замеров от ${measured.minMs} до ${measured.maxMs}, расчёт около ${state.pingMs + jitterAdded()}.`,
+        ];
+      }
+
+      function renderNotice() {
+        const notice = byId('notice');
+        const text = byId('notice-text');
+        const isError = state.serverError !== null && !state.isRestarting;
+        notice.classList.toggle('is-error', isError);
+        byId('notice-spinner').hidden = !state.isRestarting;
+        if (state.isRestarting) {
+          notice.hidden = false;
+          text.textContent = 'Перезапускаю сервер…';
+          return;
+        }
+        if (isError) {
+          notice.hidden = false;
+          text.textContent = `Сервер не поднялся: ${state.serverError}`;
+          return;
+        }
+        if (state.restartedAt === null) {
+          notice.hidden = true;
+          return;
+        }
+        notice.hidden = false;
+        text.replaceChildren(
+          `Сервер перезапущен в ${timeText(state.restartedAt)} — открытая игра вернётся сама, уже с новыми правилами.`,
+        );
+        const small = document.createElement('small');
+        small.textContent = RESTART_HINT;
+        text.append(small);
+      }
+
+      function render() {
+        const leadText = state.shotLeadTicks === 0 ? 'выкл' : String(state.shotLeadTicks);
+        const smoothingText = state.hasNetSmoothing ? 'вкл' : 'выкл';
+        const part = (...children) => {
+          const span = document.createElement('span');
+          span.className = 'now-part';
+          span.append(...children);
+          return span;
+        };
+        const accent = (text) => Object.assign(document.createElement('b'), { textContent: text });
+        const jitterPart =
+          state.jitter === 'even'
+            ? part('без пачек')
+            : part('пачки ', accent(`${state.burstMs}–${state.burstMaxMs}`), ' мс');
+        byId('now-line').replaceChildren(
+          part('пинг ', accent(String(state.pingMs)), ' мс'),
+          ' · ',
+          jitterPart,
+          ' · ',
+          part('лаг-компенсация ', accent(leadText)),
+          ' · ',
+          part('скорость танка ', accent(inheritText(state.shotInheritPercent).toLowerCase())),
+          ' · ',
+          part('сглаживание ', accent(smoothingText)),
+        );
+        byId('now-ping').replaceChildren(...measuredText());
+        byId('now-stat').replaceChildren(
+          'Выброшено команд за минуту: ',
+          Object.assign(document.createElement('strong'), { textContent: String(state.overflowLastMinute) }),
+          ' — пришли пачкой сверх очереди сервера.',
+        );
+        renderLinks();
+        renderChoices('ping-options', PING_CHOICES, state.pingMs, 'ping', String);
+        renderChoices('lead-options', LEAD_CHOICES, state.shotLeadTicks, 'lead', (ticks) =>
+          ticks === 0 ? 'Выкл' : String(ticks),
+        );
+        renderChoices('inherit-options', INHERIT_CHOICES, state.shotInheritPercent, 'inherit', inheritText);
+        renderNotice();
+        const isServerLocked = state.isRestarting || isSending;
+        for (const button of document.querySelectorAll('[data-ping]')) {
+          button.setAttribute('aria-pressed', String(Number(button.dataset.ping) === state.pingMs));
+        }
+        for (const button of document.querySelectorAll('[data-jitter]')) {
+          button.setAttribute('aria-pressed', String(button.dataset.jitter === state.jitter));
+        }
+        for (const button of document.querySelectorAll('[data-lead]')) {
+          button.setAttribute('aria-pressed', String(Number(button.dataset.lead) === state.shotLeadTicks));
+          button.disabled = isServerLocked;
+        }
+        for (const button of document.querySelectorAll('[data-inherit]')) {
+          button.setAttribute('aria-pressed', String(Number(button.dataset.inherit) === state.shotInheritPercent));
+          button.disabled = isServerLocked;
+        }
+        for (const button of document.querySelectorAll('[data-smoothing]')) {
+          button.setAttribute('aria-pressed', String(button.dataset.smoothing === String(state.hasNetSmoothing)));
+          button.disabled = isServerLocked;
+        }
+        byId('ping-hint').textContent = pingHint();
+        byId('jitter-hint').textContent = jitterHint();
+        byId('lead-hint').textContent = leadHint(state.shotLeadTicks);
+        byId('inherit-hint').textContent = inheritHint(state.shotInheritPercent);
+        byId('smoothing-hint').textContent = SMOOTHING_HINTS[String(state.hasNetSmoothing)];
+      }
+
+      async function request(path, body) {
+        const init =
+          body === undefined
+            ? {}
+            : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+        const response = await fetch(path, init);
+        const data = await response.json();
+        if (data.error !== undefined) {
+          throw new Error(data.error);
+        }
+        return data;
+      }
+
+      function showFailure(error) {
+        byId('notice').hidden = false;
+        byId('notice').classList.add('is-error');
+        byId('notice-spinner').hidden = true;
+        byId('notice-text').textContent = `Пульт не ответил: ${error.message}`;
+      }
+
+      async function refresh() {
+        if (isSending) {
+          return;
+        }
+        try {
+          state = await request('/api/state');
+          render();
+        } catch (error) {
+          showFailure(error);
+        }
+      }
+
+      async function send(path, body, optimistic) {
+        if (isSending || state === null) {
+          return;
+        }
+        isSending = true;
+        state = { ...state, ...optimistic };
+        render();
+        try {
+          state = await request(path, body);
+        } catch (error) {
+          showFailure(error);
+        } finally {
+          isSending = false;
+        }
+        render();
+      }
+
+      document.addEventListener('click', (event) => {
+        const button = event.target.closest('button');
+        if (button === null || button.disabled) {
+          return;
+        }
+        const { ping, jitter, lead, inherit, smoothing } = button.dataset;
+        if (ping !== undefined) {
+          const pingMs = Number(ping);
+          void send('/api/network', { pingMs }, {});
+          return;
+        }
+        if (jitter !== undefined) {
+          void send('/api/network', { jitter }, {});
+          return;
+        }
+        if (lead !== undefined) {
+          const shotLeadTicks = Number(lead);
+          void send('/api/server', { shotLeadTicks }, { shotLeadTicks, isRestarting: true });
+          return;
+        }
+        if (inherit !== undefined) {
+          const shotInheritPercent = Number(inherit);
+          void send('/api/server', { shotInheritPercent }, { shotInheritPercent, isRestarting: true });
+          return;
+        }
+        if (smoothing !== undefined) {
+          const hasNetSmoothing = smoothing === 'true';
+          void send('/api/server', { hasNetSmoothing }, { hasNetSmoothing, isRestarting: true });
+        }
+      });
+
+      void refresh();
+      setInterval(refresh, POLL_MS);
+    </script>
+  </body>
+</html>

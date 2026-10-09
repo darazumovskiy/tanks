@@ -2,6 +2,7 @@ import {
   DEFAULT_STATS,
   DT,
   isShotReturning,
+  shotCarry,
   type Action,
   type Field,
   type RoundRules,
@@ -24,6 +25,8 @@ import { DuelPresenter, duelNames } from './duelPresenter.js';
 import { InputReader, type ShotContext, type Viewport } from './input.js';
 import { browserInviteActions, renderInvite } from './invite.js';
 import { NetClient, websocketUrl, type SocketLike } from './net.js';
+import type { OwnHitCounts } from './ownHits.js';
+import type { OwnShotCounts } from './ownShots.js';
 import { pictureDebug, type PictureDebug } from './pictureTime.js';
 import { Prediction, type InterpolatedTank, type PictureView } from './prediction.js';
 import { hideRoundEnd, showRoundEnd, type RoundResult } from './roundEnd.js';
@@ -107,6 +110,7 @@ export class Game {
   private readonly net: NetClient;
   private prediction: Prediction | null = null;
   private side: Side | null = null;
+  private hasNetSmoothing = false;
   private roundStart: RoundStartMessage | null = null;
   private roundStartedAt = 0;
   private readonly countdownBeeper: CountdownBeeper;
@@ -177,6 +181,7 @@ export class Game {
       {
         onWelcome: (message): void => {
           this.side = message.side;
+          this.hasNetSmoothing = message.hasNetSmoothing;
           this.diag.setSource(message.side);
           this.options.telemetry.setSide(message.side);
           this.diag.write(`net welcome side=${String(message.side)} room=${message.roomCode}`);
@@ -219,6 +224,7 @@ export class Game {
             message.tanks,
             this.lastInputSeq,
             message.rules,
+            this.hasNetSmoothing,
           );
           this.duel.startRound();
           this.hideOverlay();
@@ -234,7 +240,11 @@ export class Game {
           this.spareInput.noteSnapshot(message.ackSeq, message.hasSpareInput);
           this.diag.markSnapshot(message.gameTick, receivedAt);
           this.logSnapshot(this.prediction, message, receivedAt);
-          this.duel.applySnapshot(message.tick, message.tanks, message.events, receivedAt, this.side);
+          const prediction = this.prediction;
+          const events = message.events.filter(
+            (event) => !prediction.wasPlayedOnTouch(event) && !prediction.wasShotPlayed(event),
+          );
+          this.duel.applySnapshot(message.tick, message.tanks, events, receivedAt, this.side);
           for (const event of message.events) {
             if (event.kind === 'roundOver') {
               this.onRoundOver(event, message);
@@ -310,18 +320,25 @@ export class Game {
   }
 
   // Зона считается только при включённом флаге: без него трассировка пути на каждом тике не нужна.
-  private shotContextFor(prediction: Prediction, field: Field, enemy: InterpolatedTank | null): ShotContext {
+  private shotContextFor(
+    prediction: Prediction,
+    field: Field,
+    enemy: InterpolatedTank | null,
+    rules: Readonly<RoundRules>,
+  ): ShotContext {
     const me = prediction.me;
     const bulletSpeed = me.stats.bulletSpeed;
+    const carry = shotCarry(me, rules.shotInheritPercent);
     const isInZone =
       this.options.settings.hasZoneFire &&
       isShotInZone({
         field,
         shooter: { x: me.x, y: me.y, turret: me.turret },
         bulletSpeed,
+        carry,
         targets: enemy === null ? [] : [enemy],
       });
-    return { isReturning: isShotReturning(field, me, me.turret, bulletSpeed, enemy), isInZone };
+    return { isReturning: isShotReturning(field, me, me.turret, bulletSpeed, carry, enemy), isInZone };
   }
 
   private logSnapshot(prediction: Prediction, message: SnapshotMessage, receivedAt: number): void {
@@ -369,6 +386,7 @@ export class Game {
     isShotGuarded: boolean;
     isZoneFiring: boolean;
     isReversing: boolean;
+    isMuted: boolean;
     aimLine: { state: AimLineState; isReturning: boolean } | null;
     aimLineStyle: AimLineStyleId;
     rttMs: number;
@@ -381,6 +399,10 @@ export class Game {
     worstFrameMs: number;
     correctionPx: number;
     camera: { x: number; y: number; height: number };
+    ownHits: OwnHitCounts;
+    ownShots: OwnShotCounts;
+    hasNetSmoothing: boolean;
+    interpolationTicks: number;
     picture: PictureDebug | null;
   } | null {
     if (this.prediction === null || this.roundStart === null || this.side === null) {
@@ -401,6 +423,7 @@ export class Game {
       isShotGuarded: this.input.isShotGuarded,
       isZoneFiring: this.input.isZoneFiring,
       isReversing: this.input.isReversing,
+      isMuted: this.sfx.isMuted,
       aimLine: this.aimLine === null ? null : { state: this.aimLine.state, isReturning: this.aimLine.isReturning },
       aimLineStyle: this.options.settings.aimLineStyle,
       rttMs: this.net.rttMs,
@@ -417,6 +440,10 @@ export class Game {
         y: this.renderer.currentCamera.y,
         height: this.renderer.currentCamera.height,
       },
+      ownHits: this.prediction.ownHitCounts,
+      ownShots: this.prediction.ownShotCounts,
+      hasNetSmoothing: this.hasNetSmoothing,
+      interpolationTicks: this.prediction.interpolationTicks,
       picture:
         this.lastView === null
           ? null
@@ -435,12 +462,14 @@ export class Game {
   private bindPage(): void {
     document.addEventListener('visibilitychange', () => {
       this.duel.clearEvents();
+      this.prediction?.discardOwnHits();
+      this.prediction?.discardOwnShots();
     });
     const unlock = (): void => {
       this.sfx.unlock();
     };
     window.addEventListener('keydown', unlock);
-    window.addEventListener('mousedown', unlock);
+    window.addEventListener('pointerdown', unlock);
     window.addEventListener('touchstart', unlock);
     window.addEventListener('keydown', (event) => {
       if (event.code === 'KeyM' && !event.repeat) {
@@ -520,7 +549,8 @@ export class Game {
         this.diag.write(`in skip next=${String(prediction.lastSeq + 1)}`);
         continue;
       }
-      const action = quantizeAction(this.input.read(prediction.me, this.shotContextFor(prediction, field, enemy)));
+      const context = this.shotContextFor(prediction, field, enemy, roundStart.rules);
+      const action = quantizeAction(this.input.read(prediction.me, context));
       const bulletsBefore = prediction.myBulletCount;
       const seq = prediction.predict(action);
       this.lastInputSeq = seq;
@@ -538,8 +568,9 @@ export class Game {
       const fps = Math.round(this.fps);
       const worst = Math.round(this.worstFrameMs);
       const rtt = Math.round(this.net.rttMs);
+      const smoothing = this.hasNetSmoothing ? ` ilag=${prediction.interpolationTicks.toFixed(1)}` : '';
       this.diag.write(
-        `sec fps=${String(fps)} worst=${String(worst)} rtt=${String(rtt)} pend=${String(prediction.pendingCount)} snaps=${String(this.snapshotsThisSecond)} ins=${String(this.inputsThisSecond)}`,
+        `sec fps=${String(fps)} worst=${String(worst)} rtt=${String(rtt)} pend=${String(prediction.pendingCount)} snaps=${String(this.snapshotsThisSecond)} ins=${String(this.inputsThisSecond)}${smoothing}`,
       );
       this.options.telemetry.event('sec', 'sec', {
         fps,
@@ -555,7 +586,11 @@ export class Game {
 
     const view = prediction.view(now);
     this.lastView = view;
-    this.sfx.events(this.duel.releaseEvents(view, now));
+    const ownEvents = [...prediction.takeOwnShots(), ...prediction.takeOwnHits()];
+    for (const event of ownEvents) {
+      this.duel.applyEvent(event);
+    }
+    this.sfx.events([...ownEvents, ...this.duel.releaseEvents(view, now)]);
     this.duel.update(elapsed / 1000, view);
     const drawn = this.duel.draw({
       view,

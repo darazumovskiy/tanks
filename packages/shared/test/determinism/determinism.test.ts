@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createRound, stepRound, type Round, type RoundRules } from '../../src/engine/index.js';
+import { createRound, DEFAULT_RULES, stepRound, type Round, type RoundRules } from '../../src/engine/index.js';
 import { MAX_TICKS, SCENARIOS, buildSchedule, digest, type Scenario } from './scenario.mjs';
 
 interface Fixture {
@@ -118,9 +118,45 @@ describe('скольжение вдоль стен детерминирован�
     if (scenario === undefined || fixture === undefined) {
       return;
     }
-    const first = runDigests(scenario, { wallSlidePercent: 50 });
-    const second = runDigests(scenario, { wallSlidePercent: 50 });
+    const first = runDigests(scenario, { ...DEFAULT_RULES, wallSlidePercent: 50 });
+    const second = runDigests(scenario, { ...DEFAULT_RULES, wallSlidePercent: 50 });
     expect(second).toEqual(first);
     expect(first.join('')).not.toBe(fixture.digests);
+  });
+});
+
+describe('догон снаряда детерминирован', () => {
+  it('сценарий со стрельбой при догоне 2: два прогона совпадают побитово и отличаются от эталона без правила', () => {
+    const index = SCENARIOS.findIndex((candidate) => candidate.fireChance > 0);
+    const scenario = SCENARIOS[index];
+    const fixture = fixtures[index];
+    expect(scenario).toBeDefined();
+    expect(fixture).toBeDefined();
+    if (scenario === undefined || fixture === undefined) {
+      return;
+    }
+    const lead = { ...DEFAULT_RULES, shotLeadTicks: 2 };
+    const first = runDigests(scenario, lead);
+    expect(runDigests(scenario, lead)).toEqual(first);
+    expect(first.join('')).not.toBe(fixture.digests);
+    expect(runDigests(scenario, { ...DEFAULT_RULES, shotLeadTicks: 0 }).join('')).toBe(fixture.digests);
+  });
+});
+
+describe('снаряд со скоростью танка детерминирован', () => {
+  it('сценарий со стрельбой при 100 %: два прогона совпадают побитово и отличаются от эталона; при 0 — эталон', () => {
+    const index = SCENARIOS.findIndex((candidate) => candidate.fireChance > 0);
+    const scenario = SCENARIOS[index];
+    const fixture = fixtures[index];
+    expect(scenario).toBeDefined();
+    expect(fixture).toBeDefined();
+    if (scenario === undefined || fixture === undefined) {
+      return;
+    }
+    const inherit = { ...DEFAULT_RULES, shotInheritPercent: 100 };
+    const first = runDigests(scenario, inherit);
+    expect(runDigests(scenario, inherit)).toEqual(first);
+    expect(first.join('')).not.toBe(fixture.digests);
+    expect(runDigests(scenario, { ...DEFAULT_RULES, shotInheritPercent: 0 }).join('')).toBe(fixture.digests);
   });
 });

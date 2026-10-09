@@ -18,7 +18,7 @@ import {
   type RoundRules,
   type Stats,
 } from '../engine/index.js';
-import { dequantizeAxis, quantizeAxis, rulesFromByte } from './codec.js';
+import { dequantizeAxis, quantizeAxis, rulesFromBytes } from './codec.js';
 
 // Журнал боя толпы без поз: бой повторяется прогоном движка по составу, сиду, входам, выходам и командам.
 // Строки — договор между сервером, который их пишет, и разбором журналов, который прогоняет бой.
@@ -309,7 +309,7 @@ function createRunning(text: string, size: FfaSize, rules: RoundRules, options: 
 // Строки файла журнала целиком: строки клиентов, дуэли и непонятные пропускаются.
 export function replayFfaJournal(lines: readonly string[], options: FfaJournalOptions = {}): FfaJournalReplay {
   const replay: FfaJournalReplay = { size: null, matches: [] };
-  let rules: RoundRules = rulesFromByte(0);
+  let rules: RoundRules = rulesFromBytes(0, 0, 0);
   let running: Running | null = null;
   for (const line of lines) {
     const entry = serverEntry(line);
@@ -321,7 +321,11 @@ export function replayFfaJournal(lines: readonly string[], options: FfaJournalOp
       const size = numberField(text, 'size');
       const isFfa = field(text, 'mode') === 'ffa' && size !== null && isFfaSize(size);
       replay.size = isFfa ? size : null;
-      rules = rulesFromByte(numberField(text, 'rules') ?? 0);
+      rules = rulesFromBytes(
+        numberField(text, 'rules') ?? 0,
+        numberField(text, 'lead') ?? 0,
+        numberField(text, 'inherit') ?? 0,
+      );
       continue;
     }
     if (replay.size === null) {

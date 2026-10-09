@@ -1,4 +1,4 @@
-import { createRandom, leadPoint, normalizeAngle, TICK_RATE, type Point } from '@tanks/shared/engine';
+import { createRandom, leadPoint, NO_CARRY, normalizeAngle, TICK_RATE, type Point } from '@tanks/shared/engine';
 import { describe, expect, it } from 'vitest';
 import { byBand, craftView } from './fixture.js';
 import { Hand, type HandSettings } from './hand.js';
@@ -132,7 +132,7 @@ describe('рука на башне', () => {
     const before = { x: 0, y: 150 };
     hand.wanted(me, target, before);
     const seen = [1, 2, 3].map(() => hand.wanted(me, target, { x: 0, y: -150 }))[lagTicks - 1];
-    const lead = leadPoint(me, target, before, me.stats.bulletSpeed);
+    const lead = leadPoint(me, target, before, me.stats.bulletSpeed, NO_CARRY);
 
     expect(seen).toBeCloseTo(Math.atan2(lead.y - ME.y, lead.x - ME.x), 9);
   });
