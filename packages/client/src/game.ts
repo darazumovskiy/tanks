@@ -20,7 +20,7 @@ import {
 import type { AimLine, AimLineState } from './aimLine.js';
 import { CountdownBeeper } from './countdownBeeper.js';
 import type { AimLineStyleId } from './render/aimLineStyles.js';
-import { DiagLog } from './diag.js';
+import { DiagLog, writeHoldEnds } from './diag.js';
 import { DuelPresenter, duelNames } from './duelPresenter.js';
 import { InputReader, type ShotContext, type Viewport } from './input.js';
 import { browserInviteActions, renderInvite } from './invite.js';
@@ -587,6 +587,7 @@ export class Game {
     const view = prediction.view(now);
     this.lastView = view;
     const ownEvents = [...prediction.takeOwnShots(), ...prediction.takeOwnHits()];
+    writeHoldEnds(this.diag, prediction.takeHoldEnds());
     for (const event of ownEvents) {
       this.duel.applyEvent(event);
     }

@@ -36,6 +36,7 @@ import {
   OwnTime,
   recordFlight,
   type DueEvent,
+  type HoldEnd,
   type PictureBullet,
   type PictureClock,
 } from '../pictureTime.js';
@@ -234,6 +235,10 @@ export class FfaPrediction {
   // Событие последнего снимка — попадание, уже сыгранное касанием.
   wasPlayedOnTouch(event: FfaSnapshotEvent): boolean {
     return this.playedOnTouch.has(event);
+  }
+
+  takeHoldEnds(): HoldEnd[] {
+    return this.picture.takeHoldEnds();
   }
 
   // Свои выстрелы, рождённые досчётом с прошлого вызова: играются сразу, у дула нарисованного танка.

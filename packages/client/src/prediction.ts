@@ -28,7 +28,15 @@ import {
   type Pose,
 } from './netSmoothing.js';
 import { OwnShots, type DueShot, type OwnShotCounts } from './ownShots.js';
-import { BulletPicture, BulletTracks, flightEndTick, OwnTime, recordFlight, type PictureClock } from './pictureTime.js';
+import {
+  BulletPicture,
+  BulletTracks,
+  flightEndTick,
+  OwnTime,
+  recordFlight,
+  type HoldEnd,
+  type PictureClock,
+} from './pictureTime.js';
 import { PredictedShots, predictedBulletId, type ConfirmedBullet } from './predictedShots.js';
 
 export interface InterpolatedTank {
@@ -196,6 +204,10 @@ export class Prediction {
   // Событие последнего снимка — попадание, уже сыгранное касанием.
   wasPlayedOnTouch(event: SnapshotEvent): boolean {
     return this.playedOnTouch.has(event);
+  }
+
+  takeHoldEnds(): HoldEnd[] {
+    return this.picture.takeHoldEnds();
   }
 
   // Свои выстрелы, рождённые досчётом с прошлого вызова: играются сразу, у дула нарисованного танка.

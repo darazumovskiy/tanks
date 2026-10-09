@@ -449,6 +449,18 @@ interface ShownTime {
 // Как снаряд показан в кадре; releaseTick — снаряд ушёл с брони, и его тик картинки переставлен сюда.
 type Shown = Omit<ShownTime, 'tick' | 'myTick' | 'othersTick' | 'isReleased'> & { releaseTick?: number };
 
+// Чем кончилось стояние своего снаряда на броне: boom — картинка дошла до его гибели, вспышка, или танк под ним
+// пропал с картинки вместе с ним (подбит этим снарядом); miss — сервер решил «мимо», снаряд ушёл с брони; lost — танк
+// под ним пропал с картинки, а снаряд жив; timeout — предел ожидания.
+export type HoldOutcome = 'boom' | 'miss' | 'lost' | 'timeout';
+
+// ticks — сколько тиков чужих снаряд простоял на броне.
+export interface HoldEnd {
+  id: number;
+  ticks: number;
+  outcome: HoldOutcome;
+}
+
 interface Contact extends Point {
   tank: Point;
   heading: Point;
@@ -523,6 +535,7 @@ function isAimedAtTank(from: Point, heading: Point, tanks: readonly Point[]): bo
 // будущий путь своих снарядов за дорожкой (`recordFlight`), нет в нём снаряда — прямо прежним ходом.
 export class BulletPicture {
   private readonly shown = new Map<number, ShownTime>();
+  private holdEnds: HoldEnd[] = [];
 
   constructor(
     private readonly tracks: BulletTracks,
@@ -596,6 +609,13 @@ export class BulletPicture {
       return previous;
     }
     return { ...previous, isHoldOver: false, overDeath: undefined, isReleased: true };
+  }
+
+  // Стояния на броне, кончившиеся с прошлого вызова.
+  takeHoldEnds(): HoldEnd[] {
+    const ends = this.holdEnds;
+    this.holdEnds = [];
+    return ends;
   }
 
   // Свой выстрел подтверждён: снаряд продолжает в том же тике картинки под номером сервера.
@@ -717,13 +737,17 @@ export class BulletPicture {
   // «мимо» — снаряд уходит с брони по дорожке, как только место в ней не позади брони; дорожка повернула назад, не
   // пройдя танк (отскок у самой брони), — как только снаряд в ней удаляется от танка.
   private heldShown(id: number, tick: number, clock: PictureClock, confirmedTick: number, hold: Hold): Shown {
+    const end = (outcome: HoldOutcome, shown: Shown): Shown => {
+      this.holdEnds.push({ id, ticks: clock.othersTick - hold.sinceOthersTick, outcome });
+      return shown;
+    };
     const target = nearestPoint(hold.tank, clock.others);
     const death = hold.deathTick ?? this.tracks.deathTick(id);
     if (target === null || distance(target, hold.tank) > HOLD_TANK_REACH) {
-      return { drawn: null, hold: null, isHoldOver: true };
+      return end(death === null ? 'lost' : 'boom', { drawn: null, hold: null, isHoldOver: true });
     }
     if (death !== null && pictureTickAt(clock, target) > death - 1) {
-      return { drawn: null, hold: null, isHoldOver: true, overDeath: death };
+      return end('boom', { drawn: null, hold: null, isHoldOver: true, overDeath: death });
     }
     const track = this.tracks.at(id, tick);
     const isAhead = track !== null && alongHeading(track, hold) >= 0;
@@ -731,16 +755,17 @@ export class BulletPicture {
     if (death === null && isAhead && this.isPassed(id, clock, confirmedTick, hold, target)) {
       const releaseTick = this.releaseTick(id, hold, tick, target, passedTick);
       const drawn = this.tracks.at(id, releaseTick) ?? track;
-      return { drawn, hold: null, isHoldOver: false, releaseTick };
+      return end('miss', { drawn, hold: null, isHoldOver: false, releaseTick });
     }
     if (death === null && this.isLeaving(id, clock, confirmedTick, target)) {
       const leaveTick = this.leaveTick(id, target, Math.max(tick, passedTick));
       if (tick >= leaveTick) {
-        return { drawn: this.tracks.at(id, leaveTick), hold: null, isHoldOver: false, releaseTick: leaveTick };
+        const drawn = this.tracks.at(id, leaveTick);
+        return end('miss', { drawn, hold: null, isHoldOver: false, releaseTick: leaveTick });
       }
     }
     if (clock.othersTick - hold.sinceOthersTick >= HOLD_MAX_TICKS) {
-      return { drawn: null, hold: null, isHoldOver: true };
+      return end('timeout', { drawn: null, hold: null, isHoldOver: true });
     }
     const at = { x: target.x + hold.offset.x, y: target.y + hold.offset.y };
     return { drawn: at, hold: { ...hold, ...at, tank: target }, isHoldOver: false };

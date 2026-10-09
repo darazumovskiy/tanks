@@ -1047,3 +1047,91 @@ describe('тик своего танка', () => {
     expect(own.next(15, 10.5)).toBe(11);
   });
 });
+
+describe('исход стояния на броне', () => {
+  const enemy = { x: 100, y: 0 };
+
+  function straightOwn(tracks: BulletTracks, lastTick: number): void {
+    for (let tick = 0; tick <= lastTick; tick++) {
+      tracks.record(tick, [point(1, 20 * tick, 0, MY_OWNER), point(2, 20 * tick, 300, 7)]);
+    }
+  }
+
+  it('картинка дошла до гибели на броне — взрыв, ожидание — ход тика чужих от касания', () => {
+    const tracks = new BulletTracks();
+    straightOwn(tracks, 4);
+    tracks.record(5, []);
+    const picture = new BulletPicture(tracks, MY_OWNER);
+    picture.frame({ myTick: 8, othersTick: 3.6, me: null, others: [enemy] });
+    expect(picture.takeHoldEnds()).toEqual([]);
+    picture.frame({ myTick: 8, othersTick: 4, me: null, others: [enemy] });
+    expect(picture.takeHoldEnds()).toEqual([]);
+    picture.frame({ myTick: 9, othersTick: 4.5, me: null, others: [enemy] });
+    const [end, ...rest] = picture.takeHoldEnds();
+    expect(rest).toEqual([]);
+    expect(end?.id).toBe(1);
+    expect(end?.outcome).toBe('boom');
+    expect(end?.ticks).toBeCloseTo(0.9, 9);
+    expect(picture.takeHoldEnds()).toEqual([]);
+  });
+
+  it('сервер решил «мимо» — уход с брони', () => {
+    const tracks = new BulletTracks();
+    straightOwn(tracks, 4);
+    const picture = new BulletPicture(tracks, MY_OWNER);
+    picture.frame({ myTick: 5, othersTick: 3.6, me: null, others: [enemy] });
+    tracks.forgetFrom(5);
+    for (let tick = 5; tick <= 8; tick++) {
+      tracks.record(tick, [point(1, 20 * tick, 0, MY_OWNER)]);
+    }
+    picture.frame({ myTick: 7, othersTick: 6, me: null, others: [enemy] });
+    expect(picture.takeHoldEnds()).toEqual([{ id: 1, ticks: expect.closeTo(2.4, 9) as number, outcome: 'miss' }]);
+  });
+
+  it('танк под снарядом пропал с картинки — потерян; пропал вместе с погибшим снарядом — взрыв', () => {
+    const tracks = new BulletTracks();
+    straightOwn(tracks, 10);
+    const picture = new BulletPicture(tracks, MY_OWNER);
+    picture.frame({ myTick: 8, othersTick: 3.6, me: null, others: [enemy] }, 3);
+    picture.frame({ myTick: 8, othersTick: 4, me: null, others: [] }, 3);
+    expect(picture.takeHoldEnds().map((end) => end.outcome)).toEqual(['lost']);
+
+    const killed = new BulletTracks();
+    straightOwn(killed, 4);
+    killed.record(5, []);
+    const kill = new BulletPicture(killed, MY_OWNER);
+    kill.frame({ myTick: 8, othersTick: 3.6, me: null, others: [enemy] });
+    kill.frame({ myTick: 8, othersTick: 3.8, me: null, others: [] });
+    expect(kill.takeHoldEnds().map((end) => end.outcome)).toEqual(['boom']);
+  });
+
+  it('ответа нет дольше предела ожидания — по пределу', () => {
+    const tracks = new BulletTracks();
+    straightOwn(tracks, 40);
+    const picture = new BulletPicture(tracks, MY_OWNER);
+    const waitTicks = EVENT_MAX_WAIT_MS / (DT * 1000);
+    const frame = (othersTick: number): void => {
+      picture.frame({ myTick: othersTick + 4, othersTick, me: null, others: [enemy] }, 3);
+    };
+    frame(3.6);
+    frame(3.6 + waitTicks / 2);
+    expect(picture.takeHoldEnds()).toEqual([]);
+    frame(3.6 + waitTicks);
+    expect(picture.takeHoldEnds()).toEqual([
+      { id: 1, ticks: expect.closeTo(waitTicks, 9) as number, outcome: 'timeout' },
+    ]);
+  });
+
+  it('чужой снаряд у чужого танка на броню не встаёт — исходов нет', () => {
+    const tracks = new BulletTracks();
+    for (let tick = 0; tick <= 4; tick++) {
+      tracks.record(tick, [point(2, 20 * tick, 0, 7)]);
+    }
+    tracks.record(5, []);
+    const picture = new BulletPicture(tracks, MY_OWNER);
+    for (let othersTick = 3; othersTick <= 6; othersTick += 0.5) {
+      picture.frame({ myTick: othersTick + 4, othersTick, me: null, others: [enemy] });
+    }
+    expect(picture.takeHoldEnds()).toEqual([]);
+  });
+});

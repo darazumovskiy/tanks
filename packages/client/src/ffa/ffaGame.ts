@@ -25,7 +25,7 @@ import {
 } from '@tanks/shared/protocol';
 import { aimLineOnPath, firstTargetOnPath, type AimLine } from '../aimLine.js';
 import { AudioMix, mixedSound } from '../audioMix.js';
-import { DiagLog } from '../diag.js';
+import { DiagLog, writeHoldEnds } from '../diag.js';
 import { InputReader, type ShotContext } from '../input.js';
 import { NetClient, websocketUrl, type DisconnectReason, type SocketLike } from '../net.js';
 import { INTERPOLATION_MIN_TICKS } from '../netSmoothing.js';
@@ -519,6 +519,7 @@ export class FfaGame {
     const drawnTank = (id: number): FfaViewTank | null => view.tanks.find((tank) => tank.id === id) ?? null;
     const ownShots = this.prediction?.takeOwnShots() ?? [];
     const ownHits = this.prediction?.takeOwnHits() ?? [];
+    writeHoldEnds(this.diag, this.prediction?.takeHoldEnds() ?? []);
     for (const { event, tick } of [...ownShots, ...ownHits, ...this.events.release(view.clock, drawnTank, now)]) {
       const victimId = event.kind === 'death' ? event.tank : null;
       const ownKillCount = victimId === null ? null : this.session.ownKillNumber(tick, victimId);
