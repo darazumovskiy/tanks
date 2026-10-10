@@ -29,6 +29,14 @@ import { DiagLog, writeHoldEnds } from '../diag.js';
 import { InputReader, type ShotContext } from '../input.js';
 import { NetClient, websocketUrl, type DisconnectReason, type SocketLike } from '../net.js';
 import { INTERPOLATION_MIN_TICKS } from '../netSmoothing.js';
+import {
+  isSameWarning,
+  NetWarning,
+  netWarningDebug,
+  netWarningLogLine,
+  NO_NET_WARNING,
+  type NetWarningState,
+} from '../netWarning.js';
 import { EventSchedule, eventPlace, pictureDebug } from '../pictureTime.js';
 import { isInView, screenToWorld, type Camera } from '../render/camera.js';
 import { Effects, type FxTank } from '../render/effects.js';
@@ -190,6 +198,8 @@ export class FfaGame {
   private hasFieldControls: boolean | null = null;
   // Свой живой танк в бою был в прошлом кадре камеры.
   private isOwnFightFramed = false;
+  private readonly netWarning = new NetWarning();
+  private netWarningState: NetWarningState = NO_NET_WARNING;
 
   constructor(
     private readonly options: FfaGameOptions,
@@ -367,6 +377,7 @@ export class FfaGame {
       hasNetSmoothing: session.hasNetSmoothing,
       interpolationTicks: prediction?.interpolationTicks ?? null,
       picture: pictureDebug(view.clock, prediction?.latestTick ?? 0, view.bullets),
+      netWarning: netWarningDebug(this.netWarningState, this.hasFieldControls === true),
     };
   }
 
@@ -424,6 +435,7 @@ export class FfaGame {
     this.deps.tokens.write(this.options.size, message.token);
     this.seq = 0;
     this.lastSnapshotAt = null;
+    this.netWarning.resetPauses();
     this.spareInput.reset();
     this.prediction?.resetConnection();
     if (outcome === 'lost') {
@@ -443,6 +455,7 @@ export class FfaGame {
   private onMatchStart(message: FfaMatchStartMessage): void {
     const outcome = this.session.onMatchStart(message);
     this.lastSnapshotAt = null;
+    this.netWarning.resetPauses();
     const myId = this.session.playerId;
     if (myId !== null && (outcome === 'new' || this.prediction === null)) {
       this.prediction = new FfaPrediction(
@@ -477,6 +490,7 @@ export class FfaGame {
       this.worstSnapshotGapMs = Math.max(this.worstSnapshotGapMs, receivedAt - this.lastSnapshotAt);
     }
     this.lastSnapshotAt = receivedAt;
+    this.netWarning.noteSnapshot(receivedAt);
     this.spareInput.noteSnapshot(message.ackSeq, message.hasSpareInput);
     this.diag.markSnapshot(message.gameTick, receivedAt);
     this.snapshotsThisSecond++;
@@ -551,6 +565,7 @@ export class FfaGame {
       return;
     }
     this.session.onDisconnect();
+    this.netWarning.resetPauses();
     this.diag.write(`net disconnect retry=${String(retryInMs)} reason=${reason}`);
     this.options.telemetry.event('net', 'disconnect', { retryInMs, reason });
   }
@@ -595,6 +610,7 @@ export class FfaGame {
         this.sendStop();
       }
       this.isHidden = isHidden;
+      this.netWarning.resetPauses();
       this.accumulator = 0;
       this.lastFrame = this.deps.now();
       this.events.clear();
@@ -778,6 +794,7 @@ export class FfaGame {
     const screen = this.session.screen(now);
     const hasFieldControls = this.ownTankInPlay() !== null;
     this.showFieldControls(hasFieldControls);
+    this.updateNetWarning(now);
     const framing = this.frameCamera(view, screen, elapsed);
     this.framing = framing;
     this.frameView = view;
@@ -807,6 +824,7 @@ export class FfaGame {
         rttMs: this.net.rttMs,
         correctionPx: this.prediction?.lastCorrectionPx ?? 0,
         isMuted: this.sfx.isMuted,
+        netWarning: hasFieldControls ? this.netWarningState : NO_NET_WARNING,
       },
       frameMs: elapsed,
       frameTimes: this.frameTimes,
@@ -837,6 +855,15 @@ export class FfaGame {
       return { aimLine, aimTargetId: null, arrows };
     }
     return { aimLine, aimTargetId: firstTargetOnPath(trace.segments, targets)?.id ?? null, arrows };
+  }
+
+  // Плашка видна, пока свой танк в игре; у подбитого и зрителя внизу по центру свои плашки. Оценка идёт всё время.
+  private updateNetWarning(now: number): void {
+    const state = this.netWarning.update(now, this.net.recentRttMs);
+    if (!isSameWarning(state, this.netWarningState)) {
+      this.diag.write(netWarningLogLine(state));
+    }
+    this.netWarningState = state;
   }
 
   private showFieldControls(isVisible: boolean): void {

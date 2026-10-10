@@ -179,6 +179,15 @@ describe('NetClient', () => {
     expect(latest().sent.at(-1)).toMatchObject({ type: MessageType.Input, seq: 5 });
   });
 
+  it('последние пять замеров задержки — без сглаживания, старые первыми', () => {
+    latest().open();
+    expect(client.recentRttMs).toEqual([]);
+    for (const clientTime of [950, 940, 930, 920, 910, 900, 890]) {
+      latest().receive(encode({ type: MessageType.Pong, clientTime, serverTick: 1 }));
+    }
+    expect(client.recentRttMs).toEqual([70, 80, 90, 100, 110]);
+  });
+
   it('тихий обрыв: от сервера 4 с ничего — сокет закрыт нами, переподключение', () => {
     latest().open();
     vi.advanceTimersByTime(SILENCE_TIMEOUT_MS - 1);

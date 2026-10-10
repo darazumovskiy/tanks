@@ -224,6 +224,10 @@
         grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
+      .options.is-pairs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
       .options.is-pings {
         grid-template-columns: repeat(4, minmax(0, 1fr));
       }
@@ -330,10 +334,11 @@
           </section>
           <section class="card" id="jitter-card">
             <h2>Неровность</h2>
-            <div class="options is-triples">
+            <div class="options is-pairs">
               <button type="button" class="option" data-jitter="even">Ровно</button>
               <button type="button" class="option" data-jitter="light">Лёгкая</button>
               <button type="button" class="option" data-jitter="phone">Как телефон ночью</button>
+              <button type="button" class="option" data-jitter="stall">Замирает раз в 2 с</button>
             </div>
             <p class="hint" id="jitter-hint"></p>
           </section>
@@ -442,8 +447,8 @@
         const isAdmin = state.bench === null;
         const title = isAdmin ? 'Админка' : 'Плохая сеть';
         byId('title').textContent = title;
-        byId('subtitle').textContent = isAdmin ? 'Тестовый сервер' : 'Пульт стенда';
-        document.title = isAdmin ? 'Админка · Тестовый сервер' : document.title;
+        byId('subtitle').textContent = isAdmin ? (state.serverName ?? '') : 'Пульт стенда';
+        document.title = isAdmin ? `Админка · ${state.serverName ?? ''}` : document.title;
         byId('ping-card').hidden = isAdmin;
         byId('jitter-card').hidden = isAdmin;
         byId('now-ping').hidden = isAdmin;
@@ -483,7 +488,26 @@
         if (bench.jitter === 'even') {
           return 'Данные идут ровно, без пачек — пинг в игре как задан.';
         }
+        if (bench.stallEveryMs > 0) {
+          return `Связь замирает на ${bench.stallMs} мс раз в ${bench.stallEveryMs / 1000} с, как у домашнего Wi‑Fi с паузами: средний пинг почти не растёт (в среднем +${jitterAdded(bench)} мс), а игра дёргается.`;
+        }
         return `Пачки — данные копятся и уходят кучкой, как у мобильной связи. Сами добавляют к пингу в среднем около ${jitterAdded(bench)} мс: в игре будет около ${bench.pingMs + jitterAdded(bench)}, то меньше, то больше.`;
+      }
+
+      function jitterPart(bench, part, accent) {
+        if (bench.stallEveryMs > 0) {
+          return part(
+            'паузы ',
+            accent(String(bench.stallMs)),
+            ' мс раз в ',
+            accent(String(bench.stallEveryMs / 1000)),
+            ' с',
+          );
+        }
+        if (bench.jitter === 'even') {
+          return part('без пачек');
+        }
+        return part('пачки ', accent(`${bench.burstMs}–${bench.burstMaxMs}`), ' мс');
       }
 
       function measuredText(bench) {
@@ -554,14 +578,7 @@
         const networkParts =
           bench === null
             ? []
-            : [
-                part('пинг ', accent(String(bench.pingMs)), ' мс'),
-                ' · ',
-                bench.jitter === 'even'
-                  ? part('без пачек')
-                  : part('пачки ', accent(`${bench.burstMs}–${bench.burstMaxMs}`), ' мс'),
-                ' · ',
-              ];
+            : [part('пинг ', accent(String(bench.pingMs)), ' мс'), ' · ', jitterPart(bench, part, accent), ' · '];
         byId('now-line').replaceChildren(
           ...networkParts,
           part('лаг-компенсация ', accent(leadText)),

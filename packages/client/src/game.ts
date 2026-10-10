@@ -25,6 +25,15 @@ import { DuelPresenter, duelNames } from './duelPresenter.js';
 import { InputReader, type ShotContext, type Viewport } from './input.js';
 import { browserInviteActions, renderInvite } from './invite.js';
 import { NetClient, websocketUrl, type SocketLike } from './net.js';
+import {
+  isSameWarning,
+  NetWarning,
+  netWarningDebug,
+  netWarningLogLine,
+  NO_NET_WARNING,
+  type NetWarningDebug,
+  type NetWarningState,
+} from './netWarning.js';
 import type { OwnHitCounts } from './ownHits.js';
 import type { OwnShotCounts } from './ownShots.js';
 import { pictureDebug, type PictureDebug } from './pictureTime.js';
@@ -134,6 +143,8 @@ export class Game {
   private loggedCamera: { mode: string; height: number } | null = null;
   private loggedFlags: string | null = null;
   private aimLine: AimLine | null = null;
+  private readonly netWarning = new NetWarning();
+  private netWarningState: NetWarningState = NO_NET_WARNING;
 
   constructor(
     private readonly options: GameOptions,
@@ -213,6 +224,7 @@ export class Game {
           this.options.telemetry.event('net', 'roundstart', { idx: message.roundIndex, map: message.mapIndex });
           this.roundStart = message;
           this.roundStartedAt = this.deps.now();
+          this.netWarning.resetPauses();
           this.countdownBeeper.reset();
           hideRoundEnd(this.options.roundEnd);
           // Забытый авто-огонь на старте раунда расстреливает стену перед собой и ловит рикошеты.
@@ -235,6 +247,7 @@ export class Game {
             return;
           }
           this.prediction.applySnapshot(message, receivedAt);
+          this.netWarning.noteSnapshot(receivedAt);
           for (const { predictedId, serverId } of this.prediction.takeConfirmedBullets()) {
             this.effects.renameTrail(predictedId, serverId);
           }
@@ -267,6 +280,7 @@ export class Game {
           this.lastView = null;
           this.roundStart = null;
           this.lastSnapshotAt = null;
+          this.netWarning.resetPauses();
           this.showOverlay(`Связь потеряна, переподключаюсь через ${String(Math.round(retryInMs / 1000))} с…`, true);
         },
       },
@@ -405,6 +419,7 @@ export class Game {
     hasNetSmoothing: boolean;
     interpolationTicks: number;
     picture: PictureDebug | null;
+    netWarning: NetWarningDebug;
   } | null {
     if (this.prediction === null || this.roundStart === null || this.side === null) {
       return null;
@@ -449,6 +464,7 @@ export class Game {
         this.lastView === null
           ? null
           : pictureDebug(this.lastView.clock, this.prediction.latestTick, this.lastView.bullets),
+      netWarning: netWarningDebug(this.netWarningState, true),
     };
   }
 
@@ -462,6 +478,7 @@ export class Game {
   // Вкладка вернулась из фона: события, накопленные, пока цикл кадров стоял, не играются.
   private bindPage(): void {
     document.addEventListener('visibilitychange', () => {
+      this.netWarning.resetPauses();
       this.duel.clearEvents();
       this.prediction?.discardOwnHits();
       this.prediction?.discardOwnShots();
@@ -531,6 +548,7 @@ export class Game {
       this.frames = 0;
       this.fpsWindowStart = now;
     }
+    this.updateNetWarning(now);
 
     const prediction = this.prediction;
     const roundStart = this.roundStart;
@@ -609,6 +627,7 @@ export class Game {
         fps: this.fps,
         worstFrameMs: this.worstFrameMs,
         isMuted: this.sfx.isMuted,
+        netWarning: this.netWarningState,
         frameTimes: this.frameTimes,
       },
       controls: {
@@ -621,6 +640,15 @@ export class Game {
     this.aimLine = drawn.aimLine;
     this.countdownBeeper.update(drawn.overlay);
     this.logCamera(this.renderer.currentCamera, isSummaryDue);
+  }
+
+  // Оценка идёт каждый кадр и между раундами: удержание не начинается заново с каждым раундом.
+  private updateNetWarning(now: number): void {
+    const state = this.netWarning.update(now, this.net.recentRttMs);
+    if (!isSameWarning(state, this.netWarningState)) {
+      this.diag.write(netWarningLogLine(state));
+    }
+    this.netWarningState = state;
   }
 
   private showWaiting(): void {

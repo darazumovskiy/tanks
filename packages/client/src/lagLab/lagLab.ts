@@ -23,6 +23,7 @@ import { defaultSettings, SettingsStore, type Settings } from '../settings.js';
 import { Sfx } from '../sfx.js';
 import { deviceSound } from '../soundSetting.js';
 import { mountSoundToggle } from '../soundToggle.js';
+import { NO_NET_WARNING } from '../netWarning.js';
 import { StepClock } from '../watch/stepClock.js';
 import { isShotInZone } from '../zoneFire.js';
 import {
@@ -584,6 +585,7 @@ export function showLagLab(root: HTMLElement): void {
       fps,
       worstFrameMs,
       isMuted: sfx.isMuted,
+      netWarning: NO_NET_WARNING,
       sticks: input.stickStates,
       isShotGuarded: input.isShotGuarded,
       isZoneFiring: input.isZoneFiring,

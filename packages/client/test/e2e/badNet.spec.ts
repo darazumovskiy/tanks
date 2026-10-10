@@ -13,7 +13,7 @@ import {
   startPanel,
   type PanelState,
 } from './badNetPanel.js';
-import { NETWORK_PROFILES, networkShape, parseNetworkArgs } from './networkProfile.js';
+import { jitterAddedPingMs, NETWORK_PROFILES, networkShape, parseNetworkArgs } from './networkProfile.js';
 import { Player, until } from './player.js';
 import { stopChild } from './server.js';
 
@@ -202,11 +202,39 @@ test.describe('сеть плохой сети из аргументов', () => 
     expect(parseNetworkArgs(['smooth']).network).toEqual({ pingMs: 100, jitter: 'even' });
   });
 
-  test('форма сети у посредника — половина пинга в каждую сторону и шаг пачек неровности', () => {
-    expect(networkShape({ pingMs: 80, jitter: 'phone' })).toEqual({ delayMs: 40, burstMs: 150, burstMaxMs: 250 });
-    expect(networkShape({ pingMs: 50, jitter: 'light' })).toEqual({ delayMs: 25, burstMs: 50, burstMaxMs: 100 });
-    expect(networkShape({ pingMs: 100, jitter: 'even' })).toEqual({ delayMs: 50, burstMs: 0, burstMaxMs: 0 });
+  test('форма сети у посредника — половина пинга в каждую сторону, шаг пачек или паузы связи', () => {
+    const noStalls = { stallEveryMs: 0, stallMs: 0 };
+    expect(networkShape({ pingMs: 80, jitter: 'phone' })).toEqual({
+      delayMs: 40,
+      burstMs: 150,
+      burstMaxMs: 250,
+      ...noStalls,
+    });
+    expect(networkShape({ pingMs: 50, jitter: 'light' })).toEqual({
+      delayMs: 25,
+      burstMs: 50,
+      burstMaxMs: 100,
+      ...noStalls,
+    });
+    expect(networkShape({ pingMs: 100, jitter: 'even' })).toEqual({
+      delayMs: 50,
+      burstMs: 0,
+      burstMaxMs: 0,
+      ...noStalls,
+    });
+    expect(networkShape({ pingMs: 50, jitter: 'stall' })).toEqual({
+      delayMs: 25,
+      burstMs: 0,
+      burstMaxMs: 0,
+      stallEveryMs: 2070,
+      stallMs: 210,
+    });
     expect(networkShape({ pingMs: 75, jitter: 'even' }).delayMs).toBe(37.5);
+  });
+
+  test('паузы связи добавляют к пингу в среднем s² / T', () => {
+    expect(jitterAddedPingMs('stall')).toBeCloseTo((210 * 210) / 2070, 6);
+    expect(parseNetworkArgs(['--ping', '50', '--jitter', 'stall']).network).toEqual({ pingMs: 50, jitter: 'stall' });
   });
 
   test('пинг и неровность поверх сокращения', () => {
@@ -436,6 +464,7 @@ test.describe('пульт без посредника — админка тес�
       host: '127.0.0.1',
       server,
       bench: null,
+      serverName: 'test · tanks-test',
       shotLeadTicks: 0,
       shotInheritPercent: 0,
       hasNetSmoothing: true,
@@ -448,7 +477,12 @@ test.describe('пульт без посредника — админка тес�
     };
     try {
       expect((await fetch(`${url}/`)).status).toBe(HTTP_OK);
-      expect((await call('/api/state')).body).toMatchObject({ bench: null, shotLeadTicks: 0, hasNetSmoothing: true });
+      expect((await call('/api/state')).body).toMatchObject({
+        bench: null,
+        serverName: 'test · tanks-test',
+        shotLeadTicks: 0,
+        hasNetSmoothing: true,
+      });
       expect((await call('/api/network', JSON.stringify({ pingMs: 0 }))).status).toBe(HTTP_NOT_FOUND);
 
       const lead = await call('/api/server', JSON.stringify({ shotLeadTicks: 4 }));

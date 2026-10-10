@@ -51,9 +51,11 @@ export interface Bench {
 export interface BenchState {
   pingMs: number;
   jitter: JitterName;
-  // Шаг пачек неровности от и до, мс; без пачек — 0.
+  // Шаг пачек неровности от и до, мс; без пачек — 0. Паузы связи: на stallMs раз в stallEveryMs; без пауз — 0.
   burstMs: number;
   burstMaxMs: number;
+  stallEveryMs: number;
+  stallMs: number;
   // Сколько неровность сама добавляет к пингу в среднем, мс.
   jitterAddedMs: number;
   measuredPing: MeasuredPing | null;
@@ -61,8 +63,10 @@ export interface BenchState {
   proxyPort: number;
 }
 
+// serverName — где работает сервер, которым управляет пульт (`prod · tankbattle.io`); у стенда — null.
 export interface PanelState extends ServerSettings {
   bench: BenchState | null;
+  serverName: string | null;
   isRestarting: boolean;
   // Время последнего удачного перезапуска сервера пультом, мс от эпохи; null — не перезапускался.
   restartedAt: number | null;
@@ -75,6 +79,7 @@ export interface PanelOptions extends ServerSettings {
   host: string;
   server: RestartableServer;
   bench: Bench | null;
+  serverName: string | null;
 }
 
 export interface BadNetPanel {
@@ -296,6 +301,7 @@ class PanelControl {
   state(): PanelState {
     return {
       bench: this.bench?.state() ?? null,
+      serverName: this.options.serverName,
       ...this.settings,
       isRestarting: this.isRestarting,
       restartedAt: this.restartedAt,

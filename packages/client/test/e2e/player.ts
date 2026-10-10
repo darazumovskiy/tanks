@@ -72,6 +72,7 @@ export interface FfaDebugState {
   spectating: number | null;
   isAutoFiring: boolean;
   isMuted: boolean;
+  netWarning: { level: number; pingDegree: number; jitterDegree: number; text: string; isShown: boolean };
 }
 
 export interface PlayerOptions {

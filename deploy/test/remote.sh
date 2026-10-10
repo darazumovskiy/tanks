@@ -46,6 +46,8 @@ main() {
   if [[ -f /opt/tanks/$ADMIN_UNIT && -s $ADMIN_HASH_FILE ]]; then
     has_admin=1
     install -m 644 "/opt/tanks/$ADMIN_UNIT" /etc/systemd/system/tanks-admin.service
+    install -d -m 755 /etc/systemd/system/tanks-admin.service.d
+    printf '[Service]\nEnvironment="SERVER_NAME=test · %s"\n' "$NAME" >/etc/systemd/system/tanks-admin.service.d/name.conf
   fi
   write_caddyfile "$has_admin"
   systemctl daemon-reload

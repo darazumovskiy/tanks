@@ -386,6 +386,67 @@ describe('проводка дуэли', () => {
   });
 });
 
+describe('предупреждение о связи', () => {
+  const STALL_EVERY_MS = 2070;
+  // Вместе с ожиданием тика и кадра паузы между снимками — 190–240 мс: «сильно», как у сети с паузами раз в 2 с.
+  const STALL_MS = 190;
+  const PLAY_MS = 10_000;
+
+  // Сервер шлёт снимок раз в тик; в паузу связи снимки копятся и приходят разом в её конце.
+  function playNetwork(hasStalls: boolean): { harness: Harness; lines: string[] } {
+    const harness = startDuel();
+    const write = vi.spyOn(harness.diag, 'write');
+    const start = clock;
+    let nextTickAt = clock + TICK_MS;
+    let held: SnapshotMessage[] = [];
+    while (clock - start < PLAY_MS) {
+      harness.frames(1);
+      while (clock >= nextTickAt) {
+        nextTickAt += TICK_MS;
+        stepRound(harness.round, [IDLE_ACTION, IDLE_ACTION]);
+        held.push(snapshotOf(harness.round, harness.socket.inputs.at(-1)?.seq ?? 0, [], false));
+      }
+      const isStalled = hasStalls && (clock - start) % STALL_EVERY_MS > STALL_EVERY_MS - STALL_MS;
+      if (!isStalled) {
+        for (const message of held) {
+          harness.socket.receive(message);
+        }
+        held = [];
+      }
+    }
+    const lines = write.mock.calls.map(([line]) => line).filter((line) => line.startsWith('netwarn '));
+    return { harness, lines };
+  }
+
+  it('ровные снимки — плашки нет, строки netwarn нет', () => {
+    const { harness, lines } = playNetwork(false);
+    expect(harness.game.debugState()?.netWarning).toEqual({
+      level: 0,
+      pingDegree: 0,
+      jitterDegree: 0,
+      text: '',
+      isShown: false,
+    });
+    expect(lines).toEqual([]);
+  });
+
+  // До первого снимка цикла стенд дуэли ждёт 100 мс кадров: эта пауза с первой паузой связи может сначала поднять
+  // жёлтый — подъём идёт до наименьшей степени за 3 с.
+  it('паузы связи раз в 2 с — оранжевая «Плохая сеть», последняя строка netwarn — оранжевая', () => {
+    const { harness, lines } = playNetwork(true);
+    expect(harness.game.debugState()?.netWarning).toEqual({
+      level: 2,
+      pingDegree: 0,
+      jitterDegree: 2,
+      text: 'Плохая сеть',
+      isShown: true,
+    });
+    expect(lines.length).toBeLessThanOrEqual(2);
+    expect(lines.every((line) => !line.includes('level=3'))).toBe(true);
+    expect(lines.at(-1)).toMatch(/^netwarn level=2 ping=0 jitter=2 rtt=0 pause=(19\d|2[0-4]\d)$/);
+  });
+});
+
 describe('попадание по своему танку по касанию', () => {
   const DELAY_TICKS = 4;
   const FIRE: Action = { ...IDLE_ACTION, isFiring: true };

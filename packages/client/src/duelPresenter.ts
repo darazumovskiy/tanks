@@ -2,6 +2,7 @@ import { DT, shotCarry, type Side } from '@tanks/shared/engine';
 import type { RoundStartMessage, SnapshotEvent, TankSnapshot } from '@tanks/shared/protocol';
 import { computeAimLine, type AimLine } from './aimLine.js';
 import { EventSchedule, eventPlace } from './pictureTime.js';
+import type { NetWarningState } from './netWarning.js';
 import type { InterpolatedTank, PictureView, WorldView } from './prediction.js';
 import { isInView } from './render/camera.js';
 import type { Effects } from './render/effects.js';
@@ -19,6 +20,7 @@ export interface DuelReadout {
   fps: number;
   worstFrameMs: number;
   isMuted: boolean;
+  netWarning: Readonly<NetWarningState>;
   frameTimes: readonly number[];
 }
 

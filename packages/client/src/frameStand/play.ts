@@ -4,6 +4,7 @@ import { countdownSeconds, type DuelPresenter, type DuelReadout } from '../duelP
 import { cropAround, type Target } from '../fxLab/frame.js';
 import { thumbSticks } from '../labShared.js';
 import type { WorldView } from '../prediction.js';
+import { NO_NET_WARNING } from '../netWarning.js';
 import { makeCanvas } from '../render/view.js';
 import { defaultSettings } from '../settings.js';
 import type { StickState } from '../touch.js';
@@ -45,6 +46,7 @@ const READOUT: DuelReadout = {
   fps: 60,
   worstFrameMs: 19,
   isMuted: false,
+  netWarning: NO_NET_WARNING,
   frameTimes: FRAME_TIMES,
 };
 

@@ -1,16 +1,23 @@
-// Связь для посредника: задержка в каждую сторону и шаг пачек от и до, мс. Без пачек — оба шага 0.
+// Связь для посредника: задержка в каждую сторону, шаг пачек от и до, паузы связи, мс. Без пачек и пауз — нули.
 export interface NetworkShape {
   delayMs: number;
   burstMs: number;
   burstMaxMs: number;
+  stallEveryMs: number;
+  stallMs: number;
 }
 
-// Неровность — пачки: данные копятся и уходят разом на границах сетки со случайным шагом от и до, мс.
+type JitterShape = Omit<NetworkShape, 'delayMs'>;
+
+// Неровность — пачки: данные копятся и уходят разом на границах сетки со случайным шагом от и до, мс; или паузы:
+// связь замирает в обе стороны на stallMs раз в stallEveryMs. stall — сеть боёв NC95 и 633T: при пинге около 50
+// паузы между снимками 210–245 мс раз в 2 с.
 export const JITTERS = {
-  even: { burstMs: 0, burstMaxMs: 0 },
-  light: { burstMs: 50, burstMaxMs: 100 },
-  phone: { burstMs: 150, burstMaxMs: 250 },
-} as const satisfies Record<string, Pick<NetworkShape, 'burstMs' | 'burstMaxMs'>>;
+  even: { burstMs: 0, burstMaxMs: 0, stallEveryMs: 0, stallMs: 0 },
+  light: { burstMs: 50, burstMaxMs: 100, stallEveryMs: 0, stallMs: 0 },
+  phone: { burstMs: 150, burstMaxMs: 250, stallEveryMs: 0, stallMs: 0 },
+  stall: { burstMs: 0, burstMaxMs: 0, stallEveryMs: 2070, stallMs: 210 },
+} as const satisfies Record<string, JitterShape>;
 
 export type JitterName = keyof typeof JITTERS;
 
@@ -170,9 +177,13 @@ export function networkShape(network: NetworkSetting): NetworkShape {
 
 // Ожидание ближайшей пачки в одну сторону при случайном шаге сетки X — в среднем E[X²] / (2·E[X]): в длинный шаг
 // попадает больше кусков. Туда-обратно — вдвое больше. Для шага, равномерного от a до b, E[X²] / E[X] —
-// 2·(a² + ab + b²) / (3·(a + b)).
+// 2·(a² + ab + b²) / (3·(a + b)). Пауза s раз в T: кусок попадает в неё с долей s / T и ждёт в среднем s / 2 —
+// в одну сторону s² / (2·T), туда-обратно s² / T.
 export function jitterAddedPingMs(jitter: JitterName): number {
-  const { burstMs: low, burstMaxMs: high } = JITTERS[jitter];
+  const { burstMs: low, burstMaxMs: high, stallEveryMs, stallMs } = JITTERS[jitter];
+  if (stallEveryMs > 0) {
+    return (stallMs * stallMs) / stallEveryMs;
+  }
   if (high === 0) {
     return 0;
   }
@@ -180,11 +191,14 @@ export function jitterAddedPingMs(jitter: JitterName): number {
 }
 
 function describeJitter(jitter: JitterName): string {
-  const { burstMs, burstMaxMs } = JITTERS[jitter];
+  const { burstMs, burstMaxMs, stallEveryMs, stallMs } = JITTERS[jitter];
+  const added = Math.round(jitterAddedPingMs(jitter));
+  if (stallEveryMs > 0) {
+    return `связь замирает на ${String(stallMs)} мс раз в ${String(stallEveryMs)} мс, к пингу в среднем +${String(added)} мс`;
+  }
   if (burstMs === 0) {
     return 'без пачек';
   }
-  const added = Math.round(jitterAddedPingMs(jitter));
   return `пачки раз в ${String(burstMs)}–${String(burstMaxMs)} мс, к пингу в среднем +${String(added)} мс`;
 }
 

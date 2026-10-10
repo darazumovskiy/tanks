@@ -223,6 +223,7 @@ export class Renderer {
     }
     this.layers.drawFlash(screen);
     this.layers.drawDebug(hud, screen);
+    this.layers.drawNetWarning(hud.netWarning, screen, hud.frameMs);
     this.layers.drawFrameGraph(hud.frameTimes, screen);
     this.layers.drawSticks(hud.sticks, hud.isZoneFiring, hud.isReversing, screen);
   }

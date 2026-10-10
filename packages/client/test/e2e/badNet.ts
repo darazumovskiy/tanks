@@ -99,6 +99,7 @@ const panel = await panelModule
     port: panelPort,
     host: ALL_INTERFACES,
     server,
+    serverName: null,
     bench: { proxy, network: choice.network, directPort, proxyPort },
     shotLeadTicks: choice.shotLeadTicks,
     shotInheritPercent: choice.shotInheritPercent,

@@ -175,6 +175,7 @@ export class FfaRenderer {
     this.layers.drawAnnouncements(screen);
     this.layers.drawFlash(screen);
     this.layers.drawDebug(input.readout, screen);
+    this.layers.drawNetWarning(input.readout.netWarning, screen, input.frameMs);
     this.layers.drawFrameGraph(input.frameTimes, screen);
     const { controls } = input;
     this.layers.drawSticks(controls.sticks, controls.isZoneFiring, controls.isReversing, screen);

@@ -975,6 +975,86 @@ describe('журнал клиента', () => {
     expect(line).toMatch(/ gap=\d+ ilag=2\.0$/);
   });
 
+  describe('предупреждение о связи', () => {
+    const STALL_EVERY_MS = 2070;
+    // Вместе с ожиданием тика и кадра паузы между снимками — 190–240 мс: «сильно», как у сети с паузами раз в 2 с.
+    const STALL_MS = 190;
+    const PLAY_MS = 10_000;
+
+    // Сервер шлёт снимок раз в тик; в паузу связи снимки копятся и приходят разом в её конце.
+    function playNetwork(harness: Harness, world: World, durationMs: number, hasStalls: boolean): void {
+      const start = clock;
+      let nextTickAt = clock + TICK_MS;
+      let held: ServerMessage[] = [];
+      while (clock - start < durationMs) {
+        harness.frames(1);
+        while (clock >= nextTickAt) {
+          nextTickAt += TICK_MS;
+          stepWorld(
+            world,
+            world.tanks.map(() => IDLE_ACTION),
+          );
+          held.push(snapshotOf(world));
+        }
+        const isStalled = hasStalls && (clock - start) % STALL_EVERY_MS > STALL_EVERY_MS - STALL_MS;
+        if (!isStalled) {
+          for (const message of held) {
+            harness.socket().receive(message);
+          }
+          held = [];
+        }
+      }
+    }
+
+    function netwarnLines(harness: Harness): string[] {
+      return harness.diagSent.flatMap((sent) => sent.body.split('\n').filter((line) => line.includes(' netwarn ')));
+    }
+
+    it('ровная сеть — плашки нет, строки netwarn нет', async () => {
+      const harness = makeGame();
+      const world = arena([tank(ME, 600, 650), tank(ENEMY, 900, 650)]);
+      enterFight(harness, world);
+      playNetwork(harness, world, PLAY_MS, false);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(harness.state().netWarning).toEqual({
+        level: 0,
+        pingDegree: 0,
+        jitterDegree: 0,
+        text: '',
+        isShown: false,
+      });
+      expect(harness.renderer.last?.readout.netWarning.level).toBe(0);
+      expect(netwarnLines(harness)).toEqual([]);
+    });
+
+    it('паузы связи раз в 2 с — оранжевая «Плохая сеть» и одна строка netwarn; подбит — плашка скрыта, оценка та же', async () => {
+      const harness = makeGame();
+      const me = tank(ME, 600, 650);
+      const world = arena([me, tank(ENEMY, 900, 650)]);
+      enterFight(harness, world);
+      playNetwork(harness, world, PLAY_MS, true);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(harness.state().netWarning).toEqual({
+        level: 2,
+        pingDegree: 0,
+        jitterDegree: 2,
+        text: 'Плохая сеть',
+        isShown: true,
+      });
+      expect(harness.renderer.last?.readout.netWarning).toMatchObject({ level: 2, text: 'Плохая сеть' });
+      const lines = netwarnLines(harness);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/ netwarn level=2 ping=0 jitter=2 rtt=0 pause=(19\d|2[0-4]\d)$/);
+
+      me.isAlive = false;
+      me.hp = 0;
+      harness.socket().receive(snapshotOf(world, { state: 'wreck', killerId: ENEMY }));
+      harness.frames(2);
+      expect(harness.state().netWarning).toMatchObject({ level: 2, isShown: false });
+      expect(harness.renderer.last?.readout.netWarning.level).toBe(0);
+    });
+  });
+
   it('возврат тем же номером — источник прежний; место ушло — строки идут под новым номером до закрытия', async () => {
     const harness = makeGame();
     harness.socket().open();

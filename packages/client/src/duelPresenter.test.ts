@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { countdownSeconds, DuelPresenter, type DuelFrameInput } from './duelPresenter.js';
 import type { InterpolatedTank, PictureView, WorldView } from './prediction.js';
 import type { Camera } from './render/camera.js';
+import { NO_NET_WARNING } from './netWarning.js';
 import type { DecalLayer } from './render/decals.js';
 import { Effects, type FxEvent, type FxEventOptions, type FxTank } from './render/effects.js';
 import type { HudInfo, Overlay } from './render/renderer.js';
@@ -32,7 +33,15 @@ const FULL_HP = deriveStats(DEFAULT_STATS).maxHp;
 // На верхней полосе «Полигона» между танками стен нет.
 const LANE_ME = { x: 240, y: 100, heading: 0, turret: 0 };
 const LANE_ENEMY = { x: 1180, y: 100, heading: Math.PI, turret: Math.PI };
-const READOUT = { rttMs: 46, correctionPx: 0.4, fps: 60, worstFrameMs: 19, isMuted: true, frameTimes: [16, 17] };
+const READOUT = {
+  rttMs: 46,
+  correctionPx: 0.4,
+  fps: 60,
+  worstFrameMs: 19,
+  isMuted: true,
+  netWarning: NO_NET_WARNING,
+  frameTimes: [16, 17],
+};
 const CONTROLS = { sticks: [], isShotGuarded: true, isZoneFiring: false, isReversing: true };
 
 interface FakeRenderer {

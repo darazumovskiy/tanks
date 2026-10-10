@@ -1,7 +1,9 @@
 import { gameTimecode } from '@tanks/shared/protocol';
+import type { NetWarningState } from '../netWarning.js';
 import type { Settings } from '../settings.js';
 import type { StickState } from '../touch.js';
 import type { Effects } from './effects.js';
+import { NetWarningBadge, pingColor } from './netWarningBadge.js';
 import { clamp } from './view.js';
 
 // Интерфейс размечен в CSS-пикселях под экран телефона высотой 390; на больших экранах растёт, но не больше чем в полтора раза.
@@ -12,6 +14,7 @@ const ANNOUNCE_SCALE = 0.6;
 const ANNOUNCE_Y_SHARE = 0.3;
 const SCREEN_FLASH_ALPHA = 0.6;
 const DEBUG_BOTTOM_OFFSET = 8;
+const DEBUG_COLOR = 'rgba(244,241,232,0.55)';
 const FRAME_GRAPH_BOTTOM_OFFSET = 24;
 const FRAME_GRAPH_HEIGHT = 36;
 const FRAME_GRAPH_BAR_WIDTH = 2;
@@ -47,6 +50,8 @@ export interface DebugReadout {
   rttMs: number;
   correctionPx: number;
   isMuted: boolean;
+  // Предупреждение о связи в этом кадре; плашка не видна — уровень 0.
+  netWarning: Readonly<NetWarningState>;
 }
 
 function edgeColor(isFiring: boolean, isReversing: boolean): string {
@@ -62,6 +67,8 @@ function edgeColor(isFiring: boolean, isReversing: boolean): string {
 // Экранные слои поверх поля, общие для дуэли и толпы: объявления, вспышка экрана, отладка, график кадров, стики.
 // Рисуются в CSS-пикселях: перед вызовом холст масштабирован на плотность экрана.
 export class ScreenLayers {
+  private readonly netWarningBadge = new NetWarningBadge();
+
   constructor(
     private readonly ctx: CanvasRenderingContext2D,
     private readonly effects: Effects,
@@ -91,14 +98,27 @@ export class ScreenLayers {
     ctx.save();
     ctx.font = `10px ui-monospace, monospace`;
     ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(244,241,232,0.55)';
     const sound = readout.isMuted ? 'звук выкл · M' : 'M — звук';
-    ctx.fillText(
-      `${readout.gameId} ${gameTimecode(readout.gameTick)} · ${readout.fps.toFixed(0)} к/с · худший кадр ${readout.worstFrameMs.toFixed(0)} мс · задержка ${readout.rttMs.toFixed(0)} мс · поправка ${readout.correctionPx.toFixed(1)} px · ${sound}`,
-      UI_MARGIN,
-      screen.height - DEBUG_BOTTOM_OFFSET,
-    );
+    const parts: [string, string][] = [
+      [
+        `${readout.gameId} ${gameTimecode(readout.gameTick)} · ${readout.fps.toFixed(0)} к/с · худший кадр ${readout.worstFrameMs.toFixed(0)} мс · задержка `,
+        DEBUG_COLOR,
+      ],
+      [`${readout.rttMs.toFixed(0)} мс`, pingColor(readout.rttMs)],
+      [` · поправка ${readout.correctionPx.toFixed(1)} px · ${sound}`, DEBUG_COLOR],
+    ];
+    let x = UI_MARGIN;
+    for (const [text, color] of parts) {
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, screen.height - DEBUG_BOTTOM_OFFSET);
+      x += ctx.measureText(text).width;
+    }
     ctx.restore();
+  }
+
+  drawNetWarning(warning: Readonly<NetWarningState>, screen: Screen, frameMs: number): void {
+    this.netWarningBadge.update(warning, frameMs);
+    this.netWarningBadge.draw(this.ctx, screen);
   }
 
   // Столбик — длительность кадра; линия — бюджет 60 к/с; красные столбики вышли за бюджет вдвое.

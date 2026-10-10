@@ -1,4 +1,5 @@
 import type { AimLine } from './aimLine.js';
+import { NO_NET_WARNING } from './netWarning.js';
 import type { HudInfo } from './render/renderer.js';
 import type { Settings } from './settings.js';
 import type { StickState } from './touch.js';
@@ -34,6 +35,7 @@ export function labHud(sticks: StickState[], frameMs: number, aimLine: AimLine |
     fps: 0,
     worstFrameMs: 0,
     isMuted: true,
+    netWarning: NO_NET_WARNING,
     sticks,
     isShotGuarded: false,
     isZoneFiring: false,

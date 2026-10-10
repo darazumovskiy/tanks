@@ -1,7 +1,9 @@
-// Админка тестовой машины: пульт стенда без посредника сети. Настройки сервера лежат в файле окружения службы tanks;
-// смена — новый файл, перезапуск службы и ожидание /healthz. Запуск — служба tanks-admin от root (deploy/test/remote.sh).
+// Админка машины игры: пульт стенда без посредника сети. Настройки сервера лежат в файле окружения службы tanks;
+// смена — новый файл, перезапуск службы и ожидание /healthz. Запуск — служба tanks-admin от root (deploy/tanks-admin.service).
+// SERVER_NAME — где работает сервер, подпись страницы; без неё — имя машины.
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { promisify } from 'node:util';
 import { envFileText, serverSettingsFromEnvFile, startPanel, type RestartableServer } from './badNetPanel.js';
 
@@ -9,6 +11,7 @@ const ADMIN_PORT = Number(process.env.ADMIN_PORT ?? '8090');
 const ADMIN_HOST = '127.0.0.1';
 const SETTINGS_FILE = process.env.SETTINGS_FILE ?? '/etc/tanks/settings.env';
 const LOG_DIR = process.env.LOG_DIR ?? '/opt/tanks-logs';
+const SERVER_NAME = process.env.SERVER_NAME ?? hostname();
 const SERVICE = 'tanks';
 const HEALTH_URL = 'http://127.0.0.1:8080/healthz';
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -45,5 +48,12 @@ const server: RestartableServer = {
 };
 
 const settings = serverSettingsFromEnvFile(existsSync(SETTINGS_FILE) ? readFileSync(SETTINGS_FILE, 'utf8') : '');
-const panel = await startPanel({ port: ADMIN_PORT, host: ADMIN_HOST, server, bench: null, ...settings });
+const panel = await startPanel({
+  port: ADMIN_PORT,
+  host: ADMIN_HOST,
+  server,
+  bench: null,
+  serverName: SERVER_NAME,
+  ...settings,
+});
 console.log(`админка на ${ADMIN_HOST}:${String(panel.port)}, настройки — ${SETTINGS_FILE}`);

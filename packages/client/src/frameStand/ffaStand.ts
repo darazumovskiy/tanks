@@ -26,6 +26,7 @@ import { StampDecals } from '../render/stampDecals.js';
 import { makeCanvas } from '../render/view.js';
 import { defaultSettings } from '../settings.js';
 import { FFA_FRAMES, FFA_SPRITE_PROBE, type FfaStandFrame, type StandTank } from './ffaFrames.js';
+import { NO_NET_WARNING } from '../netWarning.js';
 import { FFA_HUD_FRAMES, type FfaHudFrame } from './ffaHudFrames.js';
 import { checkFloor } from './floorChecks.js';
 import { waitForFonts } from './fonts.js';
@@ -53,7 +54,15 @@ const CROP_FRACTION = 0.5;
 const PNG_TYPE = 'image/png';
 const BULLET_SPEED = deriveStats(DEFAULT_STATS).bulletSpeed;
 const MAX_HP = deriveStats(DEFAULT_STATS).maxHp;
-const READOUT = { gameId: 'K7QX', fps: 60, worstFrameMs: 19, rttMs: 46, correctionPx: 0.4, isMuted: false };
+const READOUT = {
+  gameId: 'K7QX',
+  fps: 60,
+  worstFrameMs: 19,
+  rttMs: 46,
+  correctionPx: 0.4,
+  isMuted: false,
+  netWarning: NO_NET_WARNING,
+};
 const OWN_PALETTE_SUFFIX = '-own';
 const COARSE_POINTER = '(pointer: coarse)';
 const PAGE_CLASSES = ['duel', 'ffa'];

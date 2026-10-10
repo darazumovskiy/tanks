@@ -9,6 +9,8 @@ WorkingDirectory=/opt/tanks
 Environment=ADMIN_PORT=8090
 Environment=SETTINGS_FILE=/etc/tanks/settings.env
 Environment=LOG_DIR=/opt/tanks-logs
+# Где работает сервер — подпись админки; тестовая машина переопределяет дополнением юнита.
+Environment="SERVER_NAME=prod · tankbattle.io"
 ExecStart=/usr/bin/node --import ./packages/client/test/e2e/tsLoader.mjs packages/client/test/e2e/serverAdmin.ts
 Restart=always
 RestartSec=2

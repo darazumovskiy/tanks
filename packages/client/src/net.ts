@@ -67,6 +67,7 @@ export interface NetOptions {
 
 const PING_INTERVAL_MS = 1000;
 const RTT_SMOOTHING = 0.3;
+const RTT_RECENT_SAMPLES = 5;
 export const RECONNECT_BASE_MS = 1000;
 export const RECONNECT_MAX_MS = 5000;
 // Сервер отвечает на каждый пинг раз в секунду: живая связь столько не молчит.
@@ -96,6 +97,8 @@ export class NetClient {
   private readonly createSocket: (url: string) => SocketLike;
   private readonly now: () => number;
   rttMs = 0;
+  // Последние замеры задержки без сглаживания, старые первыми.
+  readonly recentRttMs: number[] = [];
   serverTick = 0;
 
   constructor(
@@ -305,6 +308,10 @@ export class NetClient {
       case MessageType.Pong: {
         const sample = receivedAt - message.clientTime;
         this.rttMs = this.rttMs === 0 ? sample : this.rttMs + (sample - this.rttMs) * RTT_SMOOTHING;
+        this.recentRttMs.push(sample);
+        if (this.recentRttMs.length > RTT_RECENT_SAMPLES) {
+          this.recentRttMs.shift();
+        }
         this.serverTick = message.serverTick;
         break;
       }
