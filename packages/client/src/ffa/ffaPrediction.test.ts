@@ -431,6 +431,39 @@ describe('снаряды зеркалом', () => {
     expect(client.takeConfirmedBullets()).toEqual([{ predictedId: PREDICTED_BULLET_ID_BASE + fireSeq, serverId }]);
   });
 
+  // Сервер в паузе стреляет повтором по своей перезарядке — на шаг раньше или позже предсказания, — или переносит
+  // выстрел пришедшей засчитанной команды на следующий шаг.
+  for (const shift of [-1, 1, 3]) {
+    it(`выстрел сервера на ${String(shift)} шаг от предсказанного — в каждом снимке один свой снаряд`, () => {
+      const server = worldOf([placedTank(ME, 500, 600), placedTank(5, 1500, 900)]);
+      const tracker = new BulletTracker();
+      stepWorld(server, actionsFor(server, IDLE_ACTION));
+      const client = prediction();
+      client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), 0);
+      const ownCount = (): number => client.view(1000).bullets.filter((bullet) => bullet.owner === ME).length;
+      const fireSeq = 3;
+      const lag = 2;
+      const lastSeq = 14;
+      const counts: number[] = [];
+      for (let seq = 1; seq <= lastSeq; seq++) {
+        client.predict(seq, seq === fireSeq ? FIRE : IDLE_ACTION);
+        const applied = seq - lag;
+        if (applied >= 1) {
+          stepWorld(server, actionsFor(server, applied === fireSeq + shift ? FIRE : IDLE_ACTION));
+          const changes = tracker.diff(server.bullets);
+          client.applySnapshot(snapshotOf(server, { ackSeq: applied, changes }), seq * TICK_MS);
+        }
+        if (seq >= fireSeq) {
+          counts.push(ownCount());
+        }
+      }
+      expect(counts).toEqual(Array<number>(counts.length).fill(1));
+      expect(client.view(1000).bullets.find((bullet) => bullet.owner === ME)?.id).toBeLessThan(
+        PREDICTED_BULLET_ID_BASE,
+      );
+    });
+  }
+
   it('свой танк подбит, пока подтверждённый снаряд ждёт пару, — снаряд предсказания пропадает', () => {
     const server = worldOf([placedTank(ME, 500, 600), placedTank(5, 1500, 900)]);
     const tracker = new BulletTracker();

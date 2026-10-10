@@ -140,6 +140,7 @@ interface FrameSample {
   me: { x: number; y: number } | null;
   speed: number;
   othersTick: number;
+  own: { id: number; x: number; y: number }[];
 }
 
 const SMOOTH_DRIVE_MS = 12_000;
@@ -152,13 +153,21 @@ const STALL_SHARE = 0.25;
 const RESPAWN_JUMP = 120;
 // Чуть дольше OWN_SMOOTHING_MS — за это время нарисованный танк проходит всю поправку.
 const SURGE_WINDOW_MS = 150;
+// Два своих снаряда ближе этого — один выстрел, нарисованный дважды: соседние выстрелы разносит перезарядка на
+// сотни единиц, а снаряды, разминувшиеся после отскока, сходятся так ненадолго.
+const TWIN_DISTANCE = 60;
+const TWIN_LIMIT_MS = 200;
 
-async function startSampling(page: Player['page']): Promise<void> {
-  await page.evaluate(() => {
+async function startSampling(page: Player['page'], myId: number | null): Promise<void> {
+  await page.evaluate((ownerId) => {
     interface Debug {
       screen?: string;
       me?: { speed: number } | null;
-      picture?: { me: { x: number; y: number } | null; othersTick: number };
+      picture?: {
+        me: { x: number; y: number } | null;
+        othersTick: number;
+        bullets: { id: number; owner: number; x: number; y: number }[];
+      };
     }
     const scope = window as unknown as {
       tanksGame: { debugState(): Debug };
@@ -171,14 +180,23 @@ async function startSampling(page: Player['page']): Promise<void> {
       const state = scope.tanksGame.debugState();
       const picture = state.picture;
       if (state.screen === 'fight' && picture !== undefined) {
-        scope.frameSamples.push({ at, me: picture.me, speed: state.me?.speed ?? 0, othersTick: picture.othersTick });
+        const own = picture.bullets
+          .filter((bullet) => bullet.owner === ownerId)
+          .map((bullet) => ({ id: bullet.id, x: bullet.x, y: bullet.y }));
+        scope.frameSamples.push({
+          at,
+          me: picture.me,
+          speed: state.me?.speed ?? 0,
+          othersTick: picture.othersTick,
+          own,
+        });
       }
       if (scope.isSampling) {
         requestAnimationFrame(sample);
       }
     };
     requestAnimationFrame(sample);
-  });
+  }, myId);
 }
 
 function stopSampling(page: Player['page']): Promise<FrameSample[]> {
@@ -200,6 +218,8 @@ interface Smoothness {
   othersStallShare: number;
   // Самый большой шаг тика чужих за кадр сверх хода времени, тиков.
   worstOthersLeap: number;
+  // Дольше всего два своих снаряда летели ближе TWIN_DISTANCE, мс.
+  worstTwinMs: number;
 }
 
 function smoothnessOf(samples: readonly FrameSample[], overflows: number): Smoothness {
@@ -232,7 +252,34 @@ function smoothnessOf(samples: readonly FrameSample[], overflows: number): Smoot
     worstOwnSurge: worstOwnSurge(samples, start),
     othersStallShare: stalls / Math.max(1, frames),
     worstOthersLeap,
+    worstTwinMs: worstTwinMs(samples),
   };
+}
+
+function worstTwinMs(samples: readonly FrameSample[]): number {
+  const since = new Map<string, number>();
+  let worst = 0;
+  for (const { at, own } of samples) {
+    const close = new Set<string>();
+    for (const [index, a] of own.entries()) {
+      for (const b of own.slice(index + 1)) {
+        if (Math.hypot(a.x - b.x, a.y - b.y) < TWIN_DISTANCE) {
+          close.add(`${String(Math.min(a.id, b.id))}:${String(Math.max(a.id, b.id))}`);
+        }
+      }
+    }
+    for (const pair of since.keys()) {
+      if (!close.has(pair)) {
+        since.delete(pair);
+      }
+    }
+    for (const pair of close) {
+      const from = since.get(pair) ?? at;
+      since.set(pair, from);
+      worst = Math.max(worst, at - from);
+    }
+  }
+  return worst;
 }
 
 function frameTravel(was: FrameSample, now: FrameSample): number {
@@ -279,7 +326,7 @@ async function playLagger(
   servers.push(server);
   await server.start();
   const { player, start } = await joinLagger(browser, server, network);
-  await startSampling(player.page);
+  await startSampling(player.page, start.playerId);
   await drive(player, SMOOTH_DRIVE_MS);
   const samples = await stopSampling(player.page);
   await server.stop();
@@ -313,13 +360,16 @@ for (const [title, hasNetSmoothing, drive] of [
   ['со сглаживанием, газ без руля', true, driveStraight],
   ['без сглаживания, газ без руля', false, driveStraight],
 ] as const) {
-  test(`связь замирает раз в 2 с (${title}): свой танк не рвёт вперёд`, async ({ browser }) => {
+  test(`связь замирает раз в 2 с (${title}): свой танк не рвёт вперёд, свой выстрел не двоится`, async ({
+    browser,
+  }) => {
     test.setTimeout(90_000);
     const result = await playLagger(browser, STALLING_NETWORK, hasNetSmoothing, drive);
     const summary = JSON.stringify(result);
     console.log(summary);
     test.info().annotations.push({ type: 'паузы связи', description: summary });
     expect(result.worstOwnSurge, summary).toBeLessThan(STALL_OWN_SURGE_LIMIT);
+    expect(result.worstTwinMs, summary).toBeLessThan(TWIN_LIMIT_MS);
   });
 }
 

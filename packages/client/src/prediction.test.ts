@@ -249,6 +249,52 @@ describe('дуэль: картинка совпадает с сервером', 
     expect(prediction.takeConfirmedBullets()).toEqual([{ predictedId: PREDICTED_BULLET_ID_BASE + fireSeq, serverId }]);
   });
 
+  // Сервер в паузе стреляет повтором по своей перезарядке — на шаг раньше или позже предсказания, — или переносит
+  // выстрел пришедшей засчитанной команды на следующий шаг.
+  for (const shift of [-1, 1, SERVER_FIRE_DELAY]) {
+    it(`выстрел сервера на ${String(shift)} шаг от предсказанного — в каждом кадре один свой снаряд`, () => {
+      const fireSeq = WARMUP_SEQ + 2;
+      const { frames } = playDuel(
+        4,
+        WARMUP_SEQ + 24,
+        (seq) => (seq === fireSeq ? FIRE : IDLE_ACTION),
+        () => IDLE_ACTION,
+        undefined,
+        undefined,
+        (seq) => (seq === fireSeq + shift ? FIRE : IDLE_ACTION),
+      );
+      const ownIds = frames.map(({ view }) => view.bullets.filter((bullet) => bullet.owner === ME).map((b) => b.id));
+      const first = ownIds.findIndex((ids) => ids.length > 0);
+      expect(first).toBeGreaterThanOrEqual(0);
+      expect(ownIds.slice(first).map((ids) => ids.length)).toEqual(Array<number>(ownIds.length - first).fill(1));
+      expect(ownIds.at(-1)?.[0]).toBeLessThan(PREDICTED_BULLET_ID_BASE);
+    });
+  }
+
+  it('огонь зажат, сервер стреляет на шаг раньше предсказания — своих снарядов в кадре не больше, чем выстрелов', () => {
+    const fireSeq = WARMUP_SEQ + 2;
+    const { frames } = playDuel(
+      4,
+      WARMUP_SEQ + 60,
+      (seq) => (seq >= fireSeq ? FIRE : IDLE_ACTION),
+      () => IDLE_ACTION,
+      undefined,
+      undefined,
+      (seq) => (seq >= fireSeq - 1 ? FIRE : IDLE_ACTION),
+    );
+    const predictedSeen = new Set<number>();
+    for (const { view } of frames) {
+      const own = view.bullets.filter((bullet) => bullet.owner === ME);
+      for (const bullet of own) {
+        if (bullet.id >= PREDICTED_BULLET_ID_BASE) {
+          predictedSeen.add(bullet.id);
+        }
+      }
+      expect(own.length).toBeLessThanOrEqual(predictedSeen.size);
+    }
+    expect(predictedSeen.size).toBeGreaterThan(1);
+  });
+
   it('подтверждённый выстрел, которого сервер так и не сделал, — снаряд предсказания пропадает после ожидания пары', () => {
     const fireSeq = WARMUP_SEQ + 1;
     const { frames } = playDuel(

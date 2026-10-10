@@ -45,7 +45,9 @@ export class PredictedShots<B extends { id: number }> {
   }
 
   // Подтверждённые без пары — в тике снимка, до переигрывания. Первые bornCount по порядку номеров получат пару
-  // со снарядами сервера, рождёнными в этом снимке; не дождавшиеся или погибшие в досчёте забываются.
+  // со снарядами сервера, рождёнными в этом снимке; не дождавшиеся или погибшие в досчёте забываются. Состояния
+  // стираются: переигрывание запишет их заново, а снаряд, которого оно не родило (сервер выстрелил раньше и
+  // перезарядка не дала выстрелить предсказанию), из старой записи не воскресает.
   takeUnpaired(ackSeq: number, tick: number, bornCount: number, isOnField: boolean): B[] {
     const waiting = [...this.ids].filter((id) => isShotAcked(id, ackSeq)).sort((a, b) => a - b);
     const carried: B[] = [];
@@ -59,13 +61,7 @@ export class PredictedShots<B extends { id: number }> {
         this.forget(id);
       }
     }
-    for (const byTick of this.states.values()) {
-      for (const stateTick of byTick.keys()) {
-        if (stateTick < tick) {
-          byTick.delete(stateTick);
-        }
-      }
-    }
+    this.states.clear();
     return carried;
   }
 
