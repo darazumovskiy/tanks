@@ -7,7 +7,7 @@
 | Файл | Роль |
 |---|---|
 | `packages/mobile/capacitor.config.ts` | `appId` `io.github.darazumovskiy.tanks`, имя «Танки», `server.url` — адрес игрового сервера (переопределяется `TANKS_SERVER_URL`), `webDir: www` — заглушка «нет связи» |
-| `packages/mobile/android/` | Нативный проект: `AndroidManifest.xml` — `screenOrientation="sensorLandscape"`, intent-filter ссылок `https://<сервер>/d/…` с `autoVerify`; `MainActivity.java` — скрытые системные панели (возвращаются свайпом от края), экран не гаснет, ссылка на дуэль из `onNewIntent` грузится в WebView; `app/build.gradle` — подпись из переменных окружения, `versionCode`/`versionName`, хост ссылок из `TANKS_SERVER_URL`. Открытие ссылок приложением — [invite-link.md](../frontend/invite-link.md) |
+| `packages/mobile/android/` | Нативный проект: `AndroidManifest.xml` — `screenOrientation="sensorLandscape"`, intent-filter ссылок `https://<сервер>/d/…` с `autoVerify`; `MainActivity.java` — скрытые системные панели (возвращаются свайпом от края), экран не гаснет, пока приложение на экране — замок Wi-Fi с низкой задержкой (`WIFI_MODE_FULL_LOW_LATENCY`, до Android 10 — `WIFI_MODE_FULL_HIGH_PERF`, разрешение `WAKE_LOCK`): радио не уходит в энергосбережение, из-за которого Samsung с One UI 7+ замирает раз в пару секунд ([incident-633t.md](../../../workflow/multiplayer/knowledge/incident-633t.md)), ссылка на дуэль из `onNewIntent` грузится в WebView; `app/build.gradle` — подпись из переменных окружения, `versionCode`/`versionName`, хост ссылок из `TANKS_SERVER_URL`. Открытие ссылок приложением — [invite-link.md](../frontend/invite-link.md) |
 | `packages/mobile/package.json` | Нативные плагины Capacitor, которые `cap sync` кладёт в APK: `@capacitor/share` — системное меню «поделиться» |
 | `packages/mobile/ios/` | Проект iOS, создан, не собирается (см. research) |
 | `deploy/android/Dockerfile` | Образ сборки: JDK 21, Android SDK 36, build-tools 36 и 35. Всегда `linux/amd64` — инструменты SDK собраны под x86_64, на Apple Silicon идёт через Rosetta |
@@ -36,6 +36,7 @@
 | 0.3 (`versionCode` 3) | Ссылки на дуэль открываются приложением; плагин «поделиться» |
 | 0.4 (`versionCode` 4) | Ссылки на общий бой открываются приложением |
 | 0.5 (`versionCode` 5) | Адрес сервера и ссылок — `tankbattle.io`; старые версии продолжают открывать `172-232-212-157.sslip.io` |
+| 0.6 (`versionCode` 6) | Замок Wi-Fi с низкой задержкой, пока приложение на экране |
 
 ## Проверка на устройстве
 

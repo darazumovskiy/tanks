@@ -49,4 +49,6 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Замок Wi-Fi с низкой задержкой, пока игра на экране. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 </manifest>
