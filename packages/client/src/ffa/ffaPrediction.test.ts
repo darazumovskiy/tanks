@@ -6,20 +6,41 @@ import {
   createWorld,
   DEFAULT_RULES,
   DEFAULT_STATS,
+  deriveStats,
+  DT,
   ffaMap,
   IDLE_ACTION,
+  MUZZLE_OFFSET,
   nextRandom,
   stepFfaMatch,
   stepWorld,
   TANK_RADIUS,
   type Action,
+  type RoundRules,
+  type Stats,
   type Tank,
   type World,
   type ZonePlan,
 } from '@tanks/shared/engine';
-import { BulletTracker, bulletSnapshot, toFfaSnapshotEvent, type FfaSnapshotMessage } from '@tanks/shared/protocol';
+import {
+  BulletTracker,
+  bulletSnapshot,
+  toFfaSnapshotEvent,
+  type FfaSnapshotEvent,
+  type FfaSnapshotMessage,
+} from '@tanks/shared/protocol';
 import { OPEN_MAP, placedTank, snapshotOf } from '../testing/ffaServer.js';
-import { PICTURE_CATCH_UP_RATE, PICTURE_MIN_TIME_RATE, PICTURE_NEAR, pictureTickAt } from '../pictureTime.js';
+import { PLAYOUT_MAX_BEHIND_TICKS } from '../netSmoothing.js';
+import {
+  EventSchedule,
+  eventPlace,
+  PICTURE_CATCH_UP_RATE,
+  PICTURE_MIN_TIME_RATE,
+  PICTURE_NEAR,
+  pictureTickAt,
+  type DueEvent,
+  type PictureClock,
+} from '../pictureTime.js';
 import { PREDICTED_BULLET_ID_BASE } from '../predictedShots.js';
 import { FfaPrediction, type FfaFrameView } from './ffaPrediction.js';
 
@@ -38,6 +59,11 @@ function setupOf(id: number): { name: string; stats: typeof DEFAULT_STATS } {
 
 function prediction(myId = ME, plan: ZonePlan = STILL_ZONE, map = OPEN_MAP): FfaPrediction {
   return new FfaPrediction(map, DEFAULT_RULES, plan, myId, setupOf);
+}
+
+function drawnMe(clock: PictureClock): { x: number; y: number } | null {
+  const shift = clock.ownShift ?? { x: 0, y: 0 };
+  return clock.me === null ? null : { x: clock.me.x + shift.x, y: clock.me.y + shift.y };
 }
 
 function worldOf(tanks: Tank[]): World {
@@ -389,6 +415,124 @@ describe('снаряды зеркалом', () => {
   });
 });
 
+describe('догон снаряда', () => {
+  const LEAD_RULES: RoundRules = { ...DEFAULT_RULES, shotLeadTicks: 2 };
+  // Выстрел — когда сервер уже применяет команды: до первой он стоит, а предсказание уходит вперёд на лишние тики.
+  const FIRE_SEQ = 10;
+  const TICKS = 50;
+
+  // Место снаряда сервера в дробном тике картинки: между тиками снаряд летит по прямой, до тика рождения стоит на
+  // месте рождения.
+  function serverAt(history: ReadonlyMap<number, { x: number; y: number }>, tick: number): { x: number; y: number } {
+    const after = history.get(Math.ceil(tick));
+    const before = history.get(Math.floor(tick)) ?? after;
+    if (before === undefined || after === undefined) {
+      return { x: NaN, y: NaN };
+    }
+    const t = tick - Math.floor(tick);
+    return { x: before.x + (after.x - before.x) * t, y: before.y + (after.y - before.y) * t };
+  }
+
+  for (const lag of [0, 2, 5]) {
+    it(`свой снаряд при догоне 2 — на месте серверного до и после подтверждения, один; ${String(lag)} неподтверждённых`, () => {
+      const server = createWorld(
+        OPEN_MAP,
+        [placedTank(ME, 500, 600), placedTank(5, 1500, 900)],
+        LEAD_RULES,
+        STILL_ZONE,
+      );
+      const tracker = new BulletTracker();
+      const client = new FfaPrediction(OPEN_MAP, LEAD_RULES, STILL_ZONE, ME, setupOf);
+      stepWorld(server, actionsFor(server, IDLE_ACTION));
+      client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), 0);
+      const history = new Map<number, { x: number; y: number }>();
+      const drawn: { id: number; tick: number; x: number; y: number }[] = [];
+      for (let tick = 1; tick <= TICKS + lag; tick++) {
+        if (tick <= TICKS) {
+          client.predict(tick, tick === FIRE_SEQ ? FIRE : IDLE_ACTION);
+        }
+        const seq = tick - lag;
+        stepWorld(server, actionsFor(server, seq === FIRE_SEQ ? FIRE : IDLE_ACTION));
+        const own = server.bullets.find((bullet) => bullet.owner === ME);
+        if (own !== undefined) {
+          history.set(server.tick, { x: own.x, y: own.y });
+        }
+        if (tick > TICKS) {
+          continue;
+        }
+        client.applySnapshot(
+          snapshotOf(server, { ackSeq: Math.max(0, seq), changes: tracker.diff(server.bullets) }),
+          tick * TICK_MS,
+        );
+        const mine = client.view(tick * TICK_MS + 1).bullets.filter((bullet) => bullet.owner === ME);
+        expect(mine.length).toBeLessThanOrEqual(1);
+        drawn.push(...mine);
+      }
+      expect(drawn.length).toBeGreaterThan(TICKS / 2);
+      expect(drawn.some((bullet) => bullet.id >= PREDICTED_BULLET_ID_BASE)).toBe(lag > 0);
+      expect(drawn.at(-1)?.id).toBeLessThan(PREDICTED_BULLET_ID_BASE);
+      for (const bullet of drawn) {
+        const truth = serverAt(history, bullet.tick);
+        expect(Math.hypot(bullet.x - truth.x, bullet.y - truth.y)).toBeLessThan(1e-6);
+      }
+      const firstTick = Math.min(...history.keys());
+      const first = history.get(firstTick) ?? { x: NaN, y: NaN };
+      const muzzleGap = Math.hypot(first.x - 500, first.y - 600) - MUZZLE_OFFSET;
+      expect(muzzleGap).toBeCloseTo(3 * deriveStats(DEFAULT_STATS).bulletSpeed * DT, 6);
+    });
+  }
+
+  for (const lag of [0, 2, 5]) {
+    it(`снаряд со скоростью танка: свой выстрел на ходу — на месте серверного; ${String(lag)} неподтверждённых`, () => {
+      const rules: RoundRules = { ...DEFAULT_RULES, shotInheritPercent: 100 };
+      const gasFire: Action = { ...GAS, isFiring: true };
+      // До первой команды сервер стоит; дальше — газ и выстрел, как предсказывал клиент.
+      const serverAction = (seq: number): Action => {
+        if (seq <= 0) {
+          return IDLE_ACTION;
+        }
+        return seq === FIRE_SEQ ? gasFire : GAS;
+      };
+      const shooter = placedTank(ME, 500, 600);
+      shooter.turret = Math.PI / 2;
+      const server = createWorld(OPEN_MAP, [shooter, placedTank(5, 1500, 900)], rules, STILL_ZONE);
+      const tracker = new BulletTracker();
+      const client = new FfaPrediction(OPEN_MAP, rules, STILL_ZONE, ME, setupOf);
+      stepWorld(server, actionsFor(server, IDLE_ACTION));
+      client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), 0);
+      const history = new Map<number, { x: number; y: number }>();
+      const drawn: { id: number; tick: number; x: number; y: number }[] = [];
+      for (let tick = 1; tick <= TICKS + lag; tick++) {
+        if (tick <= TICKS) {
+          client.predict(tick, serverAction(tick));
+        }
+        const seq = tick - lag;
+        stepWorld(server, actionsFor(server, serverAction(seq)));
+        const own = server.bullets.find((bullet) => bullet.owner === ME);
+        if (own !== undefined) {
+          expect(own.vx).toBeGreaterThan(0);
+          history.set(server.tick, { x: own.x, y: own.y });
+        }
+        if (tick > TICKS) {
+          continue;
+        }
+        client.applySnapshot(
+          snapshotOf(server, { ackSeq: Math.max(0, seq), changes: tracker.diff(server.bullets) }),
+          tick * TICK_MS,
+        );
+        const mine = client.view(tick * TICK_MS + 1).bullets.filter((bullet) => bullet.owner === ME);
+        expect(mine.length).toBeLessThanOrEqual(1);
+        drawn.push(...mine);
+      }
+      expect(drawn.length).toBeGreaterThan(TICKS / 2);
+      for (const bullet of drawn) {
+        const truth = serverAt(history, bullet.tick);
+        expect(Math.hypot(bullet.x - truth.x, bullet.y - truth.y)).toBeLessThan(1e-6);
+      }
+    });
+  }
+});
+
 // Бой на эталонном поле: сервер применяет свою команду с отставанием lag, клиент рисует два кадра на тик.
 // После боя каждый кадр сверяется с историей сервера — в том числе с тиками, которые клиент досчитал вперёд.
 interface PictureScenario {
@@ -401,6 +545,7 @@ interface PictureScenario {
   isSnapshotHeld?: (tick: number) => boolean;
   // Вмешательство в поле сервера перед шагом тика — толчок, которого клиент предсказать не мог.
   disturb?: (world: World, tick: number) => void;
+  hasNetSmoothing?: boolean;
 }
 
 interface ServerTick {
@@ -410,9 +555,24 @@ interface ServerTick {
   hitTanks: number[];
 }
 
+// ownHits — попадания по своему танку, сыгранные по касанию к этому кадру.
 interface PictureFrame {
   latestTick: number;
   view: FfaFrameView;
+  ownHits: DueEvent<FfaSnapshotEvent>[];
+}
+
+// Попадание по своему танку из снимка и сыграно ли оно уже касанием.
+interface ServedHit {
+  tick: number;
+  wasPlayed: boolean;
+}
+
+interface PlayedPicture {
+  frames: PictureFrame[];
+  history: Map<number, ServerTick>;
+  served: ServedHit[];
+  client: FfaPrediction;
 }
 
 const AIM_AT_ME: Action = { ...IDLE_ACTION, isFiring: true };
@@ -429,7 +589,7 @@ function serverTick(world: World, hitTanks: number[]): ServerTick {
   };
 }
 
-function playPicture(scenario: PictureScenario): { frames: PictureFrame[]; history: Map<number, ServerTick> } {
+function playPicture(scenario: PictureScenario): PlayedPicture {
   const planned = scenario.myAction ?? ((): Action => IDLE_ACTION);
   const myAction = (seq: number): Action => (seq <= WARMUP_SEQ ? IDLE_ACTION : planned(seq));
   const serverPlanned = scenario.serverMyAction ?? planned;
@@ -437,10 +597,11 @@ function playPicture(scenario: PictureScenario): { frames: PictureFrame[]; histo
   const otherAction = scenario.otherAction ?? ((): Action => AIM_AT_ME);
   const server = worldOf(scenario.tanks);
   const tracker = new BulletTracker();
-  const client = prediction();
+  const client = new FfaPrediction(OPEN_MAP, DEFAULT_RULES, STILL_ZONE, ME, setupOf, scenario.hasNetSmoothing === true);
   client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), 0);
   const history = new Map<number, ServerTick>([[server.tick, serverTick(server, [])]]);
   const frames: PictureFrame[] = [];
+  const served: ServedHit[] = [];
   const held: FfaSnapshotMessage[] = [];
   let latestTick = server.tick;
   for (let tick = 1; tick <= scenario.ticks + scenario.lag; tick++) {
@@ -458,7 +619,11 @@ function playPicture(scenario: PictureScenario): { frames: PictureFrame[]; histo
     const events = stepWorld(server, actions);
     const hitTanks = events.flatMap((event) => (event.type === 'hit' ? [event.tank] : []));
     history.set(server.tick, serverTick(server, hitTanks));
-    const snapshot = snapshotOf(server, { ackSeq: Math.max(0, seq), changes: tracker.diff(server.bullets) });
+    const snapshot = snapshotOf(server, {
+      ackSeq: Math.max(0, seq),
+      changes: tracker.diff(server.bullets),
+      events: events.map(toFfaSnapshotEvent),
+    });
     if (tick > scenario.ticks) {
       continue;
     }
@@ -467,13 +632,16 @@ function playPicture(scenario: PictureScenario): { frames: PictureFrame[]; histo
       for (const message of held.splice(0)) {
         client.applySnapshot(message, tick * TICK_MS);
         latestTick = message.tick;
+        for (const event of message.events.filter((candidate) => candidate.kind === 'hit' && candidate.tank === ME)) {
+          served.push({ tick: message.tick, wasPlayed: client.wasPlayedOnTouch(event) });
+        }
       }
     }
     for (const offset of [1, TICK_MS / 2]) {
-      frames.push({ latestTick, view: client.view(tick * TICK_MS + offset) });
+      frames.push({ latestTick, view: client.view(tick * TICK_MS + offset), ownHits: client.takeOwnHits() });
     }
   }
-  return { frames, history };
+  return { frames, history, served, client };
 }
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
@@ -788,5 +956,668 @@ describe('картинка совпадает с сервером', () => {
         expect(!after.has(id) || now.has(id)).toBe(true);
       }
     }
+  });
+});
+
+describe('попадание по своему танку по касанию', () => {
+  const STATS = deriveStats(DEFAULT_STATS);
+  const SHOOTER = 5;
+  const OTHER = 6;
+  const BULLET_ID = 1;
+  const LAG = 5;
+  const TICKS = 70;
+  const CONTACT = TANK_RADIUS + BULLET_RADIUS;
+  // Щит дольше всего полёта снаряда.
+  const LONG_SHIELD_SECONDS = 10;
+  const shooterFiresOnce = (id: number, tick: number): Action =>
+    id === SHOOTER && tick === 1 ? AIM_AT_ME : IDLE_ACTION;
+
+  function shot(disturb?: (world: World, tick: number) => void, me = placedTank(ME, 600, 600)): PlayedPicture {
+    return playPicture({
+      tanks: [me, placedTank(SHOOTER, 1300, 600, Math.PI), placedTank(OTHER, 100, 100)],
+      lag: LAG,
+      ticks: TICKS,
+      otherAction: shooterFiresOnce,
+      ...(disturb === undefined ? {} : { disturb }),
+    });
+  }
+
+  function ownHp(frame: PictureFrame | undefined): number {
+    return frame?.view.tanks.find((tank) => tank.id === ME)?.hp ?? NaN;
+  }
+
+  function hitTickOf(history: ReadonlyMap<number, ServerTick>): number {
+    return [...history.entries()].find(([, entry]) => entry.hitsOnMe > 0)?.[0] ?? NaN;
+  }
+
+  function touchIndexOf(frames: readonly PictureFrame[]): number {
+    return frames.findIndex((frame) => frame.ownHits.length > 0);
+  }
+
+  function hasBullet(frame: PictureFrame | undefined): boolean {
+    return frame?.view.bullets.some((bullet) => bullet.id === BULLET_ID) === true;
+  }
+
+  it('C20 попадание — в кадре, где снаряд пропал у своего танка, раньше снимка; урон стрелка; снимок не повторяет', () => {
+    const { frames, history, served, client } = shot();
+    const hitTick = hitTickOf(history);
+    const index = touchIndexOf(frames);
+    const frame = frames[index];
+    expect(frames.flatMap((candidate) => candidate.ownHits)).toHaveLength(1);
+    const played = frame?.ownHits[0];
+    expect(played?.event).toMatchObject({ kind: 'hit', tank: ME, by: SHOOTER, value: STATS.damage, flags: 0 });
+    expect(played?.tick).toBe(hitTick);
+    expect(hasBullet(frames[index - 1])).toBe(true);
+    expect(hasBullet(frame)).toBe(false);
+    expect(frame?.latestTick).toBe(hitTick - LAG);
+    const me = frame?.view.clock.me ?? { x: NaN, y: NaN };
+    expect(distance(played?.event ?? me, me)).toBeLessThan(CONTACT);
+    expect(ownHp(frames[index - 1])).toBe(STATS.maxHp);
+    for (const later of frames.slice(index)) {
+      expect(ownHp(later)).toBe(STATS.maxHp - STATS.damage);
+    }
+    expect(served).toEqual([{ tick: hitTick, wasPlayed: true }]);
+    expect(client.ownHitCounts).toEqual({ played: 1, confirmed: 1, cancelled: 0, served: 1, doubles: 0 });
+  });
+
+  it('C21 свой танк на сервере толкнули с линии — отмена через 2 тика, здоровье из снимка, повторов нет', () => {
+    const hitTick = hitTickOf(shot().history);
+    const { frames, history, served, client } = shot((world, tick) => {
+      if (tick === hitTick - 2) {
+        const me = world.tanks.find((tank) => tank.id === ME);
+        if (me !== undefined) {
+          me.y += 80;
+        }
+      }
+    });
+    expect(hitsOnMe(history)).toBe(0);
+    const index = touchIndexOf(frames);
+    expect(frames.flatMap((frame) => frame.ownHits)).toHaveLength(1);
+    expect(client.ownHitCounts).toEqual({ played: 1, confirmed: 0, cancelled: 1, served: 0, doubles: 0 });
+    expect(served).toEqual([]);
+    const cancelIndex = frames.findIndex((frame) => frame.latestTick >= hitTick + 2);
+    for (const frame of frames.slice(index, cancelIndex)) {
+      expect(ownHp(frame)).toBe(STATS.maxHp - STATS.damage);
+    }
+    for (const frame of frames.slice(cancelIndex)) {
+      expect(ownHp(frame)).toBe(STATS.maxHp);
+    }
+    expect(frames.slice(index).some(hasBullet)).toBe(true);
+  });
+
+  it('C21 сервер засчитал попадание тиком позже — подтверждено, отмен нет', () => {
+    const hitTick = hitTickOf(shot().history);
+    const step = STATS.bulletSpeed * DT;
+    const late = shot((world, tick) => {
+      if (tick === hitTick - 1) {
+        const me = world.tanks.find((tank) => tank.id === ME);
+        if (me !== undefined) {
+          me.x -= step;
+        }
+      }
+    });
+    expect(hitTickOf(late.history)).toBe(hitTick + 1);
+    expect(late.frames.flatMap((frame) => frame.ownHits)).toHaveLength(1);
+    expect(late.served).toEqual([{ tick: hitTick + 1, wasPlayed: true }]);
+    expect(late.client.ownHitCounts).toEqual({ played: 1, confirmed: 1, cancelled: 0, served: 1, doubles: 0 });
+  });
+
+  it('C21 поправка своего танка сдвинула касание на 3 тика — подтверждено, попадание одно', () => {
+    const hitTick = hitTickOf(shot().history);
+    const step = STATS.bulletSpeed * DT;
+    const late = shot((world, tick) => {
+      if (tick === hitTick - 2) {
+        const me = world.tanks.find((tank) => tank.id === ME);
+        if (me !== undefined) {
+          me.x -= 3 * step;
+        }
+      }
+    });
+    expect(hitTickOf(late.history)).toBe(hitTick + 3);
+    expect(late.frames.flatMap((frame) => frame.ownHits)).toHaveLength(1);
+    for (const frame of late.frames.slice(touchIndexOf(late.frames))) {
+      expect(ownHp(frame)).toBe(STATS.maxHp - STATS.damage);
+    }
+    expect(late.served).toEqual([{ tick: hitTick + 3, wasPlayed: true }]);
+    expect(late.client.ownHitCounts).toEqual({ played: 1, confirmed: 1, cancelled: 0, served: 1, doubles: 0 });
+  });
+
+  it('C21 снаряд погиб о другой танк — отмена в снимке его гибели', () => {
+    const hitTick = hitTickOf(shot().history);
+    const { frames, history, served, client } = shot((world, tick) => {
+      if (tick === hitTick - 3) {
+        const other = world.tanks.find((tank) => tank.id === OTHER);
+        if (other !== undefined) {
+          other.x = 600 + 2 * TANK_RADIUS + 10;
+          other.y = 600;
+        }
+      }
+    });
+    expect(hitsOnMe(history)).toBe(0);
+    expect([...history.values()].some((entry) => entry.hitTanks.includes(OTHER))).toBe(true);
+    expect(frames.flatMap((frame) => frame.ownHits)).toHaveLength(1);
+    expect(served).toEqual([]);
+    expect(client.ownHitCounts).toEqual({ played: 1, confirmed: 0, cancelled: 1, served: 0, doubles: 0 });
+    expect(ownHp(frames.at(-1))).toBe(STATS.maxHp);
+  });
+
+  it('C22 щит — касания нет, своё здоровье не тронуто', () => {
+    const me = placedTank(ME, 600, 600);
+    me.shieldLeft = LONG_SHIELD_SECONDS;
+    const { frames, client } = shot(undefined, me);
+    expect(frames.flatMap((frame) => frame.ownHits)).toEqual([]);
+    expect(client.ownHitCounts).toEqual({ played: 0, confirmed: 0, cancelled: 0, served: 0, doubles: 0 });
+    expect(frames.every((frame) => ownHp(frame) === STATS.maxHp)).toBe(true);
+  });
+
+  it('C22 смертельное касание — полоска в ноль, танк жив до снимка с гибелью; второй снаряд следом не играется', () => {
+    const me = placedTank(ME, 600, 600);
+    me.hp = STATS.damage;
+    const { frames, history, client } = playPicture({
+      tanks: [me, placedTank(SHOOTER, 1100, 600, Math.PI), placedTank(7, 600, 1150, -Math.PI / 2)],
+      lag: LAG,
+      ticks: TICKS,
+      otherAction: (_id, tick) => (tick === 1 ? AIM_AT_ME : IDLE_ACTION),
+    });
+    const killTick = hitTickOf(history);
+    const index = touchIndexOf(frames);
+    const played = frames.flatMap((frame) => frame.ownHits);
+    expect(played).toHaveLength(1);
+    expect(played[0]?.event.value).toBe(STATS.damage);
+    const beforeDeath = frames.slice(index).filter((frame) => frame.latestTick < killTick);
+    expect(beforeDeath.length).toBeGreaterThan(0);
+    for (const frame of beforeDeath) {
+      const own = frame.view.tanks.find((tank) => tank.id === ME);
+      expect(own).toMatchObject({ hp: 0, isAlive: true });
+    }
+    const dead = frames.find((frame) => frame.latestTick >= killTick)?.view.tanks.find((tank) => tank.id === ME);
+    expect(dead?.isAlive).toBe(false);
+    expect(client.ownHitCounts).toEqual({ played: 1, confirmed: 1, cancelled: 0, served: 1, doubles: 0 });
+  });
+
+  it('C22 конец матча до подтверждения — касание отменено, здоровье из снимка', () => {
+    const server = worldOf([placedTank(ME, 600, 600), placedTank(SHOOTER, 1300, 600, Math.PI)]);
+    const tracker = new BulletTracker();
+    const client = prediction();
+    stepWorld(
+      server,
+      server.tanks.map((tank) => (tank.id === SHOOTER ? FIRE : IDLE_ACTION)),
+    );
+    client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), 0);
+    let seq = 0;
+    while (client.ownHitCounts.played === 0 && seq < TICKS) {
+      seq++;
+      client.predict(seq, IDLE_ACTION);
+    }
+    expect(client.takeOwnHits()).toHaveLength(1);
+    expect(client.view(TICK_MS).tanks.find((tank) => tank.id === ME)?.hp).toBe(STATS.maxHp - STATS.damage);
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    const matchOver = toFfaSnapshotEvent({ type: 'matchOver' });
+    client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets), events: [matchOver] }), TICK_MS);
+    expect(client.ownHitCounts).toEqual({ played: 1, confirmed: 0, cancelled: 1, served: 0, doubles: 0 });
+    expect(client.view(2 * TICK_MS).tanks.find((tank) => tank.id === ME)?.hp).toBe(STATS.maxHp);
+  });
+
+  it('C22 пачка снимков между кадрами, второй закончил матч, — несыгранное касание не играется', () => {
+    const server = worldOf([placedTank(ME, 600, 600), placedTank(SHOOTER, 1300, 600, Math.PI)]);
+    const tracker = new BulletTracker();
+    const client = prediction();
+    stepWorld(
+      server,
+      server.tanks.map((tank) => (tank.id === SHOOTER ? FIRE : IDLE_ACTION)),
+    );
+    client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), 0);
+    let seq = 0;
+    while (client.ownHitCounts.played === 0 && seq < TICKS) {
+      seq++;
+      client.predict(seq, IDLE_ACTION);
+    }
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), TICK_MS);
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    const matchOver = toFfaSnapshotEvent({ type: 'matchOver' });
+    client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets), events: [matchOver] }), TICK_MS);
+    expect(client.takeOwnHits()).toEqual([]);
+    expect(client.ownHitCounts).toEqual({ played: 0, confirmed: 0, cancelled: 0, served: 0, doubles: 0 });
+    expect(client.view(2 * TICK_MS).tanks.find((tank) => tank.id === ME)?.hp).toBe(STATS.maxHp);
+  });
+
+  it('C22 переподключение с касанием в ожидании — попадание одно, здоровье из снимка', () => {
+    const server = worldOf([placedTank(ME, 600, 600), placedTank(SHOOTER, 1300, 600, Math.PI)]);
+    const tracker = new BulletTracker();
+    const client = prediction();
+    stepWorld(
+      server,
+      server.tanks.map((tank) => (tank.id === SHOOTER ? FIRE : IDLE_ACTION)),
+    );
+    client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), 0);
+    let seq = 0;
+    while (client.ownHitCounts.played === 0 && seq < TICKS) {
+      seq++;
+      client.predict(seq, IDLE_ACTION);
+    }
+    expect(client.takeOwnHits()).toHaveLength(1);
+    client.resetConnection();
+    while (server.bullets.length > 0) {
+      stepWorld(server, actionsFor(server, IDLE_ACTION));
+    }
+    expect(meOf(server).hp).toBe(STATS.maxHp - STATS.damage);
+    client.resetBullets(server.bullets);
+    const fresh = new BulletTracker();
+    for (let tick = 0; tick <= 2; tick++) {
+      client.applySnapshot(snapshotOf(server, { changes: fresh.diff(server.bullets) }), (2 + tick) * TICK_MS);
+      expect(client.takeOwnHits()).toEqual([]);
+      expect(client.view((2 + tick) * TICK_MS).tanks.find((tank) => tank.id === ME)?.hp).toBe(
+        STATS.maxHp - STATS.damage,
+      );
+      stepWorld(server, actionsFor(server, IDLE_ACTION));
+    }
+    expect(client.ownHitCounts.played).toBe(1);
+  });
+});
+
+describe('сглаживание дёрганой сети', () => {
+  const ENEMY = 5;
+  const ENEMY_STEP = 4;
+  const FRAME_MS = 1000 / 60;
+  const BURST_MS = 200;
+  // Разгон: замер набирается, время чужих замедляется под новое отставание.
+  const WARMUP_MS = 2000;
+
+  function smoothPrediction(): FfaPrediction {
+    return new FfaPrediction(OPEN_MAP, DEFAULT_RULES, STILL_ZONE, ME, setupOf, true);
+  }
+
+  // Чужой едет вдоль x на ENEMY_STEP за тик, свой стоит.
+  function enemySnapshot(tick: number): FfaSnapshotMessage {
+    const world = worldOf([placedTank(ME, 500, 600), placedTank(ENEMY, 300 + ENEMY_STEP * tick, 300)]);
+    world.tick = tick;
+    return snapshotOf(world);
+  }
+
+  function enemyX(view: FfaFrameView): number {
+    return view.tanks.find((tank) => tank.id === ENEMY)?.x ?? NaN;
+  }
+
+  // Снимок тика k уходит в k·33,3 мс, сеть отдаёт его на ближайшей границе пачек; кадры — 60 в секунду.
+  function burstyEnemyFrames(client: FfaPrediction, durationMs: number): number[] {
+    const xs: number[] = [];
+    let nextTick = 1;
+    for (let now = 0; now <= durationMs; now += FRAME_MS) {
+      while (Math.ceil((nextTick * TICK_MS) / BURST_MS - 1e-9) * BURST_MS <= now) {
+        client.applySnapshot(enemySnapshot(nextTick), now);
+        nextTick++;
+      }
+      xs.push(enemyX(client.view(now)));
+    }
+    return xs;
+  }
+
+  it('ровные снимки — чужой и тик чужих как без сглаживания', () => {
+    const plain = prediction();
+    const smooth = smoothPrediction();
+    for (let tick = 1; tick <= 60; tick++) {
+      const snapshot = enemySnapshot(tick);
+      plain.applySnapshot(snapshot, tick * TICK_MS);
+      smooth.applySnapshot(snapshot, tick * TICK_MS);
+      for (const offset of [1, TICK_MS / 2]) {
+        const now = tick * TICK_MS + offset;
+        const [a, b] = [plain.view(now), smooth.view(now)];
+        if (tick > 3) {
+          expect(b.clock.othersTick).toBeCloseTo(a.clock.othersTick, 6);
+          expect(enemyX(b)).toBeCloseTo(enemyX(a), 6);
+        }
+      }
+    }
+    expect(smooth.interpolationTicks).toBe(2);
+  });
+
+  it('пачки раз в 200 мс — чужой едет в каждом кадре без прыжков; без сглаживания стоит и прыгает', () => {
+    const frameStep = (ENEMY_STEP * FRAME_MS) / TICK_MS;
+    const stepsAfterWarmup = (xs: number[]): number[] =>
+      xs
+        .slice(Math.ceil(WARMUP_MS / FRAME_MS))
+        .flatMap((x, index, rest) => (index === 0 ? [] : [x - (rest[index - 1] ?? x)]));
+    const smooth = smoothPrediction();
+    const smoothSteps = stepsAfterWarmup(burstyEnemyFrames(smooth, 5000));
+    expect(Math.min(...smoothSteps)).toBeGreaterThan(0);
+    expect(Math.max(...smoothSteps)).toBeLessThanOrEqual(1.5 * frameStep);
+    expect(smooth.interpolationTicks).toBeGreaterThan(6);
+    const plainSteps = stepsAfterWarmup(burstyEnemyFrames(prediction(), 5000));
+    expect(plainSteps.filter((step) => step === 0).length).toBeGreaterThan(plainSteps.length / 4);
+    expect(Math.max(...plainSteps)).toBeGreaterThan(3 * frameStep);
+  });
+
+  // Снимки до PAUSE_FROM_MS сеть отдаёт по arrival, отправленные за паузу — разом в её конце; на каждом снимке —
+  // выстрел чужого и искра в поле рядом с ним. Счёт: сколько событий не вышло и наибольшее отставание тика чужих
+  // от последнего снимка.
+  const PAUSE_FROM_MS = 3000;
+  const PAUSE_MS = 700;
+  const PAUSE_RUN_MS = 6000;
+
+  function eventsThroughPause(arrival: (tick: number) => number): { lost: number; worstBehind: number } {
+    const client = smoothPrediction();
+    const schedule = new EventSchedule<FfaSnapshotEvent>();
+    const delivered = (tick: number): number => {
+      const sentAt = tick * TICK_MS;
+      const isInPause = sentAt >= PAUSE_FROM_MS && sentAt < PAUSE_FROM_MS + PAUSE_MS;
+      return isInPause ? Math.max(arrival(tick), PAUSE_FROM_MS + PAUSE_MS) : arrival(tick);
+    };
+    let nextTick = 1;
+    let added = 0;
+    let released = 0;
+    let worstBehind = 0;
+    for (let now = 0; now <= PAUSE_RUN_MS + 1000; now += FRAME_MS) {
+      while (nextTick * TICK_MS <= PAUSE_RUN_MS && delivered(nextTick) <= now) {
+        const message = enemySnapshot(nextTick);
+        client.applySnapshot(message, now);
+        const enemy = message.tanks.find((tank) => tank.id === ENEMY) ?? null;
+        const at = { x: enemy?.x ?? NaN, y: enemy?.y ?? NaN };
+        const shot: FfaSnapshotEvent = { kind: 'shot', tank: ENEMY, by: null, ...at, value: 0, dx: 1, dy: 0, flags: 0 };
+        const spark: FfaSnapshotEvent = { ...shot, kind: 'impact', tank: null, y: at.y + 40 };
+        schedule.add(shot, message.tick, eventPlace('shot', enemy, ME), now);
+        schedule.add(spark, message.tick, eventPlace('impact', null, ME), now);
+        added += 2;
+        nextTick++;
+      }
+      const view = client.view(now);
+      worstBehind = Math.max(worstBehind, client.latestTick - view.clock.othersTick);
+      const drawnTank = (id: number): FfaFrameView['tanks'][number] | null =>
+        view.tanks.find((tank) => tank.id === id) ?? null;
+      released += schedule.release(view.clock, drawnTank, now).length;
+    }
+    return { lost: added - released, worstBehind };
+  }
+
+  it('пауза снимков 700 мс на ровной и ночной сети — события о чужих не теряются, чужие не отстают за предел', () => {
+    const even = eventsThroughPause((tick) => tick * TICK_MS + 5);
+    const night = eventsThroughPause((tick) => Math.ceil((tick * TICK_MS) / 250 - 1e-9) * 250);
+    for (const run of [even, night]) {
+      expect(run.lost).toBe(0);
+      expect(run.worstBehind).toBeLessThanOrEqual(PLAYOUT_MAX_BEHIND_TICKS);
+    }
+  });
+
+  it('отсчёт с тиком матча 0: тик чужих 0, отставание считается по тику игры', () => {
+    const client = smoothPrediction();
+    for (let gameTick = 1; gameTick <= 30; gameTick++) {
+      const world = worldOf([placedTank(ME, 500, 600), placedTank(ENEMY, 300, 300)]);
+      client.applySnapshot(snapshotOf(world, { gameTick }), gameTick * TICK_MS);
+      expect(client.view(gameTick * TICK_MS + 1).clock.othersTick).toBe(0);
+    }
+    expect(client.interpolationTicks).toBe(2);
+  });
+
+  it('поправка своего танка: в миг снимка танк на прежнем месте, за 120 мс догоняет предсказанный', () => {
+    const server = worldOf([placedTank(ME, 500, 600), placedTank(ENEMY, 900, 600)]);
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    const client = smoothPrediction();
+    client.applySnapshot(snapshotOf(server), 0);
+    const ownX = (now: number): number => client.view(now).tanks.find((tank) => tank.id === ME)?.x ?? NaN;
+    expect(ownX(10)).toBe(500);
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    meOf(server).x += 50;
+    client.applySnapshot(snapshotOf(server), 100);
+    expect(client.me?.x).toBe(550);
+    expect(ownX(100)).toBeCloseTo(500, 9);
+    expect(client.view(100).clock.ownShift?.x).toBeCloseTo(-50, 9);
+    expect(client.view(100).clock.me?.x).toBe(550);
+    expect(ownX(160)).toBeCloseTo(525, 9);
+    expect(ownX(220)).toBeCloseTo(550, 9);
+    expect(client.view(220).clock.me?.x).toBeCloseTo(550, 9);
+  });
+
+  it('свой танк ушёл с поля — смещение сразу ноль', () => {
+    const server = worldOf([placedTank(ME, 500, 600), placedTank(ENEMY, 900, 600)]);
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    const client = smoothPrediction();
+    client.applySnapshot(snapshotOf(server), 0);
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    meOf(server).x += 50;
+    client.applySnapshot(snapshotOf(server), 100);
+    expect(client.view(110).clock.ownShift?.x).not.toBe(0);
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    meOf(server).isAlive = false;
+    client.applySnapshot(snapshotOf(server), 133);
+    expect(client.view(140).clock.ownShift).toEqual({ x: 0, y: 0 });
+  });
+
+  it('чужой снаряд у своего танка в остатке смещения: на картинке до танка — как в предсказании, касание в том же кадре', () => {
+    const shooterFiresOnce = (id: number, tick: number): Action =>
+      id === ENEMY && tick === 1 ? AIM_AT_ME : IDLE_ACTION;
+    const tanks = (): Tank[] => [placedTank(ME, 600, 600), placedTank(ENEMY, 1300, 600, Math.PI)];
+    const base = playPicture({ tanks: tanks(), lag: 5, ticks: 70, otherAction: shooterFiresOnce });
+    const hitTick = [...base.history.entries()].find(([, entry]) => entry.hitsOnMe > 0)?.[0] ?? NaN;
+    const nudge = (world: World, tick: number): void => {
+      if (tick === hitTick - 6) {
+        meOf(world).y += 6;
+      }
+    };
+    const scenario = { tanks: tanks(), lag: 5, ticks: 70, otherAction: shooterFiresOnce, disturb: nudge };
+    const plain = playPicture(scenario);
+    const smooth = playPicture({ ...scenario, tanks: tanks(), hasNetSmoothing: true });
+    const touchOf = (frames: readonly PictureFrame[]): number => frames.findIndex((frame) => frame.ownHits.length > 0);
+    const touch = touchOf(plain.frames);
+    expect(touch).toBeGreaterThan(0);
+    expect(touchOf(smooth.frames)).toBe(touch);
+    let nearChecks = 0;
+    for (const [index, frame] of smooth.frames.entries()) {
+      const plainFrame = plain.frames[index];
+      const drawn = drawnMe(frame.view.clock);
+      const predicted = plainFrame?.view.clock.me ?? null;
+      if (drawn === null || predicted === null) {
+        continue;
+      }
+      for (const bullet of frame.view.bullets.filter((candidate) => distance(candidate, drawn) <= PICTURE_NEAR)) {
+        const twin = plainFrame?.view.bullets.find((candidate) => candidate.id === bullet.id);
+        expect(bullet.x - drawn.x).toBeCloseTo((twin?.x ?? NaN) - predicted.x, 6);
+        expect(bullet.y - drawn.y).toBeCloseTo((twin?.y ?? NaN) - predicted.y, 6);
+        nearChecks++;
+      }
+    }
+    expect(nearChecks).toBeGreaterThan(0);
+    const touchFrame = smooth.frames[touch];
+    const drawnAtTouch = (touchFrame === undefined ? null : drawnMe(touchFrame.view.clock)) ?? { x: NaN, y: NaN };
+    const predictedAtTouch = plain.frames[touch]?.view.clock.me ?? { x: NaN, y: NaN };
+    expect(distance(drawnAtTouch, predictedAtTouch)).toBeGreaterThan(1);
+    expect(distance(touchFrame?.ownHits[0]?.event ?? drawnAtTouch, drawnAtTouch)).toBeLessThan(
+      TANK_RADIUS + BULLET_RADIUS,
+    );
+  });
+});
+
+describe('свой выстрел по предсказанию', () => {
+  const FAR_ENEMY = 5;
+
+  interface ShotSetup {
+    server: World;
+    client: FfaPrediction;
+    serve: (action: Action, ackSeq: number) => FfaSnapshotEvent[];
+  }
+
+  // Свой танк и враг вдали; serve — шаг сервера с командой своего танка и снимок с его событиями; результат — выстрелы
+  // своего танка в снимке.
+  function setup(tanks: Tank[], rules: RoundRules = DEFAULT_RULES): ShotSetup {
+    const server = createWorld(OPEN_MAP, tanks, rules, STILL_ZONE);
+    const tracker = new BulletTracker();
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    const client = new FfaPrediction(OPEN_MAP, rules, STILL_ZONE, ME, setupOf);
+    client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), 0);
+    const serve = (action: Action, ackSeq: number): FfaSnapshotEvent[] => {
+      const events = stepWorld(server, actionsFor(server, action));
+      const message = snapshotOf(server, {
+        ackSeq,
+        changes: tracker.diff(server.bullets),
+        events: events.map(toFfaSnapshotEvent),
+      });
+      client.applySnapshot(message, server.tick * TICK_MS);
+      return message.events.filter((event) => event.kind === 'shot' && event.tank === ME);
+    };
+    return { server, client, serve };
+  }
+
+  function openField(): Tank[] {
+    return [placedTank(ME, 500, 600), placedTank(FAR_ENEMY, 1500, 900)];
+  }
+
+  it('C24 выстрел — в шаге ввода у дула, один раз; переигрывания не повторяют; снимок с выстрелом его не играет', () => {
+    const { client, serve } = setup(openField());
+    client.predict(1, IDLE_ACTION);
+    client.predict(2, FIRE);
+    expect(client.view(100).bullets.some((bullet) => bullet.id === PREDICTED_BULLET_ID_BASE + 2)).toBe(true);
+    const shots = client.takeOwnShots();
+    expect(shots).toHaveLength(1);
+    expect(shots[0]?.event).toMatchObject({ kind: 'shot', tank: ME, y: 600, dx: 1, dy: 0 });
+    expect(shots[0]?.event.x).toBeCloseTo(500 + MUZZLE_OFFSET, 9);
+    for (let seq = 3; seq <= 5; seq++) {
+      client.predict(seq, IDLE_ACTION);
+    }
+    expect(serve(IDLE_ACTION, 1)).toEqual([]);
+    expect(client.takeOwnShots()).toEqual([]);
+    const served = serve(FIRE, 2);
+    expect(served).toHaveLength(1);
+    expect(served.every((event) => client.wasShotPlayed(event))).toBe(true);
+    expect(client.takeOwnShots()).toEqual([]);
+    expect(client.ownShotCounts).toEqual({ played: 1, confirmed: 1, unconfirmed: 0 });
+  });
+
+  it('C25 сервер подтвердил команду без выстрела — после перезарядки неподтверждённый, второй вспышки нет', () => {
+    const { client, serve } = setup(openField());
+    client.predict(1, FIRE);
+    expect(client.takeOwnShots()).toHaveLength(1);
+    for (let seq = 2; seq <= 20; seq++) {
+      client.predict(seq, IDLE_ACTION);
+    }
+    for (let ackSeq = 1; ackSeq <= 16; ackSeq++) {
+      expect(serve(IDLE_ACTION, ackSeq)).toEqual([]);
+      expect(client.takeOwnShots()).toEqual([]);
+    }
+    expect(client.ownShotCounts).toEqual({ played: 1, confirmed: 0, unconfirmed: 1 });
+  });
+
+  it('C25 перезарядка на сервере дольше — переигрывание переносит выстрел, вспышка одна, выстрел снимка сыгран', () => {
+    const { server, client, serve } = setup(openField());
+    client.predict(1, IDLE_ACTION);
+    for (let seq = 2; seq <= 6; seq++) {
+      client.predict(seq, FIRE);
+    }
+    expect(client.takeOwnShots()).toHaveLength(1);
+    meOf(server).reloadLeft = 2.5 * DT;
+    serve(IDLE_ACTION, 1);
+    expect(client.view(200).bullets.some((bullet) => bullet.id === PREDICTED_BULLET_ID_BASE + 2)).toBe(false);
+    expect(client.takeOwnShots()).toEqual([]);
+    let served = 0;
+    let played = 0;
+    for (let seq = 2; seq <= 4; seq++) {
+      const shots = serve(FIRE, seq);
+      served += shots.length;
+      played += shots.filter((event) => client.wasShotPlayed(event)).length;
+    }
+    expect([served, played]).toEqual([1, 1]);
+    expect(client.takeOwnShots()).toEqual([]);
+    expect(client.ownShotCounts).toEqual({ played: 1, confirmed: 1, unconfirmed: 0 });
+  });
+
+  it('C25 сервер выстрелил повтором прошлой команды до подтверждения сыгранной — снимок не играет, позже ничего', () => {
+    const { client, serve } = setup(openField());
+    client.predict(1, FIRE);
+    expect(client.takeOwnShots()).toHaveLength(1);
+    const early = serve(FIRE, 0);
+    expect(early).toHaveLength(1);
+    expect(early.every((event) => client.wasShotPlayed(event))).toBe(true);
+    expect(serve(FIRE, 1)).toEqual([]);
+    expect(client.takeOwnShots()).toEqual([]);
+    expect(client.ownShotCounts).toEqual({ played: 1, confirmed: 1, unconfirmed: 0 });
+  });
+
+  it('C25 сервер подбил танк раньше сыгранного выстрела, танк возродился — первый выстрел со вспышкой', () => {
+    const { server, client, serve } = setup(openField());
+    client.predict(1, FIRE);
+    expect(client.takeOwnShots()).toHaveLength(1);
+    meOf(server).isAlive = false;
+    meOf(server).hp = 0;
+    expect(serve(IDLE_ACTION, 1)).toEqual([]);
+    meOf(server).isAlive = true;
+    meOf(server).hp = meOf(server).stats.maxHp;
+    serve(IDLE_ACTION, 1);
+    client.predict(2, FIRE);
+    expect(client.takeOwnShots()).toHaveLength(1);
+    const served = serve(FIRE, 2);
+    expect(served).toHaveLength(1);
+    expect(served.every((event) => client.wasShotPlayed(event))).toBe(true);
+    expect(client.ownShotCounts).toEqual({ played: 2, confirmed: 1, unconfirmed: 1 });
+  });
+
+  it('C25 сервер выстрелил без сыгранного по предсказанию — выстрел снимка играется', () => {
+    const { client, serve } = setup(openField());
+    client.predict(1, IDLE_ACTION);
+    const served = serve(FIRE, 0);
+    expect(served).toHaveLength(1);
+    expect(served.some((event) => client.wasShotPlayed(event))).toBe(false);
+  });
+
+  it('C25 в упор с догоном — снаряд погас в шаге рождения; дуло в стене — снаряда нет; выстрел сыгран один раз', () => {
+    const rules: RoundRules = { ...DEFAULT_RULES, shotLeadTicks: 2 };
+    const pointBlank = setup([placedTank(ME, 500, 600), placedTank(FAR_ENEMY, 500 + 2 * TANK_RADIUS + 20, 600)], rules);
+    pointBlank.client.predict(1, FIRE);
+    expect(pointBlank.client.view(100).bullets.filter((bullet) => bullet.owner === ME)).toEqual([]);
+    expect(pointBlank.client.takeOwnShots()).toHaveLength(1);
+    pointBlank.client.predict(2, IDLE_ACTION);
+    expect(pointBlank.serve(IDLE_ACTION, 0)).toEqual([]);
+    expect(pointBlank.client.takeOwnShots()).toEqual([]);
+    const served = pointBlank.serve(FIRE, 1);
+    expect(served.every((event) => pointBlank.client.wasShotPlayed(event))).toBe(true);
+
+    const walled = setup([placedTank(ME, TANK_RADIUS + 2, 600, Math.PI), placedTank(FAR_ENEMY, 1500, 900)]);
+    walled.client.predict(1, FIRE);
+    expect(walled.client.view(100).bullets.filter((bullet) => bullet.owner === ME)).toEqual([]);
+    expect(walled.client.takeOwnShots()).toHaveLength(1);
+    walled.client.predict(2, IDLE_ACTION);
+    walled.serve(IDLE_ACTION, 0);
+    expect(walled.client.takeOwnShots()).toEqual([]);
+  });
+
+  it('C26 выстрел найден переигрыванием, вкладка скрыта: не играется ни по досчёту, ни по снимку', () => {
+    const { server, client, serve } = setup(openField());
+    meOf(server).reloadLeft = 10 * DT;
+    serve(IDLE_ACTION, 0);
+    for (let seq = 1; seq <= 3; seq++) {
+      client.predict(seq, FIRE);
+    }
+    expect(client.takeOwnShots()).toEqual([]);
+    meOf(server).reloadLeft = 0;
+    serve(IDLE_ACTION, 0);
+    client.discardOwnShots();
+    expect(client.takeOwnShots()).toEqual([]);
+    const served = serve(FIRE, 1);
+    expect(served).toHaveLength(1);
+    expect(served.every((event) => client.wasShotPlayed(event))).toBe(true);
+    expect(client.ownShotCounts.played).toBe(0);
+  });
+
+  it('C25 новое соединение: несверенный выстрел забыт, выстрел снимка нового соединения играется', () => {
+    const { client, serve } = setup(openField());
+    client.predict(1, FIRE);
+    client.takeOwnShots();
+    client.resetConnection();
+    const served = serve(FIRE, 0);
+    expect(served).toHaveLength(1);
+    expect(served.some((event) => client.wasShotPlayed(event))).toBe(false);
+  });
+});
+
+describe('чем стреляет танк', () => {
+  it('M8 скорость орудия — из характеристик танка, у ушедшего — из состава; доля сноса — из правил игры', () => {
+    const gunner: Stats = { ...DEFAULT_STATS, gun: DEFAULT_STATS.gun + 2 };
+    const setups = (id: number): { name: string; stats: Stats } => ({
+      name: `Т${String(id)}`,
+      stats: id === 5 ? gunner : DEFAULT_STATS,
+    });
+    const client = new FfaPrediction(OPEN_MAP, { ...DEFAULT_RULES, shotInheritPercent: 100 }, STILL_ZONE, ME, setups);
+    expect(client.shotOf(5)).toEqual({ bulletSpeed: deriveStats(gunner).bulletSpeed, shotInheritPercent: 100 });
+    expect(client.shotOf(ME)).toEqual({
+      bulletSpeed: deriveStats(DEFAULT_STATS).bulletSpeed,
+      shotInheritPercent: 100,
+    });
   });
 });

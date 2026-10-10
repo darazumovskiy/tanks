@@ -64,6 +64,7 @@ export class RoomManager {
     private readonly dropCounter: InputDropCounter = NO_DROP_COUNTER,
     private readonly rules: Readonly<RoundRules> = DEFAULT_RULES,
     private readonly ffaOptions: FfaOptions = DEFAULT_FFA_OPTIONS,
+    private readonly hasNetSmoothing = false,
   ) {}
 
   get roomCount(): number {
@@ -76,7 +77,7 @@ export class RoomManager {
     if (existing !== undefined) {
       return existing;
     }
-    const room = new Room(code, this.options, this.log, this.dropCounter, this.rules);
+    const room = new Room(code, this.options, this.log, this.dropCounter, this.rules, this.hasNetSmoothing);
     this.rooms.set(code, room);
     const bot = this.botFor(code, room);
     if (bot !== null) {
@@ -210,14 +211,14 @@ export class RoomManager {
     if (fullest !== null) {
       return fullest;
     }
-    const game = new FfaGame(size, this.ffaOptions, this.log, this.dropCounter, this.rules);
+    const game = new FfaGame(size, this.ffaOptions, this.log, this.dropCounter, this.rules, this.hasNetSmoothing);
     this.games.push(game);
     return game;
   }
 
   private botFor(code: string, room: Room): ArenaBot | null {
     const join = (connection: Connection, nickname: string, stats: Stats): Seat =>
-      room.join(0, connection, nickname, stats);
+      room.join(0, connection, nickname, stats, true);
     const level = botLevelOf(code);
     if (level !== null) {
       return createBot(level, this.random, join);

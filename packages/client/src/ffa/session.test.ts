@@ -35,6 +35,7 @@ function welcome(playerId = ME, gameId = 'K7QX', inviteMiss: FfaInviteMiss = Ffa
     size: 10,
     rules: DEFAULT_RULES,
     inviteMiss,
+    hasNetSmoothing: false,
   };
 }
 

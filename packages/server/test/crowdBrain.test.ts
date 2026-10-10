@@ -7,9 +7,12 @@ import {
   ffaMap,
   ffaViewReach,
   IDLE_ACTION,
+  isSegmentWithin,
   makeTank,
   stepWorld,
+  TANK_HIT_RADIUS,
   TICK_RATE,
+  traceShot,
   type Action,
   type BattleMap,
   type FfaMap,
@@ -79,7 +82,18 @@ function bullet(
 }
 
 function viewOf(me: CrowdTank, overrides: Partial<CrowdView> = {}): CrowdView {
-  return { tick: 0, map: OPEN, me, enemies: [], bullets: [], kits: [], zone: WIDE_ZONE, attackers: [], ...overrides };
+  return {
+    tick: 0,
+    map: OPEN,
+    shotInheritPercent: 0,
+    me,
+    enemies: [],
+    bullets: [],
+    kits: [],
+    zone: WIDE_ZONE,
+    attackers: [],
+    ...overrides,
+  };
 }
 
 function brainOf(profile: CrowdProfile, seed = 1): CrowdBrain {
@@ -520,6 +534,76 @@ describe('мозг толпы на крафтовых видах', () => {
     expect(leading.tick(viewOf(me), moving).turretTurn).toBeGreaterThan(plain.tick(viewOf(me), moving).turretTurn);
   });
 
+  it('снаряд со скоростью танка: на ходу ствол — против своего сноса; без правила — прямо на цель', () => {
+    const sharp = profileOf(5, { aimNoiseRad: 0, leadChance: 0 });
+    const driving = crowdTank(ME, 700, 450, { turret: 0, heading: Math.PI / 2, speed: 176 });
+    const target = crowdTank(2, 1100, 450);
+    const carried = brainOf(sharp).tick(viewOf(driving, { shotInheritPercent: 100 }), target);
+    const plain = brainOf(sharp).tick(viewOf(driving), target);
+    expect(carried.turretTurn).toBe(-1);
+    expect(carried.isFiring).toBe(false);
+    expect(plain.isFiring).toBe(true);
+  });
+
+  describe('снаряд со скоростью танка: свой рикошет', () => {
+    const careful = profileOf(5, { fireChance: 1, fireWindowRad: Math.PI, aimNoiseRad: 0, carelessness: 0 });
+    const target = crowdTank(2, 900, 345);
+    const ceiling: BattleMap = { ...OPEN, walls: [{ x: 0, y: 100, w: 1600, h: 40 }] };
+
+    function viewAt(turret: number, heading: number, shotInheritPercent: number): CrowdView {
+      const driving = crowdTank(ME, 400, 345, { turret, heading, speed: 176 });
+      return viewOf(driving, { map: ceiling, enemies: [target], shotInheritPercent });
+    }
+
+    it('выстрел в стену поперёк хода вернётся в едущий танк, хотя путь по полю мимо места выстрела — выстрела нет', () => {
+      const view = viewAt(-Math.PI / 2, 0, 100);
+      const returning = traceShot(ceiling, view.me, view.me.turret, view.me.stats.bulletSpeed, { x: 176, y: 0 })
+        .segments[1];
+      expect(returning).toBeDefined();
+      expect(isSegmentWithin(returning ?? { x1: 0, y1: 0, x2: 0, y2: 0 }, view.me, TANK_HIT_RADIUS + 15)).toBe(false);
+      expect(brainOf(careful).tick(view, target).isFiring).toBe(false);
+    });
+
+    it('танк отъезжает от стены: без правила снаряд почти в стену вернулся бы, с правилом танк уезжает от возврата', () => {
+      const turret = -Math.PI / 2 + 0.07;
+      expect(brainOf(careful).tick(viewAt(turret, Math.PI / 2, 100), target).isFiring).toBe(true);
+      expect(brainOf(careful).tick(viewAt(turret, Math.PI / 2, 0), target).isFiring).toBe(false);
+    });
+  });
+
+  it('снаряд со скоростью танка на движке: бот на ходу попадает по стоящей цели', () => {
+    const stats = CROWD_PROFILES[5].stats;
+    const world = createWorld(
+      OPEN,
+      [
+        makeTank({ name: 'Бот', stats }, ME, { x: 400, y: 200, heading: Math.PI / 2 }),
+        makeTank({ name: 'Цель', stats }, 2, { x: 900, y: 450, heading: 0 }),
+      ],
+      { ...DEFAULT_RULES, shotInheritPercent: 100 },
+      STILL_ZONE,
+    );
+    const [bot, target] = world.tanks;
+    if (bot === undefined || target === undefined) {
+      throw new Error('нет танков');
+    }
+    bot.speed = bot.stats.maxSpeed;
+    const brain = brainOf(profileOf(5, { aimNoiseRad: 0, leadChance: 0, fireWindowRad: 0.02 }));
+    let movingShots = 0;
+    for (let tick = 0; tick < 3 * TICK_RATE && target.isAlive; tick++) {
+      const view = viewOf(fromTank(bot), { tick, shotInheritPercent: 100, enemies: [fromTank(target)] });
+      const action = brain.tick(view, fromTank(target));
+      const isMovingShot = action.isFiring && bot.reloadLeft <= 0 && Math.abs(bot.speed) > bot.stats.maxSpeed / 2;
+      movingShots += isMovingShot ? 1 : 0;
+      stepWorld(world, [{ ...action, throttle: 1, turn: 0 }, IDLE_ACTION]);
+    }
+    for (let tick = 0; tick < 2 * TICK_RATE; tick++) {
+      stepWorld(world, [IDLE_ACTION, IDLE_ACTION]);
+    }
+    expect(movingShots).toBeGreaterThan(0);
+    expect(bot.tally.shots).toBeGreaterThan(0);
+    expect(bot.tally.hits).toBe(bot.tally.shots);
+  });
+
   describe('таймеры в тиках: при решении раз в 3 тика держатся столько же тиков, сколько при решении каждый тик', () => {
     const SPARSE_STEP = 3;
 
@@ -627,6 +711,7 @@ describe('выбор цели', () => {
       fresh: frame,
       delayed: frame,
       map: OPEN,
+      shotInheritPercent: 0,
       kits: [],
       zone: WIDE_ZONE,
       attackers: [],
@@ -704,6 +789,7 @@ describe('вид бота', () => {
         fresh: frame,
         delayed: frame,
         map: WIDE,
+        shotInheritPercent: 0,
         kits: [],
         zone: WIDE_ZONE,
         attackers: [],
@@ -733,15 +819,15 @@ describe('вид бота', () => {
       tanks: [crowdTank(ME, 800, 450), crowdTank(2, 1100, 450)],
       bullets: [bullet(7, 2, 1000, 450, -500, 0), bullet(8, 2, 1900, 450, -500, 0)],
     };
-    const view = crowdView({ myId: ME, fresh, delayed, map: OPEN, kits: [], zone: WIDE_ZONE, attackers: [] });
+    const source = { myId: ME, fresh, delayed, map: OPEN, shotInheritPercent: 50, kits: [], zone: WIDE_ZONE };
+    const view = crowdView({ ...source, attackers: [] });
     expect(view?.me.x).toBe(820);
     expect(view?.enemies[0]?.x).toBe(1100);
     expect(view?.bullets.map((shot) => shot.id)).toEqual([7]);
+    expect(view?.shotInheritPercent).toBe(50);
     const dead: Frame = { ...fresh, tanks: [crowdTank(ME, 820, 450, { isAlive: false })] };
-    expect(
-      crowdView({ myId: ME, fresh: dead, delayed, map: OPEN, kits: [], zone: WIDE_ZONE, attackers: [] }),
-    ).toBeNull();
-    expect(crowdView({ myId: 9, fresh, delayed, map: OPEN, kits: [], zone: WIDE_ZONE, attackers: [] })).toBeNull();
+    expect(crowdView({ ...source, fresh: dead, attackers: [] })).toBeNull();
+    expect(crowdView({ ...source, myId: 9, attackers: [] })).toBeNull();
   });
 });
 
@@ -843,6 +929,7 @@ function enter(bot: CrowdBot, phase: FfaPhase = FfaPhase.Fight): void {
       size: 10,
       rules: DEFAULT_RULES,
       inviteMiss: FfaInviteMiss.None,
+      hasNetSmoothing: false,
     },
     {
       type: MessageType.FfaRoster,
@@ -877,6 +964,7 @@ describe('бот толпы на сообщениях сервера', () => {
       size: 10,
       rules: DEFAULT_RULES,
       inviteMiss: FfaInviteMiss.None,
+      hasNetSmoothing: false,
     });
     expect(bot.receive(snapshot(2))).toBeNull();
   });

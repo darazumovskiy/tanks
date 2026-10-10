@@ -1,6 +1,7 @@
 import { BULLET_LIFETIME, BULLET_RADIUS, MUZZLE_OFFSET, TANK_RADIUS } from './constants.js';
 import { boundsHit, circleRect, type Field, type Wall } from './geometry.js';
 import type { Point } from './maps.js';
+import { isCarried, shotFlight } from './shot.js';
 
 export interface ShotSegment {
   x1: number;
@@ -11,8 +12,11 @@ export interface ShotSegment {
 
 // Путь снаряда по правилам движка: первый отрезок — от дула до первой преграды или до конца дальности,
 // второй — после единственного отскока. Пусто, если дуло упёрлось в преграду и снаряд не вылетит.
+// speed — скорость снаряда на пути, carry — снос от стрелка (`shotCarry`).
 export interface ShotTrace {
   segments: ShotSegment[];
+  speed: number;
+  carry: Point;
 }
 
 interface RayHit {
@@ -110,18 +114,25 @@ function isMuzzleBlocked(field: Field, x: number, y: number): boolean {
   return field.walls.some((wall) => circleRect(x, y, BULLET_RADIUS, wall) !== null);
 }
 
-export function traceShot(field: Field, shooter: Point, turret: number, bulletSpeed: number): ShotTrace {
-  const dx = Math.cos(turret);
-  const dy = Math.sin(turret);
-  const muzzleX = shooter.x + dx * MUZZLE_OFFSET;
-  const muzzleY = shooter.y + dy * MUZZLE_OFFSET;
+// Дуло — по стволу, полёт — по стволу со сносом: при сносе путь отклоняется от ствола по ходу стрелка.
+export function traceShot(
+  field: Field,
+  shooter: Point,
+  turret: number,
+  bulletSpeed: number,
+  carry: Readonly<Point>,
+): ShotTrace {
+  const muzzleX = shooter.x + Math.cos(turret) * MUZZLE_OFFSET;
+  const muzzleY = shooter.y + Math.sin(turret) * MUZZLE_OFFSET;
+  const { dirX: dx, dirY: dy, speed } = shotFlight(turret, bulletSpeed, carry);
+  const trace = (segments: ShotSegment[]): ShotTrace => ({ segments, speed, carry: { x: carry.x, y: carry.y } });
   if (isMuzzleBlocked(field, muzzleX, muzzleY)) {
-    return { segments: [] };
+    return trace([]);
   }
-  const range = bulletSpeed * BULLET_LIFETIME;
+  const range = speed * BULLET_LIFETIME;
   const first = nearestHit(field, muzzleX, muzzleY, dx, dy);
   if (first.distance >= range) {
-    return { segments: [{ x1: muzzleX, y1: muzzleY, x2: muzzleX + dx * range, y2: muzzleY + dy * range }] };
+    return trace([{ x1: muzzleX, y1: muzzleY, x2: muzzleX + dx * range, y2: muzzleY + dy * range }]);
   }
   const bounceX = muzzleX + dx * first.distance;
   const bounceY = muzzleY + dy * first.distance;
@@ -131,12 +142,10 @@ export function traceShot(field: Field, shooter: Point, turret: number, bulletSp
   const remaining = range - first.distance;
   const second = nearestHit(field, bounceX, bounceY, backX, backY);
   const length = Math.min(remaining, second.distance);
-  return {
-    segments: [
-      { x1: muzzleX, y1: muzzleY, x2: bounceX, y2: bounceY },
-      { x1: bounceX, y1: bounceY, x2: bounceX + backX * length, y2: bounceY + backY * length },
-    ],
-  };
+  return trace([
+    { x1: muzzleX, y1: muzzleY, x2: bounceX, y2: bounceY },
+    { x1: bounceX, y1: bounceY, x2: bounceX + backX * length, y2: bounceY + backY * length },
+  ]);
 }
 
 export function isSegmentWithin(segment: ShotSegment, point: Point, radius: number): boolean {
@@ -154,17 +163,37 @@ export function isSegmentWithin(segment: ShotSegment, point: Point, radius: numb
 // Путь проходит ближе этого к центру танка — снаряд его задевает.
 export const TANK_HIT_RADIUS = TANK_RADIUS + BULLET_RADIUS;
 
+function segmentLength(segment: ShotSegment): number {
+  return Math.hypot(segment.x2 - segment.x1, segment.y2 - segment.y1);
+}
+
+// Второй отрезок глазами стрелка, который едет со скоростью сноса: точка, куда снаряд долетает за время t,
+// сдвигается на −carry · t. Отрезок остаётся отрезком — снаряд и стрелок движутся равномерно.
+function returningAlongCarrier(trace: ShotTrace, first: ShotSegment, returning: ShotSegment): ShotSegment {
+  const { speed, carry } = trace;
+  const bounceTime = segmentLength(first) / speed;
+  const endTime = bounceTime + segmentLength(returning) / speed;
+  return {
+    x1: returning.x1 - carry.x * bounceTime,
+    y1: returning.y1 - carry.y * bounceTime,
+    x2: returning.x2 - carry.x * endTime,
+    y2: returning.y2 - carry.y * endTime,
+  };
+}
+
 // Свой снаряд до отскока владельца не ранит — опасен только второй отрезок. Противник на первом отрезке
-// принимает снаряд на себя — до отскока дело не дойдёт.
-export function isTraceReturning(segments: readonly ShotSegment[], shooter: Point, target: Point | null): boolean {
-  const [first, returning] = segments;
+// принимает снаряд на себя — до отскока дело не дойдёт. Снаряд со сносом возвращается не в точку выстрела,
+// а туда, куда стрелок доедет со скоростью сноса.
+export function isTraceReturning(trace: ShotTrace, shooter: Point, target: Point | null): boolean {
+  const [first, returning] = trace.segments;
   if (first === undefined || returning === undefined) {
     return false;
   }
   if (target !== null && isSegmentWithin(first, target, TANK_HIT_RADIUS)) {
     return false;
   }
-  return isSegmentWithin(returning, shooter, TANK_HIT_RADIUS);
+  const danger = isCarried(trace.carry) ? returningAlongCarrier(trace, first, returning) : returning;
+  return isSegmentWithin(danger, shooter, TANK_HIT_RADIUS);
 }
 
 export function isShotReturning(
@@ -172,7 +201,8 @@ export function isShotReturning(
   shooter: Point,
   turret: number,
   bulletSpeed: number,
+  carry: Readonly<Point>,
   target: Point | null,
 ): boolean {
-  return isTraceReturning(traceShot(field, shooter, turret, bulletSpeed).segments, shooter, target);
+  return isTraceReturning(traceShot(field, shooter, turret, bulletSpeed, carry), shooter, target);
 }

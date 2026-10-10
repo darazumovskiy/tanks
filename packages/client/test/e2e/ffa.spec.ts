@@ -1,5 +1,13 @@
 import { expect, test, type Browser } from '@playwright/test';
-import { deriveStats, ffaMap, isTraceReturning, STAT_KEYS, traceShot, type Point } from '@tanks/shared/engine';
+import {
+  deriveStats,
+  ffaMap,
+  isTraceReturning,
+  NO_CARRY,
+  STAT_KEYS,
+  traceShot,
+  type Point,
+} from '@tanks/shared/engine';
 import { FfaPhase } from '@tanks/shared/protocol';
 import { NetProxy, type NetProxyOptions } from './netProxy.js';
 import { Player, sleep, type FfaDebugState, type PlayerOptions } from './player.js';
@@ -175,10 +183,10 @@ async function switchesTargetByClick(watcher: Player): Promise<boolean> {
 function ricochetAngle(me: Point): number {
   const map = ffaMap(SIZE);
   const { bulletSpeed } = deriveStats(GLASS_CANNON);
-  const candidates = AXIS_ANGLES.map((angle) => ({ angle, segments: traceShot(map, me, angle, bulletSpeed).segments }))
-    .filter(({ segments }) => isTraceReturning(segments, me, null))
-    .map(({ angle, segments }) => {
-      const bounce = segments[0];
+  const candidates = AXIS_ANGLES.map((angle) => ({ angle, trace: traceShot(map, me, angle, bulletSpeed, NO_CARRY) }))
+    .filter(({ trace }) => isTraceReturning(trace, me, null))
+    .map(({ angle, trace }) => {
+      const bounce = trace.segments[0];
       const distance = bounce === undefined ? 0 : Math.hypot(bounce.x2 - me.x, bounce.y2 - me.y);
       return { angle, distance };
     })

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  DEFAULT_RULES,
   DEFAULT_STATS,
   DT,
   normalizeAngle,
@@ -330,14 +331,14 @@ describe('скольжение вдоль стен', () => {
       room: FAST_ROOM,
       tickMs: 1,
       random: seededRandom(42),
-      rules: { wallSlidePercent: SLIDE_PERCENT },
+      rules: { ...DEFAULT_RULES, wallSlidePercent: SLIDE_PERCENT },
     });
     port = await app.listen(0, '127.0.0.1');
   });
 
   it('танк под острым углом к краю поля держит скорость и не гремит ударами', async () => {
     const pair = await connectPair('slide', DEFAULT_STATS, DEFAULT_STATS);
-    expect(firstRoundStart.rules).toEqual({ wallSlidePercent: SLIDE_PERCENT });
+    expect(firstRoundStart.rules).toEqual({ wallSlidePercent: SLIDE_PERCENT, shotLeadTicks: 0, shotInheritPercent: 0 });
     const lanePost = { x: 140, y: 100 };
     let isPosted = false;
     let touchTick: number | null = null;

@@ -77,6 +77,7 @@ export class CrowdBot {
   phase: FfaPhase | null = null;
   matchTick = 0;
   gameId = '';
+  private shotInheritPercent = 0;
   private readonly map: FfaMap;
   private readonly brain: CrowdBrain;
   private readonly targeting: Targeting;
@@ -159,6 +160,7 @@ export class CrowdBot {
         this.playerId = message.playerId;
         this.token = message.token;
         this.gameId = message.gameId;
+        this.shotInheritPercent = message.rules.shotInheritPercent;
         return null;
       case MessageType.FfaRoster:
         this.roster = new Map(message.players.map((player) => [player.id, deriveStats(player.stats)]));
@@ -290,6 +292,7 @@ export class CrowdBot {
       fresh: this.withPredictedSelf(frame, myId),
       delayed,
       map: this.map,
+      shotInheritPercent: this.shotInheritPercent,
       kits: this.kitsOf(message),
       zone: { x: this.map.width / 2, y: this.map.height / 2, radius: zoneRadiusAt(plan, message.tick * DT) },
       attackers,

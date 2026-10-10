@@ -72,7 +72,7 @@ function sceneTank(view: WorldView, hud: DuelSceneInfo, side: Side): SceneTank {
 export function duelScene(view: WorldView, hud: DuelSceneInfo): FieldScene {
   const { round } = view;
   return {
-    field: ARENA,
+    field: round.map,
     borderWidth: BORDER_WIDTH,
     floor: (ctx) => {
       ctx.drawImage(floorFor(round.mapIndex), 0, 0, ARENA.width, ARENA.height);
@@ -88,6 +88,7 @@ export function duelScene(view: WorldView, hud: DuelSceneInfo): FieldScene {
     tanks: [sceneTank(view, hud, 0), sceneTank(view, hud, 1)],
     bullets: view.bullets.map((bullet) => ({
       id: bullet.id,
+      owner: bullet.owner,
       x: bullet.x,
       y: bullet.y,
       color: sideColor(bullet.owner),

@@ -1,5 +1,7 @@
 import {
   FFA_SIZES,
+  SHOT_INHERIT_MAX_PERCENT,
+  SHOT_LEAD_MAX_TICKS,
   STAT_KEYS,
   WALL_SLIDE_MAX_PERCENT,
   type Action,
@@ -100,13 +102,28 @@ export function quantizeAction(action: Action): Action {
   };
 }
 
-// Правила раунда одним байтом — процент скольжения; тот же вид в RoundStart и в строке журнала `game start`.
-export function rulesToByte(rules: Readonly<RoundRules>): number {
-  return rules.wallSlidePercent;
+// Правила — три байта: процент скольжения, тиков догона и процент наследования скорости танка снарядом;
+// значения сверх предела срезаются до предела.
+export function rulesFromBytes(wallSlideByte: number, shotLeadByte: number, shotInheritByte: number): RoundRules {
+  return {
+    wallSlidePercent: Math.min(wallSlideByte, WALL_SLIDE_MAX_PERCENT),
+    shotLeadTicks: Math.min(shotLeadByte, SHOT_LEAD_MAX_TICKS),
+    shotInheritPercent: Math.min(shotInheritByte, SHOT_INHERIT_MAX_PERCENT),
+  };
 }
 
-export function rulesFromByte(byte: number): RoundRules {
-  return { wallSlidePercent: Math.min(byte, WALL_SLIDE_MAX_PERCENT) };
+// Поля правил в строке журнала `game start`; в журналах до догона нет поля lead, до наследования — inherit.
+export function formatJournalRules(rules: Readonly<RoundRules>): string {
+  const inherit = String(rules.shotInheritPercent);
+  return `rules=${String(rules.wallSlidePercent)} lead=${String(rules.shotLeadTicks)} inherit=${inherit}`;
+}
+
+function writeRules(writer: ByteWriter, rules: Readonly<RoundRules>): void {
+  writer.u8(rules.wallSlidePercent).u8(rules.shotLeadTicks).u8(rules.shotInheritPercent);
+}
+
+function readRules(reader: ByteReader): RoundRules {
+  return rulesFromBytes(reader.u8(), reader.u8(), reader.u8());
 }
 
 function writeSide(writer: ByteWriter, side: Side | null): void {
@@ -449,7 +466,7 @@ export function encode(message: Message): Uint8Array {
     case MessageType.Leave:
       break;
     case MessageType.Welcome:
-      writer.u8(message.side).string(message.roomCode);
+      writer.u8(message.side).string(message.roomCode).bool(message.hasNetSmoothing);
       break;
     case MessageType.RoomState:
       writeSlot(writer, message.slots[0]);
@@ -458,7 +475,8 @@ export function encode(message: Message): Uint8Array {
     case MessageType.RoundStart:
       writer.string(message.gameId);
       writer.u16(message.roundIndex).u8(message.mapIndex).u16(message.countdownTicks);
-      writer.u16(message.score[0]).u16(message.score[1]).u8(rulesToByte(message.rules));
+      writer.u16(message.score[0]).u16(message.score[1]);
+      writeRules(writer, message.rules);
       writeTankInfo(writer, message.tanks[0]);
       writeTankInfo(writer, message.tanks[1]);
       break;
@@ -491,7 +509,9 @@ export function encode(message: Message): Uint8Array {
       break;
     case MessageType.FfaWelcome:
       writer.u16(message.playerId).string(message.token).string(message.gameId);
-      writer.u8(message.size).u8(rulesToByte(message.rules)).u8(message.inviteMiss);
+      writer.u8(message.size);
+      writeRules(writer, message.rules);
+      writer.u8(message.inviteMiss).bool(message.hasNetSmoothing);
       break;
     case MessageType.FfaState:
       writer.u8(message.phase);
@@ -603,7 +623,7 @@ export function decode(data: Uint8Array): Message {
     case MessageType.Leave:
       return { type };
     case MessageType.Welcome:
-      return { type, side: readSide(reader), roomCode: reader.string() };
+      return { type, side: readSide(reader), roomCode: reader.string(), hasNetSmoothing: reader.bool() };
     case MessageType.RoomState:
       return { type, slots: [readSlot(reader), readSlot(reader)] };
     case MessageType.RoundStart:
@@ -614,7 +634,7 @@ export function decode(data: Uint8Array): Message {
         mapIndex: reader.u8(),
         countdownTicks: reader.u16(),
         score: [reader.u16(), reader.u16()],
-        rules: rulesFromByte(reader.u8()),
+        rules: readRules(reader),
         tanks: [readTankInfo(reader), readTankInfo(reader)],
       };
     case MessageType.Snapshot:
@@ -630,8 +650,9 @@ export function decode(data: Uint8Array): Message {
         token: reader.string(),
         gameId: reader.string(),
         size: readFfaSize(reader),
-        rules: rulesFromByte(reader.u8()),
+        rules: readRules(reader),
         inviteMiss: listItem(FFA_INVITE_MISSES, reader.u8(), 'промах приглашения'),
+        hasNetSmoothing: reader.bool(),
       };
     case MessageType.FfaState:
       return {

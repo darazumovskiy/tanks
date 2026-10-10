@@ -3,7 +3,7 @@ import { profileWith } from '@tanks/bots/twinFixture';
 import type { TwinProfile } from '@tanks/bots/twin';
 import type { GameLog } from '@tanks/server/gameLog';
 import { Room, type Connection, type Seat } from '@tanks/server/room';
-import { DEFAULT_STATS, deriveStats, IDLE_ACTION, type Action, type Side } from '@tanks/shared/engine';
+import { DEFAULT_RULES, DEFAULT_STATS, deriveStats, IDLE_ACTION, type Action, type Side } from '@tanks/shared/engine';
 import {
   encode,
   MessageType,
@@ -73,7 +73,7 @@ function playerWith(profile: TwinProfile, brain: Brain, log: GameLog = new Recor
 const IDLE_CONNECTION: Connection = { send: () => undefined };
 
 function roomWith(twin: TwinPlayer, log: GameLog, onInput: (seq: number, action: Action) => void): Room {
-  const room = new Room('bot08test', FAST_ROOM, log, undefined, { wallSlidePercent: 30 });
+  const room = new Room('bot08test', FAST_ROOM, log, undefined, { ...DEFAULT_RULES, wallSlidePercent: 30 });
   room.join(0, IDLE_CONNECTION, 'Охотник', DEFAULT_STATS);
   const seat = room.join(1, twin, 'Двойник', DEFAULT_STATS);
   twin.attach({
@@ -98,7 +98,7 @@ function roundStart(roundIndex: number, wallSlidePercent = 0, score: [number, nu
     mapIndex: roundIndex,
     countdownTicks: 2,
     score,
-    rules: { wallSlidePercent },
+    rules: { ...DEFAULT_RULES, wallSlidePercent },
     tanks: [
       { nickname: 'Охотник', stats: DEFAULT_STATS },
       { nickname: 'Двойник', stats: DEFAULT_STATS },
@@ -126,7 +126,7 @@ function snapshot(tick: number, enemyX: number, extra: Partial<SnapshotMessage> 
 }
 
 function welcome(side: Side): Uint8Array {
-  return encode({ type: MessageType.Welcome, side, roomCode: 'bot08test' });
+  return encode({ type: MessageType.Welcome, side, roomCode: 'bot08test', hasNetSmoothing: false });
 }
 
 describe('игрок-двойник', () => {

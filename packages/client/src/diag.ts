@@ -1,5 +1,6 @@
 import { DT } from '@tanks/shared/engine';
 import { gameTimecode } from '@tanks/shared/protocol';
+import type { HoldEnd } from './pictureTime.js';
 
 export interface DiagOptions {
   post?: (url: string, body: string) => Promise<boolean>;
@@ -135,5 +136,12 @@ export class DiagLog {
 
   private url(): string {
     return `${DIAG_ROUTE}?key=${encodeURIComponent(this.key)}&src=${this.source}`;
+  }
+}
+
+// Стояние своего снаряда на броне: сколько ждал ответа сервера по ходу картинки чужих и чем кончилось.
+export function writeHoldEnds(diag: DiagLog, ends: readonly HoldEnd[]): void {
+  for (const end of ends) {
+    diag.write(`hold id=${String(end.id)} ms=${(end.ticks * TICK_MS).toFixed(0)} end=${end.outcome}`);
   }
 }

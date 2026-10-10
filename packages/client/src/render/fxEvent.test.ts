@@ -1,7 +1,8 @@
-import type { Side } from '@tanks/shared/engine';
+import { createRound, DEFAULT_RULES, DEFAULT_STATS, deriveStats, type Side } from '@tanks/shared/engine';
 import { EventFlag, type SnapshotEvent, type SnapshotEventKind } from '@tanks/shared/protocol';
 import { describe, expect, it } from 'vitest';
-import { DuelFxPolicy, duelFxEvent } from './fxEvent.js';
+import type { InterpolatedTank, WorldView } from '../prediction.js';
+import { DuelFxPolicy, duelFxEvent, duelFxTanks } from './fxEvent.js';
 
 const KINDS: readonly SnapshotEventKind[] = [
   'shot',
@@ -122,5 +123,35 @@ describe('тряска, вспышка и объявления дуэли', () =
     policy.optionsFor(duelEvent('hit', 1));
     policy.reset();
     expect(policy.optionsFor(duelEvent('hit', 0)).announcement?.kind).toBe('firstBlood');
+  });
+});
+
+describe('танки дуэли для эффектов', () => {
+  it('M8 номер — сторона, поза — нарисованная, скорость орудия — из характеристик стороны, доля сноса — из правил раунда', () => {
+    const gunner = { ...DEFAULT_STATS, gun: DEFAULT_STATS.gun + 2 };
+    const round = createRound(
+      0,
+      [
+        { name: 'А', stats: { ...DEFAULT_STATS } },
+        { name: 'Б', stats: gunner },
+      ],
+      { ...DEFAULT_RULES, shotInheritPercent: 60 },
+    );
+    const drawn = (x: number): InterpolatedTank => ({
+      x,
+      y: 200,
+      heading: 0.3,
+      turret: 1.2,
+      speed: 150,
+      hp: 50,
+      maxHp: 100,
+      isAlive: true,
+    });
+    const view: WorldView = { round, tanks: [drawn(100), drawn(700)], bullets: [] };
+    const [first, second] = duelFxTanks(view);
+    expect(first).toMatchObject({ ...drawn(100), id: 0, shotInheritPercent: 60 });
+    expect(first?.bulletSpeed).toBe(deriveStats(DEFAULT_STATS).bulletSpeed);
+    expect(second).toMatchObject({ ...drawn(700), id: 1, shotInheritPercent: 60 });
+    expect(second?.bulletSpeed).toBe(deriveStats(gunner).bulletSpeed);
   });
 });

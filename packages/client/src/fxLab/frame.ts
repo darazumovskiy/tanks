@@ -1,18 +1,23 @@
+import { installSeededRandom } from '../frameStand/seededRandom.js';
 import { LAB_NAMES, labHud, thumbSticks } from '../labShared.js';
 import type { AimLineStyle } from '../render/aimLineStyle.js';
 import { worldToScreen } from '../render/camera.js';
-import type { Effects } from '../render/effects.js';
+import type { Effects, FxEventOptions } from '../render/effects.js';
+import { duelFxEvent, duelFxTanks } from '../render/fxEvent.js';
 import { createDuelEffects, Renderer } from '../render/renderer.js';
 import { makeCanvas } from '../render/view.js';
 import { defaultSettings, type Settings } from '../settings.js';
-import { buildSceneFrame, type FxScene, type FxScreen } from './scenes.js';
+import { buildSceneFrame, LAB_FRAME_S, type FxScene, type FxScreen } from './scenes.js';
 
 // Кадр лаборатории: настоящий рендер на холст размером с экран, служебные кадры перед снимком (линия успевает
 // появиться, камера встаёт, снаряд набирает след), кадрирование вокруг линии в масштабе 1:1 пикселей экрана.
 
 const WARMUP_FRAMES = 12;
 const WARMUP_FRAME_MS = 16;
-const BULLET_STEP = 8;
+// Частицы выстрела повторяются от показа к показу.
+const LAB_RANDOM_SEED = 7;
+// Выстрел без тряски: кадр сравнивают по пикселям.
+const STILL_SHOT: FxEventOptions = { shake: 0, flash: 0, announcement: null, hasParticles: true, ownKillCount: null };
 // Ячейка листа и просмотра — половина экрана вокруг линии: толщина и свечение видны как есть.
 const CROP_FRACTION = 0.5;
 
@@ -45,10 +50,15 @@ export function renderFrame(target: Target, scene: FxScene, style: AimLineStyle,
   renderer.setAimLineStyle(style);
   renderer.resetCamera();
   effects.reset();
+  installSeededRandom(LAB_RANDOM_SEED);
   const sticks = thumbSticks(screen.width, screen.height, settings);
   for (let index = 0; index < WARMUP_FRAMES; index++) {
     const framesLeft = WARMUP_FRAMES - 1 - index;
-    const frame = buildSceneFrame(scene, framesLeft * BULLET_STEP);
+    const frame = buildSceneFrame(scene, framesLeft);
+    if (frame.shot !== null) {
+      effects.onEvent(duelFxEvent(frame.shot), STILL_SHOT);
+    }
+    effects.update(LAB_FRAME_S, duelFxTanks(frame.view));
     effects.time = timeS - (framesLeft * WARMUP_FRAME_MS) / 1000;
     renderer.draw(frame.view, labHud(sticks, WARMUP_FRAME_MS, frame.aimLine), null);
   }

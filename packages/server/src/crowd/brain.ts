@@ -2,14 +2,17 @@ import {
   clamp,
   isSegmentClear,
   isShotReturning,
+  leadShot,
   MUZZLE_OFFSET,
   normalizeAngle,
   REVERSE_FACTOR,
+  shotCarry,
   TANK_HIT_RADIUS,
   TANK_RADIUS,
   TICK_RATE,
   type Action,
   type BattleMap,
+  type LeadSolution,
   type Point,
 } from '@tanks/shared/engine';
 import type { CrowdProfile } from './profile.js';
@@ -31,7 +34,6 @@ const CREEP_THROTTLE = 0.15;
 const FULL_THROTTLE_COS = 0.5;
 // Шаги времени складываются с ошибкой округления: без запаса последний шаг горизонта терялся бы.
 const TIME_EPSILON = 1e-9;
-const LEAD_ITERATIONS = 4;
 const TURRET_GAIN = 8;
 const SHOT_PAD = 6;
 const THREAT_HORIZON_S = 0.9;
@@ -340,16 +342,11 @@ function driveAlong(me: CrowdTank, move: Move): Drive {
   return move.isForward ? driveForward(me, angle) : driveBackward(me, angle);
 }
 
-// quality — учитываемая доля скорости цели: 0 даёт текущее положение, 1 — полное упреждение.
-function leadPoint(me: CrowdTank, target: CrowdTank, quality: number): Point {
-  let x = target.x;
-  let y = target.y;
-  for (let i = 0; i < LEAD_ITERATIONS; i++) {
-    const flight = Math.hypot(x - me.x, y - me.y) / me.stats.bulletSpeed;
-    x = target.x + target.vx * quality * flight;
-    y = target.y + target.vy * quality * flight;
-  }
-  return { x, y };
+// quality — учитываемая доля скорости цели: 0 даёт текущее положение, 1 — полное упреждение. Свой снос бот
+// учитывает всегда: он знает, как едет сам.
+function leadOf(me: CrowdTank, target: CrowdTank, quality: number, carry: Point): LeadSolution {
+  const velocity = { x: target.vx * quality, y: target.vy * quality };
+  return leadShot(me, target, velocity, me.stats.bulletSpeed, carry);
 }
 
 function sidestepPoint(me: CrowdTank, alongX: number, alongY: number, side: number): Point {
@@ -524,15 +521,16 @@ export class CrowdBrain {
     }
     this.hasBeenReloading = !isReady;
 
-    const point = leadPoint(me, target, this.isLeadingShot ? this.profile.leadQuality : 0);
-    const wanted = Math.atan2(point.y - me.y, point.x - me.x) + this.aimNoise;
+    const carry = shotCarry(me, view.shotInheritPercent);
+    const { aim, meet } = leadOf(me, target, this.isLeadingShot ? this.profile.leadQuality : 0, carry);
+    const wanted = Math.atan2(aim.y - me.y, aim.x - me.x) + this.aimNoise;
     const turretDiff = normalizeAngle(wanted - me.turret);
     const turretTurn = clamp(turretDiff * TURRET_GAIN, -1, 1);
     const muzzleX = me.x + Math.cos(me.turret) * MUZZLE_OFFSET;
     const muzzleY = me.y + Math.sin(me.turret) * MUZZLE_OFFSET;
     const isAimed = Math.abs(turretDiff) < this.profile.fireWindowRad;
-    const isLineClear = isSegmentClear(map.walls, muzzleX, muzzleY, point.x, point.y, SHOT_PAD);
-    const isSafe = this.isCarelessShot || !isShotReturning(map, me, me.turret, me.stats.bulletSpeed, target);
+    const isLineClear = isSegmentClear(map.walls, muzzleX, muzzleY, meet.x, meet.y, SHOT_PAD);
+    const isSafe = this.isCarelessShot || !isShotReturning(map, me, me.turret, me.stats.bulletSpeed, carry, target);
     if (!isReady || !isAimed || !isLineClear || !isSafe) {
       return { turretTurn, isFiring: false };
     }

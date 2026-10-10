@@ -17,6 +17,7 @@ import { FFA_SIZES, ffaMap, type FfaMap, type FfaSize, type SpawnArea } from './
 import { circleRect, type Wall } from './geometry.js';
 import { createRandom, nextRandom } from './random.js';
 import { DEFAULT_RULES, IDLE_ACTION, zoneRadiusAt, type Action, type Tank } from './round.js';
+import { NO_CARRY } from './shot.js';
 import { traceShot } from './trajectory.js';
 
 const WIDTH = 2000;
@@ -768,7 +769,7 @@ describe('поле боя толпы', () => {
     const ricochet = events.find((event) => event.type === 'ricochet');
     expect(ricochet).toMatchObject({ x: map.width - BULLET_RADIUS, nx: -1 });
 
-    const trace = traceShot(map, { x: map.width - 60, y: 30 }, 0, BULLET_SPEED);
+    const trace = traceShot(map, { x: map.width - 60, y: 30 }, 0, BULLET_SPEED, NO_CARRY);
     expect(trace.segments[0]?.x2).toBe(map.width - BULLET_RADIUS);
     expect(BULLET_SPEED * BULLET_LIFETIME).toBeGreaterThan(60);
   });

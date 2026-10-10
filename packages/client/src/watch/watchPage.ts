@@ -5,6 +5,8 @@ import { SIDE_COLORS } from '../render/view.js';
 import { WatchRenderer } from '../render/watchRenderer.js';
 import { WATCH_STYLE } from '../render/watchStyle.js';
 import { Sfx } from '../sfx.js';
+import type { SoundSetting } from '../soundSetting.js';
+import { mountSoundToggle } from '../soundToggle.js';
 import type { RoundOutcome } from './botMatch.js';
 import { FIGHTERS, fighterById, readyFighter, type Fighter, type ReadyFighter } from './fighters.js';
 import { WATCH_SPEEDS, type WatchSpeed } from './stepClock.js';
@@ -33,7 +35,6 @@ const DEFAULT_RIGHT_ID = 'bot10';
 const DEFAULT_SPEED: WatchSpeed = 1;
 const SELECTED_CLASS = 'is-selected';
 const PAUSED_CLASS = 'is-paused';
-const MUTED_CLASS = 'is-muted';
 const SHOWN_CLASS = 'is-shown';
 const OUTCOME_SIDE_CLASSES = ['is-left', 'is-right'] as const;
 const DRAW_CLASS = 'is-draw';
@@ -156,12 +157,6 @@ function reflectPause(button: HTMLButtonElement, isPaused: boolean): void {
   button.setAttribute('aria-label', isPaused ? 'Продолжить' : 'Пауза');
 }
 
-function reflectSound(button: HTMLButtonElement, isMuted: boolean): void {
-  button.classList.toggle(MUTED_CLASS, isMuted);
-  button.setAttribute('aria-pressed', String(isMuted));
-  button.setAttribute('aria-label', isMuted ? 'Включить звук' : 'Выключить звук');
-}
-
 // Значение списка — номер бойца: он же попадает в data-атрибут строки.
 function mountPicker(
   elements: DropdownElements,
@@ -258,6 +253,7 @@ export async function mountWatch(
   elements: WatchPageElements,
   storage: WatchStorage,
   deps: WatchGameDeps,
+  sound: SoundSetting,
 ): Promise<WatchGame> {
   const showNotice = noticeShower(elements.notice);
   let playing: [ReadyFighter, ReadyFighter] = await Promise.all([
@@ -325,13 +321,10 @@ export async function mountWatch(
   elements.restart.addEventListener('click', () => {
     game.restart();
   });
-  reflectSound(elements.sound, game.isMuted);
-  elements.sound.addEventListener('click', () => {
-    reflectSound(elements.sound, game.toggleSound());
-  });
+  mountSoundToggle(elements.sound, sound);
   window.addEventListener('keydown', (event) => {
     if (event.code === SOUND_KEY_CODE && !event.repeat) {
-      reflectSound(elements.sound, game.toggleSound());
+      sound.toggle();
     }
   });
   // Звук браузер разрешает только после действия игрока на странице.

@@ -4,7 +4,7 @@ import { GameServer } from './server.js';
 // Лаборатория эффектов: сцены и варианты перечислены, линия видна у каждого варианта, лист и параметры работают.
 
 const SPRITE_SETTLE_MS = 700;
-const EXPECTED_SCENES = ['wall-tail', 'on-target', 'lead', 'returning', 'with-bullet'];
+const EXPECTED_SCENES = ['wall-tail', 'on-target', 'lead', 'returning', 'with-bullet', 'shot-moving'];
 const ROUND_1_VARIANTS = ['current', 'flat', 'tracer', 'neon'];
 const ROUND_1_PICKS = ['tracer', 'neon'];
 const EXPECTED_VARIANTS = ['tracer', 'neon', 'hairline', 'dots', 'tapered', 'grain', 'soft-tracer'];
@@ -20,6 +20,11 @@ const ON_TARGET_MID = { x: (260 + 34 + 671) / 2, y: 450 };
 const OFF_LINE_WORLD = 40;
 // Хвост сцены «в край почти в упор» идёт назад через танк со скосом 0,1 рад: точка на обратном пути перед дулом.
 const RETURNING_TAIL = { x: 60, y: 469 };
+// «Выстрел на ходу вбок»: танк в (480, 450) едет вправо, башня вниз — дуло в (480, 484); 40 позади дула по ходу —
+// пол, туда вспышка не достаёт, если едет с танком.
+const MOVING_MUZZLE = { x: 480, y: 484 };
+const BEHIND_MUZZLE = { x: 440, y: 484 };
+const FLASH_CONTRAST = 60;
 
 interface FxLabApi {
   scenes: string[];
@@ -123,6 +128,21 @@ test('опасный хвост на компьютере красноватый
     return { before, after };
   }, ON_TARGET_MID);
   expect(brightness(widened.after)).toBeGreaterThan(brightness(widened.before) + 60);
+});
+
+test('выстрел на ходу вбок: вспышка — на дуле нарисованного танка', async ({ page }) => {
+  await openLab(page);
+  const pixels = await page.evaluate(
+    ({ muzzle, behind }) => {
+      window.tanksFxLab.show('shot-moving', 'dots', 'desktop', 1);
+      return {
+        muzzle: window.tanksFxLab.probe(muzzle.x, muzzle.y),
+        behind: window.tanksFxLab.probe(behind.x, behind.y),
+      };
+    },
+    { muzzle: MOVING_MUZZLE, behind: BEHIND_MUZZLE },
+  );
+  expect(brightness(pixels.muzzle)).toBeGreaterThan(brightness(pixels.behind) + FLASH_CONTRAST);
 });
 
 test('параметры запроса задают раунд, сцену, вариант, экран и время', async ({ page }) => {

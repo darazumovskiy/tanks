@@ -85,9 +85,11 @@ export interface CrowdZone extends Point {
 
 // Что видит мозг на своём ходу: свой танк, зона и аптечки — свежие; противники и снаряды — с задержкой реакции
 // и только в окне обзора вокруг точки обзора своего танка. attackers — кто попал в бота на этом снимке.
+// shotInheritPercent — правило игры: какую долю скорости танка получает снаряд в момент выстрела.
 export interface CrowdView {
   tick: number;
   map: BattleMap;
+  shotInheritPercent: number;
   me: CrowdTank;
   enemies: CrowdTank[];
   bullets: CrowdBullet[];
@@ -101,6 +103,7 @@ export interface ViewSource {
   fresh: Frame;
   delayed: Frame;
   map: BattleMap;
+  shotInheritPercent: number;
   kits: Kit[];
   zone: CrowdZone;
   attackers: number[];
@@ -116,6 +119,7 @@ export function crowdView(source: ViewSource): CrowdView | null {
   return {
     tick: source.fresh.tick,
     map: source.map,
+    shotInheritPercent: source.shotInheritPercent,
     me,
     enemies: source.delayed.tanks.filter(
       (tank) => tank.id !== source.myId && tank.isAlive && isInFfaView(center, tank.x, tank.y),

@@ -4,14 +4,18 @@ import {
   createRound,
   DEFAULT_RULES,
   DEFAULT_STATS,
+  deriveStats,
+  DT,
   IDLE_ACTION,
+  MUZZLE_OFFSET,
   stepRound,
   TANK_RADIUS,
   type Action,
   type Round,
+  type RoundRules,
   type Side,
 } from '@tanks/shared/engine';
-import { MessageType, type SnapshotMessage } from '@tanks/shared/protocol';
+import { MessageType, toSnapshotEvent, type SnapshotEvent, type SnapshotMessage } from '@tanks/shared/protocol';
 import { PICTURE_NEAR, pictureTickAt } from './pictureTime.js';
 import { PREDICTED_BULLET_ID_BASE } from './predictedShots.js';
 import { Prediction, type PictureView } from './prediction.js';
@@ -300,4 +304,463 @@ describe('дуэль: картинка совпадает с сервером', 
       });
     }
   }
+});
+
+describe('дуэль: догон снаряда', () => {
+  const LEAD_RULES: RoundRules = { ...DEFAULT_RULES, shotLeadTicks: 2 };
+  const FIRE_SEQ = WARMUP_SEQ + 2;
+  const TICKS = 50;
+
+  // Место снаряда сервера в дробном тике картинки: между тиками снаряд летит по прямой, до тика рождения стоит на
+  // месте рождения.
+  function serverAt(history: ReadonlyMap<number, { x: number; y: number }>, tick: number): { x: number; y: number } {
+    const after = history.get(Math.ceil(tick));
+    const before = history.get(Math.floor(tick)) ?? after;
+    if (before === undefined || after === undefined) {
+      return { x: NaN, y: NaN };
+    }
+    const t = tick - Math.floor(tick);
+    return { x: before.x + (after.x - before.x) * t, y: before.y + (after.y - before.y) * t };
+  }
+
+  for (const lag of [0, 2, 5]) {
+    it(`свой снаряд при догоне 2 — на месте серверного до и после подтверждения, один; ${String(lag)} неподтверждённых`, () => {
+      const server = createRound(
+        MAP_INDEX,
+        [
+          { name: SETUPS[0].nickname, stats: DEFAULT_STATS },
+          { name: SETUPS[1].nickname, stats: DEFAULT_STATS, isBot: true },
+        ],
+        LEAD_RULES,
+      );
+      Object.assign(server.tanks[0], LANE_ME);
+      Object.assign(server.tanks[1], LANE_ENEMY);
+      const prediction = new Prediction(ME, MAP_INDEX, SETUPS, 0, LEAD_RULES);
+      prediction.applySnapshot(snapshotOf(server, 0), 0);
+      const history = new Map<number, { x: number; y: number }>();
+      const drawn: { id: number; tick: number; x: number; y: number }[] = [];
+      for (let tick = 1; tick <= TICKS + lag; tick++) {
+        if (tick <= TICKS) {
+          prediction.predict(tick === FIRE_SEQ ? FIRE : IDLE_ACTION);
+        }
+        const seq = tick - lag;
+        stepRound(server, [seq === FIRE_SEQ ? FIRE : IDLE_ACTION, IDLE_ACTION]);
+        const own = server.bullets.find((bullet) => bullet.owner === ME);
+        if (own !== undefined) {
+          history.set(server.tick, { x: own.x, y: own.y });
+        }
+        if (tick > TICKS) {
+          continue;
+        }
+        prediction.applySnapshot(snapshotOf(server, Math.max(0, seq)), tick * TICK_MS);
+        const mine = prediction.view(tick * TICK_MS + 1).bullets.filter((bullet) => bullet.owner === ME);
+        expect(mine.length).toBeLessThanOrEqual(1);
+        drawn.push(...mine);
+      }
+      expect(drawn.length).toBeGreaterThan(TICKS / 2);
+      expect(drawn.some((bullet) => bullet.id >= PREDICTED_BULLET_ID_BASE)).toBe(lag > 0);
+      expect(drawn.at(-1)?.id).toBeLessThan(PREDICTED_BULLET_ID_BASE);
+      for (const bullet of drawn) {
+        const truth = serverAt(history, bullet.tick);
+        expect(distance(bullet, truth)).toBeLessThan(1e-6);
+      }
+      const first = history.get(Math.min(...history.keys())) ?? { x: NaN, y: NaN };
+      expect(distance(first, LANE_ME) - MUZZLE_OFFSET).toBeCloseTo(3 * deriveStats(DEFAULT_STATS).bulletSpeed * DT, 6);
+    });
+  }
+});
+
+describe('дуэль: снаряд со скоростью танка', () => {
+  const RULES: RoundRules = { ...DEFAULT_RULES, shotInheritPercent: 100 };
+  // Танк уже едет, а снаряд ещё проходит над стеной у верхней полосы.
+  const FIRE_SEQ = WARMUP_SEQ + 2;
+  const TICKS = 50;
+  const GAS: Action = { ...IDLE_ACTION, throttle: 1 };
+  const GAS_FIRE: Action = { ...GAS, isFiring: true };
+
+  // Танк едет вниз по полосе, ствол смотрит вправо: выстрел — поперёк хода.
+  function actionAt(seq: number): Action {
+    if (seq <= 0) {
+      return IDLE_ACTION;
+    }
+    return seq === FIRE_SEQ ? GAS_FIRE : GAS;
+  }
+
+  function serverAt(history: ReadonlyMap<number, { x: number; y: number }>, tick: number): { x: number; y: number } {
+    const after = history.get(Math.ceil(tick));
+    const before = history.get(Math.floor(tick)) ?? after;
+    if (before === undefined || after === undefined) {
+      return { x: NaN, y: NaN };
+    }
+    const t = tick - Math.floor(tick);
+    return { x: before.x + (after.x - before.x) * t, y: before.y + (after.y - before.y) * t };
+  }
+
+  for (const lag of [0, 2, 5]) {
+    it(`свой выстрел на ходу — на месте серверного до и после подтверждения; ${String(lag)} неподтверждённых`, () => {
+      const server = createRound(
+        MAP_INDEX,
+        [
+          { name: SETUPS[0].nickname, stats: DEFAULT_STATS },
+          { name: SETUPS[1].nickname, stats: DEFAULT_STATS, isBot: true },
+        ],
+        RULES,
+      );
+      Object.assign(server.tanks[0], LANE_ME);
+      Object.assign(server.tanks[1], LANE_ENEMY);
+      const prediction = new Prediction(ME, MAP_INDEX, SETUPS, 0, RULES);
+      prediction.applySnapshot(snapshotOf(server, 0), 0);
+      const history = new Map<number, { x: number; y: number }>();
+      const drawn: { id: number; tick: number; x: number; y: number }[] = [];
+      for (let tick = 1; tick <= TICKS + lag; tick++) {
+        if (tick <= TICKS) {
+          prediction.predict(actionAt(tick));
+        }
+        const seq = tick - lag;
+        stepRound(server, [actionAt(seq), IDLE_ACTION]);
+        const own = server.bullets.find((bullet) => bullet.owner === ME);
+        if (own !== undefined) {
+          expect(own.vy).toBeGreaterThan(0);
+          history.set(server.tick, { x: own.x, y: own.y });
+        }
+        if (tick > TICKS) {
+          continue;
+        }
+        prediction.applySnapshot(snapshotOf(server, Math.max(0, seq)), tick * TICK_MS);
+        const mine = prediction.view(tick * TICK_MS + 1).bullets.filter((bullet) => bullet.owner === ME);
+        expect(mine.length).toBeLessThanOrEqual(1);
+        drawn.push(...mine);
+      }
+      expect(drawn.length).toBeGreaterThan(TICKS / 3);
+      for (const bullet of drawn) {
+        const truth = serverAt(history, bullet.tick);
+        expect(distance(bullet, truth)).toBeLessThan(1e-6);
+      }
+    });
+  }
+});
+
+describe('дуэль: попадание по своему танку по касанию', () => {
+  const STATS = deriveStats(DEFAULT_STATS);
+  const LAG = 4;
+  const TICKS = 90;
+  const ENEMY: Side = 1;
+
+  interface TouchFrame {
+    latestTick: number;
+    view: PictureView;
+    ownHits: SnapshotEvent[];
+  }
+
+  // wasPlayed — попадания по своему танку из снимков: сыграны ли уже касанием.
+  interface TouchRun {
+    frames: TouchFrame[];
+    hitTick: number | null;
+    wasPlayed: boolean[];
+    prediction: Prediction;
+  }
+
+  // Противник на верхней полосе стреляет один раз в свой стоящий танк; снимки несут события тика, сервер применяет
+  // свои команды на LAG тиков позже. disturb — вмешательство в раунд сервера перед шагом тика.
+  function enemyShot(disturb: (round: Round, tick: number) => void = (): void => undefined): TouchRun {
+    const server = laneRound();
+    server.tanks[ME].hp = STATS.maxHp;
+    const prediction = new Prediction(ME, MAP_INDEX, SETUPS, 0, DEFAULT_RULES);
+    prediction.applySnapshot(snapshotOf(server, 0), 0);
+    const frames: TouchFrame[] = [];
+    const wasPlayed: boolean[] = [];
+    let hitTick: number | null = null;
+    for (let tick = 1; tick <= TICKS; tick++) {
+      prediction.predict(IDLE_ACTION);
+      disturb(server, tick);
+      const events = stepRound(server, [IDLE_ACTION, tick === 1 ? FIRE : IDLE_ACTION]);
+      if (events.some((event) => event.type === 'hit' && event.tank === ME)) {
+        hitTick = server.tick;
+      }
+      const message = { ...snapshotOf(server, Math.max(0, tick - LAG)), events: events.map(toSnapshotEvent) };
+      prediction.applySnapshot(message, tick * TICK_MS);
+      for (const event of message.events.filter((candidate) => candidate.kind === 'hit' && candidate.side === ME)) {
+        wasPlayed.push(prediction.wasPlayedOnTouch(event));
+      }
+      for (const offset of [1, TICK_MS / 2]) {
+        const view = prediction.view(tick * TICK_MS + offset);
+        frames.push({ latestTick: server.tick, view, ownHits: prediction.takeOwnHits() });
+      }
+    }
+    return { frames, hitTick, wasPlayed, prediction };
+  }
+
+  function touchIndexOf(frames: readonly TouchFrame[]): number {
+    return frames.findIndex((frame) => frame.ownHits.length > 0);
+  }
+
+  function enemyBulletIn(frame: TouchFrame | undefined): boolean {
+    return frame?.view.bullets.some((bullet) => bullet.owner === ENEMY) === true;
+  }
+
+  it('попадание — в кадре, где снаряд пропал у своего танка, раньше снимка; урон противника; снимок не повторяет', () => {
+    const { frames, hitTick, wasPlayed, prediction } = enemyShot();
+    const index = touchIndexOf(frames);
+    const frame = frames[index];
+    expect(frames.flatMap((candidate) => candidate.ownHits)).toEqual([
+      expect.objectContaining({ kind: 'hit', side: ME, value: STATS.damage, flags: 0 }),
+    ]);
+    expect(enemyBulletIn(frames[index - 1])).toBe(true);
+    expect(enemyBulletIn(frame)).toBe(false);
+    expect(frame?.latestTick).toBe((hitTick ?? NaN) - LAG);
+    expect(frames[index - 1]?.view.tanks[ME].hp).toBe(STATS.maxHp);
+    for (const later of frames.slice(index)) {
+      expect(later.view.tanks[ME].hp).toBe(STATS.maxHp - STATS.damage);
+    }
+    expect(wasPlayed).toEqual([true]);
+    expect(prediction.ownHitCounts).toEqual({ played: 1, confirmed: 1, cancelled: 0, served: 1, doubles: 0 });
+  });
+
+  it('свой танк на сервере увели с линии — касание отменено через 2 тика, здоровье из снимка', () => {
+    const hitTick = enemyShot().hitTick ?? NaN;
+    const { frames, wasPlayed, prediction } = enemyShot((round, tick) => {
+      if (tick === hitTick - 2) {
+        round.tanks[ME].y -= 70;
+      }
+    });
+    expect(frames.flatMap((frame) => frame.ownHits)).toHaveLength(1);
+    expect(wasPlayed).toEqual([]);
+    expect(prediction.ownHitCounts).toEqual({ played: 1, confirmed: 0, cancelled: 1, served: 0, doubles: 0 });
+    const cancelIndex = frames.findIndex((frame) => frame.latestTick >= hitTick + 2);
+    expect(frames[cancelIndex - 1]?.view.tanks[ME].hp).toBe(STATS.maxHp - STATS.damage);
+    expect(frames[cancelIndex]?.view.tanks[ME].hp).toBe(STATS.maxHp);
+  });
+
+  it('раунд кончился до подтверждения — касание отменено, здоровье из снимка', () => {
+    const touchTick = (enemyShot().hitTick ?? NaN) - LAG;
+    const { frames, wasPlayed, prediction } = enemyShot((round, tick) => {
+      if (tick === touchTick + 1) {
+        round.isOver = true;
+      }
+    });
+    expect(frames.flatMap((frame) => frame.ownHits)).toHaveLength(1);
+    expect(wasPlayed).toEqual([]);
+    expect(prediction.ownHitCounts).toEqual({ played: 1, confirmed: 0, cancelled: 1, served: 0, doubles: 0 });
+    expect(frames.at(-1)?.view.tanks[ME].hp).toBe(STATS.maxHp);
+  });
+
+  it('поправка своего танка сдвинула касание на 3 тика — подтверждено, попадание одно', () => {
+    const hitTick = enemyShot().hitTick ?? NaN;
+    const step = STATS.bulletSpeed * DT;
+    const {
+      frames,
+      hitTick: lateTick,
+      wasPlayed,
+      prediction,
+    } = enemyShot((round, tick) => {
+      if (tick === hitTick - 2) {
+        round.tanks[ME].x -= 3 * step;
+      }
+    });
+    expect(lateTick).toBe(hitTick + 3);
+    expect(frames.flatMap((frame) => frame.ownHits)).toHaveLength(1);
+    expect(wasPlayed).toEqual([true]);
+    expect(prediction.ownHitCounts).toEqual({ played: 1, confirmed: 1, cancelled: 0, served: 1, doubles: 0 });
+  });
+
+  it('пачка снимков между кадрами, второй закончил раунд, — несыгранное касание не играется', () => {
+    const server = laneRound();
+    server.tanks[ME].hp = STATS.maxHp;
+    const prediction = new Prediction(ME, MAP_INDEX, SETUPS, 0, DEFAULT_RULES);
+    stepRound(server, [IDLE_ACTION, FIRE]);
+    prediction.applySnapshot(snapshotOf(server, 0), 0);
+    while (prediction.ownHitCounts.played === 0 && prediction.pendingCount < TICKS) {
+      prediction.predict(IDLE_ACTION);
+    }
+    stepRound(server, [IDLE_ACTION, IDLE_ACTION]);
+    prediction.applySnapshot(snapshotOf(server, 0), TICK_MS);
+    stepRound(server, [IDLE_ACTION, IDLE_ACTION]);
+    server.isOver = true;
+    prediction.applySnapshot(snapshotOf(server, 0), TICK_MS);
+    expect(prediction.takeOwnHits()).toEqual([]);
+    expect(prediction.ownHitCounts).toEqual({ played: 0, confirmed: 0, cancelled: 0, served: 0, doubles: 0 });
+    expect(prediction.view(2 * TICK_MS).tanks[ME].hp).toBe(STATS.maxHp);
+  });
+});
+
+describe('сглаживание дёрганой сети', () => {
+  const ENEMY: Side = 1;
+  const ENEMY_STEP = 4;
+  const FRAME_MS = 1000 / 60;
+  const BURST_MS = 200;
+  const WARMUP_MS = 2000;
+  const STATS = deriveStats(DEFAULT_STATS);
+  const FLIGHT_TICKS = 70;
+
+  function smoothPrediction(): Prediction {
+    return new Prediction(ME, MAP_INDEX, SETUPS, 0, DEFAULT_RULES, true);
+  }
+
+  // Противник едет вдоль x на ENEMY_STEP за тик; снимок тика k сеть отдаёт на ближайшей границе пачек.
+  function burstyEnemyFrames(prediction: Prediction, durationMs: number): number[] {
+    const round = laneRound();
+    const xs: number[] = [];
+    let nextTick = 1;
+    for (let now = 0; now <= durationMs; now += FRAME_MS) {
+      while (Math.ceil((nextTick * TICK_MS) / BURST_MS - 1e-9) * BURST_MS <= now) {
+        round.tick = nextTick;
+        round.tanks[ENEMY].x = 300 + ENEMY_STEP * nextTick;
+        prediction.applySnapshot(snapshotOf(round, 0), now);
+        nextTick++;
+      }
+      xs.push(prediction.view(now).tanks[ENEMY].x);
+    }
+    return xs;
+  }
+
+  it('пачки раз в 200 мс — противник едет в каждом кадре без прыжков; без сглаживания стоит и прыгает', () => {
+    const frameStep = (ENEMY_STEP * FRAME_MS) / TICK_MS;
+    const stepsAfterWarmup = (xs: number[]): number[] =>
+      xs
+        .slice(Math.ceil(WARMUP_MS / FRAME_MS))
+        .flatMap((x, index, rest) => (index === 0 ? [] : [x - (rest[index - 1] ?? x)]));
+    const smooth = smoothPrediction();
+    const smoothSteps = stepsAfterWarmup(burstyEnemyFrames(smooth, 5000));
+    expect(Math.min(...smoothSteps)).toBeGreaterThan(0);
+    expect(Math.max(...smoothSteps)).toBeLessThanOrEqual(1.5 * frameStep);
+    expect(smooth.interpolationTicks).toBeGreaterThan(6);
+    const plain = new Prediction(ME, MAP_INDEX, SETUPS, 0, DEFAULT_RULES);
+    const plainSteps = stepsAfterWarmup(burstyEnemyFrames(plain, 5000));
+    expect(plainSteps.filter((step) => step === 0).length).toBeGreaterThan(plainSteps.length / 4);
+    expect(Math.max(...plainSteps)).toBeGreaterThan(3 * frameStep);
+    expect(plain.interpolationTicks).toBe(2);
+  });
+
+  it('поправка своего танка: в миг снимка танк на прежнем месте, за 120 мс догоняет; точка касания — на нарисованном', () => {
+    const server = laneRound();
+    stepRound(server, [IDLE_ACTION, IDLE_ACTION]);
+    const prediction = smoothPrediction();
+    prediction.applySnapshot(snapshotOf(server, 0), 0);
+    expect(prediction.view(10).tanks[ME].x).toBe(LANE_ME.x);
+    stepRound(server, [IDLE_ACTION, IDLE_ACTION]);
+    server.tanks[ME].x += 30;
+    prediction.applySnapshot(snapshotOf(server, 0), 100);
+    expect(prediction.me.x).toBe(LANE_ME.x + 30);
+    const at = (now: number): { mine: number; clock: number | undefined; shift: number | undefined } => {
+      const view = prediction.view(now);
+      return { mine: view.tanks[ME].x, clock: view.clock.me?.x, shift: view.clock.ownShift?.x };
+    };
+    expect(at(100)).toEqual({ mine: LANE_ME.x, clock: LANE_ME.x + 30, shift: -30 });
+    expect(at(160).mine).toBeCloseTo(LANE_ME.x + 15, 9);
+    expect(at(220).mine).toBeCloseTo(LANE_ME.x + 30, 9);
+    server.isOver = true;
+    prediction.applySnapshot(snapshotOf(server, 0), 230);
+    expect(prediction.view(240).clock.ownShift).toEqual({ x: 0, y: 0 });
+  });
+
+  it('попадание по касанию в остатке смещения — в точке на нарисованном танке', () => {
+    const server = laneRound();
+    server.tanks[ME].hp = STATS.maxHp;
+    const prediction = smoothPrediction();
+    stepRound(server, [IDLE_ACTION, FIRE]);
+    prediction.applySnapshot(snapshotOf(server, 0), 0);
+    server.tanks[ME].y += 6;
+    stepRound(server, [IDLE_ACTION, IDLE_ACTION]);
+    prediction.applySnapshot(snapshotOf(server, 0), TICK_MS);
+    while (prediction.ownHitCounts.played === 0 && prediction.pendingCount < FLIGHT_TICKS) {
+      prediction.predict(IDLE_ACTION);
+    }
+    const view = prediction.view(TICK_MS + 1);
+    const [hit] = prediction.takeOwnHits();
+    const drawn = view.tanks[ME];
+    expect(Math.abs(view.clock.ownShift?.y ?? 0)).toBeGreaterThan(1);
+    expect(Math.hypot((hit?.x ?? NaN) - drawn.x, (hit?.y ?? NaN) - drawn.y)).toBeLessThan(TANK_RADIUS + BULLET_RADIUS);
+  });
+});
+
+describe('дуэль: свой выстрел и свой снаряд', () => {
+  function started(): { server: Round; prediction: Prediction } {
+    const server = laneRound();
+    stepRound(server, [IDLE_ACTION, IDLE_ACTION]);
+    const prediction = new Prediction(ME, MAP_INDEX, SETUPS, 0, DEFAULT_RULES);
+    prediction.applySnapshot(snapshotOf(server, 0), 0);
+    return { server, prediction };
+  }
+
+  // Шаг сервера со своей командой и снимок с его событиями; результат — выстрелы своей стороны в снимке.
+  function serve(server: Round, prediction: Prediction, action: Action, ackSeq: number): SnapshotEvent[] {
+    const events = stepRound(server, [action, IDLE_ACTION]).map(toSnapshotEvent);
+    const message = { ...snapshotOf(server, ackSeq), events };
+    prediction.applySnapshot(message, server.tick * TICK_MS);
+    return message.events.filter((event) => event.kind === 'shot' && event.side === ME);
+  }
+
+  it('выстрел — в шаге ввода у дула, один раз; снимок с выстрелом его не играет; без выстрела — неподтверждённый', () => {
+    const { server, prediction } = started();
+    prediction.predict(FIRE);
+    const shots = prediction.takeOwnShots();
+    expect(shots).toHaveLength(1);
+    expect(shots[0]).toMatchObject({ kind: 'shot', side: ME, y: LANE_ME.y, dx: 1 });
+    expect(shots[0]?.x).toBeCloseTo(LANE_ME.x + MUZZLE_OFFSET, 9);
+    prediction.predict(IDLE_ACTION);
+    prediction.predict(IDLE_ACTION);
+    expect(serve(server, prediction, IDLE_ACTION, 0)).toEqual([]);
+    expect(prediction.takeOwnShots()).toEqual([]);
+    const served = serve(server, prediction, FIRE, 1);
+    expect(served).toHaveLength(1);
+    expect(served.every((event) => prediction.wasShotPlayed(event))).toBe(true);
+    expect(prediction.ownShotCounts).toEqual({ played: 1, confirmed: 1, unconfirmed: 0 });
+
+    const lost = started();
+    lost.prediction.predict(FIRE);
+    lost.prediction.takeOwnShots();
+    for (let ackSeq = 1; ackSeq <= 16; ackSeq++) {
+      lost.prediction.predict(IDLE_ACTION);
+      expect(serve(lost.server, lost.prediction, IDLE_ACTION, ackSeq)).toEqual([]);
+    }
+    expect(lost.prediction.takeOwnShots()).toEqual([]);
+    expect(lost.prediction.ownShotCounts).toEqual({ played: 1, confirmed: 0, unconfirmed: 1 });
+  });
+
+  it('сервер подбил свой танк раньше сыгранного выстрела — выстрел сразу неподтверждённый', () => {
+    const { server, prediction } = started();
+    prediction.predict(FIRE);
+    expect(prediction.takeOwnShots()).toHaveLength(1);
+    server.tanks[ME].isAlive = false;
+    server.tanks[ME].hp = 0;
+    expect(serve(server, prediction, IDLE_ACTION, 1)).toEqual([]);
+    expect(prediction.ownShotCounts).toEqual({ played: 1, confirmed: 0, unconfirmed: 1 });
+  });
+
+  it('свой снаряд вдали от противника — в своём тике; у зоны противника — в его тике или сходит к нему', () => {
+    const fireSeq = WARMUP_SEQ + 1;
+    const { frames } = playDuel(
+      4,
+      WARMUP_SEQ + 70,
+      (seq) => (seq === fireSeq ? FIRE : IDLE_ACTION),
+      () => IDLE_ACTION,
+    );
+    const bulletSpeed = deriveStats(DEFAULT_STATS).bulletSpeed;
+    let farFrames = 0;
+    let nearFrames = 0;
+    let previous: { tick: number; othersTick: number } | null = null;
+    for (const { view } of frames) {
+      const bullet = view.bullets.find((candidate) => candidate.owner === ME);
+      const enemy = view.tanks[1];
+      if (bullet === undefined) {
+        previous = null;
+        continue;
+      }
+      const gap = view.clock.myTick - view.clock.othersTick;
+      const window = 3 * gap * (bulletSpeed + 220) * DT + PICTURE_NEAR;
+      const away = distance(bullet, enemy);
+      if (away > window + bulletSpeed * DT) {
+        farFrames++;
+        expect(bullet.tick).toBe(view.clock.myTick);
+      }
+      if (away <= PICTURE_NEAR - bulletSpeed * DT && previous !== null) {
+        nearFrames++;
+        const floor = previous.tick + 0.5 * (view.clock.othersTick - previous.othersTick);
+        expect(bullet.tick).toBeLessThanOrEqual(Math.max(view.clock.othersTick, floor) + 1e-9);
+      }
+      previous = { tick: bullet.tick, othersTick: view.clock.othersTick };
+    }
+    expect(farFrames).toBeGreaterThan(0);
+    expect(nearFrames).toBeGreaterThan(0);
+  });
 });

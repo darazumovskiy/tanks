@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_STATS } from '../engine/index.js';
-import { decode, encode, isClientMessage, NO_ID, quantizeAction, rulesFromByte, rulesToByte } from './codec.js';
+import { DEFAULT_RULES, DEFAULT_STATS, SHOT_INHERIT_MAX_PERCENT, SHOT_LEAD_MAX_TICKS } from '../engine/index.js';
+import { decode, encode, formatJournalRules, isClientMessage, NO_ID, quantizeAction, rulesFromBytes } from './codec.js';
 import { ffaRoomCode, ffaSizeOf, isFfaRoomCode } from './ffaRoom.js';
 import {
   ErrorCode,
@@ -51,7 +51,7 @@ const roundStart: RoundStartMessage = {
   mapIndex: 3,
   countdownTicks: 90,
   score: [3, 4],
-  rules: { wallSlidePercent: 0 },
+  rules: { wallSlidePercent: 0, shotLeadTicks: 0, shotInheritPercent: 0 },
   tanks: [
     { nickname: 'A', stats: { armor: 3, engine: 3, gun: 2, reload: 2 } },
     { nickname: 'B', stats: { armor: 5, engine: 5, gun: 0, reload: 0 } },
@@ -121,8 +121,19 @@ const samples: Message[] = [
     token: 'tok',
     gameId: 'K7MF',
     size: 30,
-    rules: { wallSlidePercent: 30 },
+    rules: { wallSlidePercent: 30, shotLeadTicks: 2, shotInheritPercent: 50 },
     inviteMiss: FfaInviteMiss.Gone,
+    hasNetSmoothing: false,
+  },
+  {
+    type: MessageType.FfaWelcome,
+    playerId: 1,
+    token: '',
+    gameId: 'K7MF',
+    size: 10,
+    rules: { wallSlidePercent: 0, shotLeadTicks: 0, shotInheritPercent: SHOT_INHERIT_MAX_PERCENT },
+    inviteMiss: FfaInviteMiss.None,
+    hasNetSmoothing: true,
   },
   {
     type: MessageType.FfaState,
@@ -172,7 +183,8 @@ const samples: Message[] = [
   { type: MessageType.Input, seq: 4294967295, action: { throttle: 1, turn: -1, turretTurn: 0, isFiring: true } },
   { type: MessageType.Ping, clientTime: 1790899403123.456 },
   { type: MessageType.Leave },
-  { type: MessageType.Welcome, side: 1, roomCode: 'xyz' },
+  { type: MessageType.Welcome, side: 1, roomCode: 'xyz', hasNetSmoothing: false },
+  { type: MessageType.Welcome, side: 0, roomCode: 'abc', hasNetSmoothing: true },
   {
     type: MessageType.RoomState,
     slots: [
@@ -181,8 +193,11 @@ const samples: Message[] = [
     ],
   },
   roundStart,
-  { ...roundStart, rules: { wallSlidePercent: 50 } },
-  { ...roundStart, rules: { wallSlidePercent: 100 } },
+  { ...roundStart, rules: { wallSlidePercent: 50, shotLeadTicks: 2, shotInheritPercent: 50 } },
+  {
+    ...roundStart,
+    rules: { wallSlidePercent: 100, shotLeadTicks: SHOT_LEAD_MAX_TICKS, shotInheritPercent: SHOT_INHERIT_MAX_PERCENT },
+  },
   snapshot,
   { type: MessageType.Pong, clientTime: 12.5, serverTick: 999 },
   { type: MessageType.Error, code: ErrorCode.RoomFull, text: 'комната занята' },
@@ -223,12 +238,27 @@ describe('кодек протокола', () => {
     );
   });
 
-  it('правила раунда — байт процента скольжения, лишнее срезается до 100', () => {
-    expect(rulesToByte({ wallSlidePercent: 0 })).toBe(0);
-    expect(rulesToByte({ wallSlidePercent: 50 })).toBe(50);
-    expect(rulesFromByte(0)).toEqual({ wallSlidePercent: 0 });
-    expect(rulesFromByte(100)).toEqual({ wallSlidePercent: 100 });
-    expect(rulesFromByte(0xfe)).toEqual({ wallSlidePercent: 100 });
+  it('правила — байты скольжения, догона и наследования, лишнее срезается до предела; в журнале — rules, lead и inherit', () => {
+    expect(rulesFromBytes(0, 0, 0)).toEqual({ wallSlidePercent: 0, shotLeadTicks: 0, shotInheritPercent: 0 });
+    expect(rulesFromBytes(100, 2, 50)).toEqual({ wallSlidePercent: 100, shotLeadTicks: 2, shotInheritPercent: 50 });
+    expect(rulesFromBytes(0xfe, 0xff, 0xff)).toEqual({
+      wallSlidePercent: 100,
+      shotLeadTicks: SHOT_LEAD_MAX_TICKS,
+      shotInheritPercent: SHOT_INHERIT_MAX_PERCENT,
+    });
+    const bytes = encode({ ...roundStart, rules: { wallSlidePercent: 0, shotLeadTicks: 0, shotInheritPercent: 0 } });
+    const rulesAt = bytes.length - 2 * (1 + 1 + 4) - 3;
+    bytes[rulesAt] = 0xfe;
+    bytes[rulesAt + 1] = 0xff;
+    bytes[rulesAt + 2] = 0xff;
+    expect((decode(bytes) as RoundStartMessage).rules).toEqual({
+      wallSlidePercent: 100,
+      shotLeadTicks: SHOT_LEAD_MAX_TICKS,
+      shotInheritPercent: SHOT_INHERIT_MAX_PERCENT,
+    });
+    expect(formatJournalRules({ wallSlidePercent: 30, shotLeadTicks: 2, shotInheritPercent: 100 })).toBe(
+      'rules=30 lead=2 inherit=100',
+    );
   });
 
   it('квантует оси в 1/127 и сохраняет знак', () => {
@@ -261,7 +291,7 @@ describe('кодек протокола', () => {
   });
 
   it('отвергает испорченные значения полей', () => {
-    const welcome = encode({ type: MessageType.Welcome, side: 0, roomCode: 'x' });
+    const welcome = encode({ type: MessageType.Welcome, side: 0, roomCode: 'x', hasNetSmoothing: false });
     welcome[1] = 7;
     expect(() => decode(welcome)).toThrow(RangeError);
 
@@ -310,13 +340,14 @@ describe('кодек протокола', () => {
       token: '',
       gameId: '',
       size: 10,
-      rules: { wallSlidePercent: 0 },
+      rules: { ...DEFAULT_RULES },
       inviteMiss: FfaInviteMiss.None,
+      hasNetSmoothing: false,
     });
     const badMiss = welcome.slice();
     welcome[1 + 2 + 1 + 1] = 11;
     expect(() => decode(welcome)).toThrow(RangeError);
-    badMiss[1 + 2 + 1 + 1 + 1 + 1] = 3;
+    badMiss[1 + 2 + 1 + 1 + 1 + 3] = 3;
     expect(() => decode(badMiss)).toThrow(RangeError);
 
     const selfOffset = 1 + 4 + 4 + 4 + 1;

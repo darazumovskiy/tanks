@@ -1,12 +1,12 @@
 # Правила раунда и скольжение вдоль стен
 
-Правила раунда — набор настраиваемых правил движка, одинаковый на сервере, у ботов и в предсказании клиента. Первое правило — скольжение вдоль стен, процент 0–100, задаётся серверной ручкой `WALL_SLIDE`. Код — `packages/shared/src/engine/round.ts` (`RoundRules`, `DEFAULT_RULES`, `resolveTankWalls`), `packages/shared/src/engine/constants.ts` (константы стен), `packages/shared/src/protocol/codec.ts` (`rulesToByte`, `rulesFromByte`).
+Правила раунда — набор настраиваемых правил движка, одинаковый на сервере, у ботов и в предсказании клиента. Правил три: скольжение вдоль стен, процент 0–100, задаётся серверной ручкой `WALL_SLIDE` (этот документ); догон снаряда, тиков 0–6, — `SHOT_LEAD_TICKS` ([shot-lead.md](shot-lead.md)); снаряд со скоростью танка, процент 0–100, — `SHOT_INHERIT_PERCENT` ([shot-inherit.md](shot-inherit.md)). Код — `packages/shared/src/engine/round.ts` (`RoundRules`, `DEFAULT_RULES`, `resolveTankWalls`), `packages/shared/src/engine/constants.ts` (константы стен), `packages/shared/src/protocol/codec.ts` (`rulesFromBytes`, `formatJournalRules`).
 
 ## Правила как механизм
 
-`RoundRules { wallSlidePercent: number }` — целое 0–100, часть состояния раунда: `createRound(mapIndex, setups, rules)` кладёт копию в `round.rules`, `stepRound` читает их оттуда. Умолчание движка `DEFAULT_RULES` — 0; с ним движок повторяет оригинал `tank-arena` бит в бит, эталон детерминизма не перегенерируется. Умолчание сервера — 50 (`DEFAULT_WALL_SLIDE_PERCENT` в `main.ts`): так едут все комнаты и боты на бою, если переменная не задана.
+`RoundRules { wallSlidePercent: number; shotLeadTicks: number; shotInheritPercent: number }` — целые, часть состояния раунда: `createRound(mapIndex, setups, rules)` кладёт копию в `round.rules`, `stepRound` читает их оттуда. Умолчание движка `DEFAULT_RULES` — все 0; с ним движок повторяет оригинал `tank-arena` бит в бит, эталон детерминизма не перегенерируется. Умолчание сервера — 50 (`DEFAULT_WALL_SLIDE_PERCENT` в `main.ts`): так едут все комнаты и боты на бою, если переменная не задана.
 
-Источник правил — сервер: переменная окружения `WALL_SLIDE` в `main.ts` (целое 0–100, иначе процесс не стартует) → `AppOptions.rules` → `RoomManager` → `Room`; комната создаёт каждый раунд с этими правилами и кладёт их в `RoundStart.rules`. Клиент создаёт раунд предсказания с правилами из `RoundStart` — иначе предсказание у стен расходилось бы с сервером на каждом тике касания. Бот (`bots/arenaBot.ts`) создаёт зеркало раунда с теми же правилами. Стенд «бот против бота» (`ladder.test.ts`) — правила по умолчанию движка.
+Источник правил — сервер: переменная окружения `WALL_SLIDE` в `main.ts` (целое 0–100, иначе процесс не стартует) → `AppOptions.rules` → `RoomManager` → `Room`; комната создаёт каждый раунд с этими правилами и кладёт их в `RoundStart.rules`. Клиент создаёт раунд предсказания с правилами из `RoundStart` — иначе предсказание у стен расходилось бы с сервером на каждом тике касания. Бот (`bots/arenaBot.ts`) создаёт зеркало раунда с теми же правилами; долю скорости танка у снаряда мозг видит в `BotView.shotInheritPercent`. Стенд «бот против бота» (`ladder.test.ts`) — правила по умолчанию движка.
 
 ## Скольжение вдоль стен
 
@@ -32,11 +32,11 @@
 
 ## Протокол
 
-`PROTOCOL_VERSION = 5`. `RoundStart` после `score` несёт `rules` — один байт, процент скольжения 0–100 (`rulesToByte`, `rulesFromByte`; значение выше 100 срезается до 100). Клиент версии 4 получает `Error BadProtocolVersion` и просьбу обновить страницу.
+`RoundStart` после `score` несёт `rules` — три байта: процент скольжения 0–100, тиков догона и процент наследования скорости танка (`rulesFromBytes`; значение выше предела срезается до предела). Версия протокола и устаревший клиент — [protocol.md](protocol.md).
 
 ## Журнал
 
-Строка `game start room= p0= p1= rules=<процент>` — тот же байт, что в `RoundStart`. Анализатор `packages/analysis` незнакомые поля пропускает.
+Строка `game start room= p0= p1= rules=<процент> lead=<тиков догона> inherit=<процент наследования>` — те же правила, что в `RoundStart`. Анализатор `packages/analysis` читает `rules` и `lead`, `inherit` пропускает.
 
 ## Ручка на бою
 
@@ -48,7 +48,7 @@
 |---|---|
 | `shared/src/engine/round.ts` | `RoundRules`, `DEFAULT_RULES`, `Round.rules`, `createRound(…, rules)`, `resolveTankWalls` с углом встречи |
 | `shared/src/engine/constants.ts` | `WALL_HIT_SPEED_FACTOR`, `WALL_SLIDE_MAX_PERCENT`, `WALL_BUMP_MIN_DROP`, `WALL_BUMP_MIN_SPEED` |
-| `shared/src/protocol/messages.ts`, `codec.ts` | `RoundStart.rules`, `rulesToByte`, `rulesFromByte`, `PROTOCOL_VERSION = 5` |
+| `shared/src/protocol/messages.ts`, `codec.ts` | `RoundStart.rules`, `rulesFromBytes`, `formatJournalRules` |
 | `server/src/main.ts`, `app.ts`, `roomManager.ts`, `room.ts` | `WALL_SLIDE` → `AppOptions.rules` → правила комнат → раунд, `RoundStart`, строка `game start` |
 | `server/src/bots/arenaBot.ts` | зеркало раунда бота с правилами из `RoundStart` |
 | `client/src/prediction.ts`, `game.ts` | раунд предсказания с правилами из `RoundStart`; `debugState().rules` |
@@ -80,15 +80,15 @@
 | Сценарий | Ожидание |
 |---|---|
 | `RoundStart` с `rules.wallSlidePercent` 0, 50 и 100 | туда-обратно без потерь |
-| `rulesToByte` / `rulesFromByte` | байт ↔ процент; 254 читается как 100 |
+| `rulesFromBytes` | 254 читается как 100 |
 
 Сервер через сокет (`server/test/app.test.ts`, `duel.test.ts`; покрытие `packages/server/src` 100 %):
 
 | Сценарий | Ожидание |
 |---|---|
-| Вход без правил | `RoundStart.rules.wallSlidePercent = 0`; в журнале `game start … rules=0` |
-| `createApp({ rules: { wallSlidePercent: 50 }, logDir })`, вход | `RoundStart.rules.wallSlidePercent = 50`; `game start … rules=50` |
-| Клиент с версией протокола 4 | `Error BadProtocolVersion` |
+| Вход без правил | `RoundStart.rules.wallSlidePercent = 0`; в журнале `game start … rules=0 lead=0 inherit=0` |
+| `createApp({ rules: { …, wallSlidePercent: 50 }, logDir })`, вход | `RoundStart.rules.wallSlidePercent = 50`; `game start … rules=50 lead=0 inherit=0` |
+| Клиент с чужой версией протокола | `Error BadProtocolVersion` |
 | Скриптовый игрок при 50 %: на верхнюю полосу, затем курс ≈ 26° к верхнему краю, газ в пол | через 30 тиков у края скорость ≥ 100 (равновесие ≈ 115); событий `bump` во время скольжения нет |
 
 Клиент — сквозной прогон (`client/test/e2e/wallSlide.spec.ts`, свой процесс сервера с `WALL_SLIDE=50`):

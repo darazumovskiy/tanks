@@ -5,6 +5,7 @@ import type { Overlay } from '../render/renderer.js';
 import { StampDecals } from '../render/stampDecals.js';
 import type { WatchHudInfo } from '../render/watchRenderer.js';
 import { Sfx } from '../sfx.js';
+import { SOUND_STORAGE_KEY, SoundSetting } from '../soundSetting.js';
 import { installFakeAudio, type FakeAudio } from '../testing/fakeAudio.js';
 import { WATCH_STYLE } from '../render/watchStyle.js';
 import { MAX_STEPS_PER_FRAME } from './stepClock.js';
@@ -44,8 +45,13 @@ describe('экран боя ботов', () => {
   let drawn: Drawn[];
   let game: WatchGame;
   let audio: FakeAudio;
+  let sound: SoundSetting;
 
   async function mount(): Promise<void> {
+    sound = new SoundSetting({
+      getItem: (key) => stored.get(key) ?? null,
+      setItem: (key, value) => stored.set(key, value),
+    });
     document.body.innerHTML = `
       <div id="result"></div>
       <div id="notice"></div>
@@ -82,7 +88,7 @@ describe('экран боя ботов', () => {
             () => '#ffffff',
             (id) => names()[id === 0 ? 0 : 1],
           ),
-        createSfx: () => new Sfx(() => isHidden),
+        createSfx: () => new Sfx(() => isHidden, sound),
         now: () => clock,
         requestFrame: (callback) => {
           pendingFrame = callback;
@@ -90,6 +96,7 @@ describe('экран боя ботов', () => {
         isHidden: () => isHidden,
         nextSeed: () => ++seeds,
       },
+      sound,
     );
   }
 
@@ -414,15 +421,26 @@ describe('экран боя ботов', () => {
     expect(outcomeText({ winner: null, isByTime: false }, names).note).toBe('Подбили друг друга');
   });
 
-  it('звук: кнопка и M выключают и включают', async () => {
+  it('звук: кнопка и M выключают и включают звук устройства, кнопка следует и за клавишей', async () => {
     await mount();
-    const sound = element('sound', HTMLButtonElement);
-    sound.click();
+    const button = element('sound', HTMLButtonElement);
+    button.dispatchEvent(new PointerEvent('pointerdown', { button: 0 }));
     expect(game.debugState().isMuted).toBe(true);
-    expect(sound.classList.contains('is-muted')).toBe(true);
-    expect(sound.getAttribute('aria-label')).toBe('Включить звук');
+    expect(stored.get(SOUND_STORAGE_KEY)).toBe('off');
+    expect(button.classList.contains('is-muted')).toBe(true);
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    expect(button.getAttribute('aria-label')).toBe('Включить звук');
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM' }));
     expect(game.debugState().isMuted).toBe(false);
-    expect(sound.getAttribute('aria-label')).toBe('Выключить звук');
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+    expect(button.getAttribute('aria-label')).toBe('Выключить звук');
+  });
+
+  it('звук, выключенный на другом экране, — кнопка сразу «выключено», бой молчит', async () => {
+    stored.set(SOUND_STORAGE_KEY, 'off');
+    await mount();
+    const button = element('sound', HTMLButtonElement);
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    expect(game.debugState().isMuted).toBe(true);
   });
 });

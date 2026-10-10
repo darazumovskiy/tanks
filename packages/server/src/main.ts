@@ -1,4 +1,4 @@
-import { WALL_SLIDE_MAX_PERCENT } from '@tanks/shared/engine';
+import { DEFAULT_RULES, WALL_SLIDE_MAX_PERCENT } from '@tanks/shared/engine';
 import { createApp } from './app.js';
 
 const DEFAULT_WALL_SLIDE_PERCENT = 50;
@@ -28,8 +28,8 @@ const app = createApp({
   ...(apkPath === undefined ? {} : { apkPath }),
   ...(logDir === undefined ? {} : { logDir }),
   ...(geoDir === undefined ? {} : { geoDir }),
-  rules: { wallSlidePercent },
-  ffaEnv: process.env,
+  rules: { ...DEFAULT_RULES, wallSlidePercent },
+  env: process.env,
 });
 
 const boundPort = await app.listen(port, host);

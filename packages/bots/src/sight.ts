@@ -1,4 +1,13 @@
-import { ARENA, BULLET_LIFETIME, BULLET_RADIUS, TANK_RADIUS, type Point, type Wall } from '@tanks/shared/engine';
+import {
+  ARENA,
+  BULLET_LIFETIME,
+  BULLET_RADIUS,
+  isCarried,
+  shotFlight,
+  TANK_RADIUS,
+  type Point,
+  type Wall,
+} from '@tanks/shared/engine';
 
 // Обратная пуля считается опасной, если второй отрезок проходит ближе этого к центру танка.
 const RETURN_MARGIN = TANK_RADIUS + BULLET_RADIUS + 15;
@@ -95,17 +104,18 @@ function castRay(walls: Wall[], x: number, y: number, dirX: number, dirY: number
 }
 
 // Выстрел, который явно пройдёт мимо цели, а после одного отскока вернётся в стрелка. Прицельные выстрелы не
-// подавляются: пуля, идущая в цель, до стены обычно не долетает.
+// подавляются: пуля, идущая в цель, до стены обычно не долетает. Пуля со сносом carry летит по стволу со сносом
+// и возвращается туда, куда стрелок доедет со скоростью сноса: обратный путь сдвигается на −carry · t.
 export function isReturningShot(
   walls: Wall[],
   shooter: Point,
   muzzle: Point,
   turret: number,
   bulletSpeed: number,
+  carry: Readonly<Point>,
   target: Point,
 ): boolean {
-  const dirX = Math.cos(turret);
-  const dirY = Math.sin(turret);
+  const { dirX, dirY, speed } = shotFlight(turret, bulletSpeed, carry);
   const first = castRay(walls, muzzle.x, muzzle.y, dirX, dirY);
   if (distanceToSegment(target, muzzle.x, muzzle.y, first.x, first.y) < ON_TARGET_MARGIN) {
     return false;
@@ -113,10 +123,23 @@ export function isReturningShot(
   const dot = dirX * first.normalX + dirY * first.normalY;
   const backX = dirX - 2 * dot * first.normalX;
   const backY = dirY - 2 * dot * first.normalY;
-  const remaining = Math.max(0, BULLET_LIFETIME * bulletSpeed - first.distance);
+  const remaining = Math.max(0, BULLET_LIFETIME * speed - first.distance);
   const second = castRay(walls, first.x, first.y, backX, backY);
   const length = Math.min(remaining, second.distance);
+  const endX = first.x + backX * length;
+  const endY = first.y + backY * length;
+  if (!isCarried(carry)) {
+    return distanceToSegment(shooter, first.x, first.y, endX, endY) < RETURN_MARGIN;
+  }
+  const bounceTime = first.distance / speed;
+  const endTime = bounceTime + length / speed;
   return (
-    distanceToSegment(shooter, first.x, first.y, first.x + backX * length, first.y + backY * length) < RETURN_MARGIN
+    distanceToSegment(
+      shooter,
+      first.x - carry.x * bounceTime,
+      first.y - carry.y * bounceTime,
+      endX - carry.x * endTime,
+      endY - carry.y * endTime,
+    ) < RETURN_MARGIN
   );
 }

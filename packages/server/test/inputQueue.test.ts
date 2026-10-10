@@ -11,7 +11,15 @@ import { decode, FfaPhase, MessageType, type FfaSnapshotMessage, type SnapshotMe
 import { createApp, type App } from '../src/app.js';
 import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaOptions } from '../src/ffaGame.js';
 import { NO_LOG } from '../src/gameLog.js';
-import { INPUT_BACKLOG_MIN, INPUT_BACKLOG_TICKS, INPUT_QUEUE_LIMIT, INPUT_SPARE_TICKS } from '../src/inputs.js';
+import {
+  INPUT_BACKLOG_MIN,
+  INPUT_BACKLOG_TICKS,
+  INPUT_BURST_CALM_TICKS,
+  INPUT_BURST_SIZE,
+  INPUT_QUEUE_BURST_LIMIT,
+  INPUT_QUEUE_LIMIT,
+  INPUT_SPARE_TICKS,
+} from '../src/inputs.js';
 import type { DropReason } from '../src/metrics.js';
 import { Room, type Seat } from '../src/room.js';
 import { TestClient } from './client.js';
@@ -189,14 +197,16 @@ class ManualDuel {
   readonly spareFlags: boolean[] = [];
   private lastSeq = 0;
   private ackSeq = 0;
-  private readonly room = new Room('manual', FAST_ROOM, NO_LOG, {
-    countDroppedInput: (reason) => {
-      this.drops.push(reason);
-    },
-  });
+  private readonly room: Room;
   private readonly seat: Seat;
 
-  constructor() {
+  constructor(hasNetSmoothing = false) {
+    const dropCounter = {
+      countDroppedInput: (reason: DropReason): void => {
+        this.drops.push(reason);
+      },
+    };
+    this.room = new Room('manual', FAST_ROOM, NO_LOG, dropCounter, DEFAULT_RULES, hasNetSmoothing);
     this.seat = this.room.join(
       0,
       {
@@ -333,6 +343,133 @@ describe('очередь команд: слив на ручном тике', () 
     }
     expect(acks).toEqual([batchStart, batchStart + 1, batchStart + 2]);
     expect(drops).toEqual([]);
+  });
+});
+
+// Пачки ночной сети: BURST команд разом, затем BURST тиков без команд — очередь успевает опустеть.
+const BURST = 5;
+const BURSTS = 10;
+
+interface ManualTick {
+  sendIdle(count: number): void;
+  run(ticks: number, perTick: number): unknown;
+}
+
+function sendBursts(target: ManualTick): void {
+  for (let i = 0; i < BURSTS; i++) {
+    target.sendIdle(BURST);
+    target.run(BURST, 0);
+  }
+}
+
+// Общий бой без сокета на ручном тике: шаги до боя, затем команды одного игрока между тиками.
+class ManualFfa {
+  readonly drops: DropReason[] = [];
+  private lastSeq = 0;
+  private readonly game: FfaGame;
+  private readonly seat: ReturnType<FfaGame['join']>;
+
+  constructor(hasNetSmoothing: boolean) {
+    const dropCounter = {
+      countDroppedInput: (reason: DropReason): void => {
+        this.drops.push(reason);
+      },
+    };
+    this.game = new FfaGame(10, FAST_FFA, NO_LOG, dropCounter, DEFAULT_RULES, hasNetSmoothing);
+    const seen: { phase: FfaPhase } = { phase: FfaPhase.Lobby };
+    const connection = {
+      send: (bytes: Uint8Array): void => {
+        const message = decode(bytes);
+        if (message.type === MessageType.FfaState) {
+          seen.phase = message.phase;
+        }
+      },
+      close: (): void => undefined,
+    };
+    this.seat = this.game.join(connection, 'А', DEFAULT_STATS, false);
+    this.game.join({ ...SILENT_CONNECTION, close: () => undefined }, 'Б', DEFAULT_STATS, false);
+    while (seen.phase !== FfaPhase.Fight) {
+      this.game.step();
+    }
+  }
+
+  sendIdle(count: number): void {
+    for (let i = 0; i < count; i++) {
+      this.lastSeq++;
+      this.seat.input(this.lastSeq, IDLE_ACTION);
+    }
+  }
+
+  run(ticks: number): void {
+    for (let i = 0; i < ticks; i++) {
+      this.game.step();
+    }
+  }
+}
+
+describe('очередь команд: сглаживание дёрганой сети', () => {
+  it('без сглаживания пачки по 5 после пауз теряют команды', () => {
+    const duel = new ManualDuel();
+    sendBursts(duel);
+    expect(duel.drops).toEqual(Array<DropReason>(BURSTS * (BURST - INPUT_QUEUE_LIMIT)).fill('overflow'));
+  });
+
+  it('дуэль: пачки по 5 не теряются; к непустой очереди первая теряет одну команду', () => {
+    const duel = new ManualDuel(true);
+    duel.sendIdle(2);
+    duel.run(1, 0);
+    sendBursts(duel);
+    expect(duel.drops).toEqual(['overflow']);
+    expect(duel.acked.has(duel.sent)).toBe(true);
+  });
+
+  it('общий бой: пачки по 5 не теряются', () => {
+    const plain = new ManualFfa(false);
+    sendBursts(plain);
+    expect(plain.drops.length).toBeGreaterThan(0);
+    const smooth = new ManualFfa(true);
+    sendBursts(smooth);
+    expect(smooth.drops).toEqual([]);
+  });
+
+  it('ровная сеть после пачек: задержка не копится, предел снова 3', () => {
+    const duel = new ManualDuel(true);
+    sendBursts(duel);
+    duel.sendIdle(1);
+    const calm = INPUT_BURST_CALM_TICKS + 5;
+    expect(duel.run(calm, 1)).toEqual(Array<number>(calm).fill(0));
+    expect(duel.drops).toEqual([]);
+    // Три команды к очереди из одной: при пределе 6 поместились бы.
+    duel.run(1, 2);
+    duel.run(1, 0);
+    duel.sendIdle(INPUT_QUEUE_LIMIT);
+    expect(duel.drops).toEqual(['overflow']);
+  });
+
+  it('пачка из 6 к пустой очереди не теряется; запас сливается по одной за окно, без выброса разом', () => {
+    const duel = new ManualDuel(true);
+    duel.sendIdle(INPUT_QUEUE_BURST_LIMIT);
+    const lags = duel.run(5 * (INPUT_BACKLOG_TICKS + 1), 1);
+    expect(duel.drops.every((reason) => reason === 'backlog')).toBe(true);
+    expect(duel.drops.length).toBeGreaterThan(0);
+    for (let i = 1; i < lags.length; i++) {
+      expect((lags[i - 1] ?? NaN) - (lags[i] ?? NaN)).toBeLessThanOrEqual(1);
+    }
+    expect(lags.at(-1)).toBeLessThan(INPUT_BACKLOG_MIN);
+  });
+
+  it('пачка больше предела теряет лишнее', () => {
+    const duel = new ManualDuel(true);
+    duel.sendIdle(INPUT_QUEUE_BURST_LIMIT + 1);
+    expect(duel.drops).toEqual(['overflow']);
+  });
+
+  it('команд в тике меньше пачки — предел прежний', () => {
+    const duel = new ManualDuel(true);
+    duel.sendIdle(2);
+    duel.run(1, 0);
+    duel.sendIdle(INPUT_BURST_SIZE - 1);
+    expect(duel.drops).toEqual(['overflow']);
   });
 });
 

@@ -16,6 +16,8 @@ Environment=LOG_DIR=/opt/tanks-logs
 Environment=GEO_DIR=/opt/tanks-files/geo
 # Скольжение вдоль стен для всех комнат, 0–100: 0 — залипание как в tank-arena, 100 — стены без трения.
 Environment=WALL_SLIDE=30
+# Лаг-компенсация, снаряд со скоростью танка, сглаживание сети; файл меняет админка, первый кладёт выкладка.
+EnvironmentFile=-/etc/tanks/settings.env
 ExecStart=/usr/bin/node /opt/tanks/packages/server/dist/main.js
 Restart=always
 RestartSec=2

@@ -1,11 +1,11 @@
-import { DT, type Side } from '@tanks/shared/engine';
+import { DT, shotCarry, type Side } from '@tanks/shared/engine';
 import type { RoundStartMessage, SnapshotEvent, TankSnapshot } from '@tanks/shared/protocol';
 import { computeAimLine, type AimLine } from './aimLine.js';
 import { EventSchedule, eventPlace } from './pictureTime.js';
 import type { InterpolatedTank, PictureView, WorldView } from './prediction.js';
 import { isInView } from './render/camera.js';
 import type { Effects } from './render/effects.js';
-import { DuelFxPolicy, duelFxEvent } from './render/fxEvent.js';
+import { DuelFxPolicy, duelFxEvent, duelFxTanks } from './render/fxEvent.js';
 import type { HudInfo, Overlay, Renderer } from './render/renderer.js';
 import type { Settings } from './settings.js';
 import type { StickState } from './touch.js';
@@ -125,10 +125,7 @@ export class DuelPresenter {
   }
 
   update(dtS: number, view: WorldView): void {
-    this.effects.update(dtS, [
-      { ...view.tanks[0], id: 0 },
-      { ...view.tanks[1], id: 1 },
-    ]);
+    this.effects.update(dtS, duelFxTanks(view));
   }
 
   // Помощники не добывают информацию: линия выстрела, предохранитель и огонь по цели знают только о живом
@@ -162,6 +159,7 @@ export class DuelPresenter {
       field: view.round.map,
       shooter: { x: me.x, y: me.y, turret: me.turret },
       bulletSpeed: view.round.tanks[mySide].stats.bulletSpeed,
+      carry: shotCarry(me, view.round.rules.shotInheritPercent),
       targets: frame.visibleEnemy === null ? [] : [frame.visibleEnemy],
       hasLeadHint: this.settings.hasLeadHint,
     });

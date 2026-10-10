@@ -1,4 +1,12 @@
-import { leadPoint, normalizeAngle, TICK_RATE, type Point, type Random, type TankView } from '@tanks/shared/engine';
+import {
+  leadPoint,
+  NO_CARRY,
+  normalizeAngle,
+  TICK_RATE,
+  type Point,
+  type Random,
+  type TankView,
+} from '@tanks/shared/engine';
 import { distanceBucketOf, type DistanceBucketLabel } from '@tanks/analysis/ruler';
 import { fromDeciles, normalCdf, standardNormal } from './sampling.js';
 
@@ -67,7 +75,7 @@ export class Hand {
     this.targets.push({ x: target.x, y: target.y, vx: velocity.x, vy: velocity.y });
     const seen = this.laggedTarget();
     const toHull = bearing(me, seen);
-    const toLead = bearing(me, leadPoint(me, seen, { x: seen.vx, y: seen.vy }, me.stats.bulletSpeed));
+    const toLead = bearing(me, leadPoint(me, seen, { x: seen.vx, y: seen.vy }, me.stats.bulletSpeed, NO_CARRY));
     const level = this.smooth / this.sigma;
     const deciles = this.settings.errorDecilesDeg[distanceBucketOf(Math.hypot(seen.x - me.x, seen.y - me.y))];
     const errorDeg = Math.sign(level) * fromDeciles(deciles, 2 * normalCdf(Math.abs(level)) - 1);

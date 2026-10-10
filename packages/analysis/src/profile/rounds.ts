@@ -10,6 +10,7 @@ import {
   isSegmentClear,
   isShotReturning,
   mapByIndex,
+  NO_CARRY,
   normalizeAngle,
   type MapDef,
   type Point,
@@ -60,13 +61,23 @@ import { AIM_DONE_RAD, AIM_LOST_RAD, LEAD_SPAN_MIN_RAD, MIN_DISTANCE, MOVING_SPE
 import { upperMedian } from './stats.js';
 import { counterfactualHit, fitBulletSpeed, replayRound, shotAngle, type ReplayOutcome } from './replay.js';
 
-// Правило выборки профиля: отсекаются раунды, где игрок не играл, и раунды против старой лестницы ботов.
-// Правила — по порядку, побеждает первое; победа над ботом уровня 3 и выше входит всегда.
+// Правило выборки профиля: отсекаются раунды, где игрок не играл, раунды против старой лестницы ботов и игры
+// с догоном снаряда — разбор выпускает снаряды по позам журнала без догона. Правила — по порядку, побеждает
+// первое; победа над ботом уровня 3 и выше входит всегда.
 const MIN_BOT_LEVEL = 3;
 const MIN_FIGHT_TICKS = 5 * TICK_RATE;
 const MIN_CONTROL_SHARE = 0.3;
 
-export const EXCLUSION_REASONS = ['autoaim', 'weakBot', 'oldLadder', 'short', 'noShot', 'idle', 'silence'] as const;
+export const EXCLUSION_REASONS = [
+  'autoaim',
+  'weakBot',
+  'oldLadder',
+  'shotLead',
+  'short',
+  'noShot',
+  'idle',
+  'silence',
+] as const;
 export type ExclusionReason = (typeof EXCLUSION_REASONS)[number];
 
 // Период настроек — список игр по порядку их старта.
@@ -598,6 +609,7 @@ function exclusionOf(
   level: BotLevel,
   isAutoaim: boolean,
   isOldLadder: boolean,
+  hasShotLead: boolean,
   isWon: boolean,
   fightTicks: number,
   shots: number,
@@ -612,6 +624,9 @@ function exclusionOf(
   }
   if (isOldLadder) {
     return 'oldLadder';
+  }
+  if (hasShotLead) {
+    return 'shotLead';
   }
   if (isWon) {
     return null;
@@ -790,7 +805,7 @@ function roundDetail(
       sightRunTicks: sightRun.get(index) ?? 0,
       outcome: sim.outcomes.get(shotKey(event.gt, human)) ?? null,
       isDirectHit: sim.direct.has(shotKey(event.gt, human)),
-      isReturning: isShotReturning(map, me, turret, speeds[human], enemy),
+      isReturning: isShotReturning(map, me, turret, speeds[human], NO_CARRY, enemy),
     });
   }
   const shotByGt = new Map(shots.map((shot) => [shot.gt, shot]));
@@ -1480,7 +1495,7 @@ function rttOf(lines: readonly ClientLine[]): number[] {
 }
 
 function emptyExclusions(): Record<ExclusionReason, string[]> {
-  return { autoaim: [], weakBot: [], oldLadder: [], short: [], noShot: [], idle: [], silence: [] };
+  return { autoaim: [], weakBot: [], oldLadder: [], shotLead: [], short: [], noShot: [], idle: [], silence: [] };
 }
 
 interface GamePlace {
@@ -1535,6 +1550,7 @@ export function selectProfileRounds(games: readonly LoggedGame[], selection: Pro
         level,
         flags?.includes(AUTOAIM_ON) === true,
         oldLadder.has(game.parsed.id),
+        game.parsed.shotLeadTicks > 0,
         isWon,
         fightTicks,
         shotEvents.length,

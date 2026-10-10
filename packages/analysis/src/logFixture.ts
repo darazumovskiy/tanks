@@ -223,13 +223,15 @@ export interface DuelSpec {
   room?: string;
   names?: [string, string];
   startSec?: number;
+  shotLeadTicks?: number;
 }
 
 // Начало журнала дуэли: строка старта игры и строка клиента человека, чтобы сторона человека определялась по ней.
 export function startDuel(spec: DuelSpec = {}): LogBuilder {
   const builder = new LogBuilder(spec.startSec ?? START_SEC);
   const [p0, p1] = spec.names ?? [BOT_NAME, HUMAN_NAME];
-  builder.gameStart(spec.room ?? DEFAULT_ROOM, p0, p1);
+  const rules = spec.shotLeadTicks === undefined ? '' : ` rules=0 lead=${String(spec.shotLeadTicks)}`;
+  builder.gameStart(spec.room ?? DEFAULT_ROOM, p0, `${p1}${rules}`);
   builder.client(HUMAN, 'net roundstart game=TEST idx=0 map=0 score=0:0');
   return builder;
 }

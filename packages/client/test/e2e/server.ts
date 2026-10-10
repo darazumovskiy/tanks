@@ -42,7 +42,7 @@ export class GameServer {
   private port = 0;
   readonly logDir = mkdtempSync(join(tmpdir(), 'tanks-e2e-log-'));
 
-  constructor(private readonly extraEnv: Record<string, string> = {}) {}
+  constructor(private extraEnv: Record<string, string> = {}) {}
 
   get baseUrl(): string {
     return `http://127.0.0.1:${String(this.port)}`;
@@ -95,9 +95,11 @@ export class GameServer {
     await stopChild(child, 'SIGTERM');
   }
 
-  // Выкладка: процесс останавливается и поднимается на том же порту, клиенты должны вернуться сами.
-  async restart(): Promise<void> {
+  // Выкладка: процесс останавливается и поднимается на том же порту, клиенты должны вернуться сами. envChanges —
+  // переменные окружения поверх прежних, с ними поднимаются и все следующие перезапуски.
+  async restart(envChanges: Record<string, string> = {}): Promise<void> {
     const port = this.port;
+    this.extraEnv = { ...this.extraEnv, ...envChanges };
     await this.stop();
     await this.start(port);
   }

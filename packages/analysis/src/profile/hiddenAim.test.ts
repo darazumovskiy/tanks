@@ -3,6 +3,7 @@ import {
   isSegmentClear,
   isSegmentWithin,
   mapByIndex,
+  NO_CARRY,
   normalizeAngle,
   TANK_HIT_RADIUS,
   traceShot,
@@ -126,7 +127,7 @@ describe('башня без видимости', () => {
     );
     expect(ricochets.length).toBeGreaterThan(0);
     for (const angle of ricochets) {
-      const [first, second] = traceShot(POLYGON, ME, angle, BULLET_SPEED).segments;
+      const [first, second] = traceShot(POLYGON, ME, angle, BULLET_SPEED, NO_CARRY).segments;
       expect(first !== undefined && isSegmentWithin(first, HIDDEN, TANK_HIT_RADIUS)).toBe(false);
       expect(second !== undefined && isSegmentWithin(second, HIDDEN, TANK_HIT_RADIUS)).toBe(true);
     }

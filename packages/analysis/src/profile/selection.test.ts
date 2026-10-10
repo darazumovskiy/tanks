@@ -37,12 +37,17 @@ interface RoundSpec {
   humanAction?: (tick: number) => LogAction;
   silentTick?: number;
   winner?: 0 | 1;
+  shotLeadTicks?: number;
 }
 
 // Раунд, нарушающий только правила из spec: по умолчанию — бой 200 тиков, человек едет, один выстрел, бот победил.
 function roundLog(spec: RoundSpec): string {
   const room = spec.room ?? 'bot05test';
-  const builder = spec.botName === undefined ? startDuel({ room }) : startDuel({ room, names: [spec.botName, NICK] });
+  const builder = startDuel({
+    room,
+    ...(spec.botName === undefined ? {} : { names: [spec.botName, NICK] }),
+    ...(spec.shotLeadTicks === undefined ? {} : { shotLeadTicks: spec.shotLeadTicks }),
+  });
   if (spec.flags !== undefined) {
     builder.client(HUMAN, `flags ${spec.flags}`);
   }
@@ -175,6 +180,17 @@ describe('правило выборки профиля', () => {
         selection,
       ),
     ).toEqual({ GOOD: null, OLDL: 'oldLadder', OLDW: 'oldLadder', OLDK: 'weakBot' });
+  });
+
+  it('игры с догоном снаряда исключены даже с победой; догон 0 — входит; слабый бот остаётся слабым', () => {
+    expect(
+      reasonsOf({
+        LEAD: { shotLeadTicks: 2 },
+        LDWN: { shotLeadTicks: 2, winner: HUMAN },
+        LDWK: { shotLeadTicks: 2, room: 'bot02weak' },
+        NOLD: { shotLeadTicks: 0 },
+      }),
+    ).toEqual({ LEAD: 'shotLead', LDWN: 'shotLead', LDWK: 'weakBot', NOLD: null });
   });
 
   it('периоды — списками игр: период по списку, игра вне списков не считается, игра из списка без журнала — в пропавших', () => {

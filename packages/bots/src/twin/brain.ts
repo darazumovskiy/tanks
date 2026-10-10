@@ -3,6 +3,7 @@ import {
   createRandom,
   isShotReturning,
   mapByIndex,
+  NO_CARRY,
   TICK_RATE,
   type Action,
   type BotView,
@@ -125,7 +126,7 @@ export class TwinBrain {
     const isHeld = this.parts.fire.tick(this.modeState === 'cover' ? 'cover' : fireContextOf(hasSight, distance));
     const isAimHolding = !hasSight && this.modeState === 'manoeuvre' && this.parts.hiddenAim.current === 'hold';
     const isTurretIdle = (this.profile.control === 'sticks' && !isHeld) || isAimHolding;
-    const isReturning = isHeld && isShotReturning(this.map, me, me.turret, me.stats.bulletSpeed, enemy);
+    const isReturning = isHeld && isShotReturning(this.map, me, me.turret, me.stats.bulletSpeed, NO_CARRY, enemy);
     const isGuardHolding = this.situation.hasRicochetGuard && isReturning;
     const isAvoiding = !this.situation.hasRicochetGuard && this.avoidsReturn(isReturning);
     return {

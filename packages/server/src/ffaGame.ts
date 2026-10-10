@@ -33,12 +33,12 @@ import {
   formatJournalActions,
   formatJournalJoin,
   formatJournalRoster,
+  formatJournalRules,
   formatJournalSum,
   gameTimecode,
   isJournalSumTick,
   MessageType,
   NO_ID,
-  rulesToByte,
   toFfaSnapshotEvent,
   type BulletChanges,
   type FfaRosterMessage,
@@ -255,12 +255,13 @@ export class FfaGame {
     private readonly log: GameLog,
     private readonly dropCounter: InputDropCounter,
     private readonly rules: Readonly<RoundRules>,
+    private readonly hasNetSmoothing = false,
   ) {
     this.map = options.mapFor(size);
     if (options.hasServerBots) {
       prepareCrowdMap(this.map);
     }
-    this.writeLog(`game start mode=ffa size=${String(size)} rules=${String(rulesToByte(rules))}`);
+    this.writeLog(`game start mode=ffa size=${String(size)} ${formatJournalRules(rules)}`);
   }
 
   // Участники — люди и боты роя: серверный бот своё место им уступает.
@@ -332,7 +333,7 @@ export class FfaGame {
       stats: sanitizeStats(stats),
       isBot,
       serverBot,
-      input: createInputChannel(this.tick),
+      input: createInputChannel(this.tick, this.hasNetSmoothing),
       appliedAction: { ...IDLE_ACTION },
       idleTicks: 0,
       offlineTicks: 0,
@@ -459,7 +460,7 @@ export class FfaGame {
     player.offlineTicks = 0;
     // Новый клиент считает номера команд с единицы, недоигранная очередь старого ему не достаётся; бездействие до
     // обрыва не переносится.
-    player.input = createInputChannel(this.tick);
+    player.input = createInputChannel(this.tick, this.hasNetSmoothing);
     player.appliedAction = { ...IDLE_ACTION };
     player.idleTicks = 0;
     this.writeLog(`rejoin id=${String(player.id)}`);
@@ -556,8 +557,9 @@ export class FfaGame {
         token: player.token,
         gameId: this.id,
         size: this.size,
-        rules: { wallSlidePercent: this.rules.wallSlidePercent },
+        rules: { ...this.rules },
         inviteMiss,
+        hasNetSmoothing: this.hasNetSmoothing,
       }),
     );
   }

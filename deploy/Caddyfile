@@ -15,6 +15,13 @@ tankbattle.io, 172-232-212-157.sslip.io {
 		reverse_proxy 127.0.0.1:8094
 	}
 
+	# Админка настроек боя; пароль — блок из хэша на машине, его пишет deploy-local.sh.
+	redir /admin /admin/
+	handle_path /admin/* {
+		import /etc/caddy/admin-auth.caddy
+		reverse_proxy 127.0.0.1:8090
+	}
+
 	handle {
 		reverse_proxy 127.0.0.1:8080
 	}

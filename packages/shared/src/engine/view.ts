@@ -40,12 +40,14 @@ export interface ZoneView {
   damagePerSecond: number;
 }
 
+// shotInheritPercent — правило раунда: какую долю скорости танка получает снаряд в момент выстрела.
 export interface BotView {
   tick: number;
   time: number;
   timeLeft: number;
   dt: number;
   side: Side;
+  shotInheritPercent: number;
   arena: { width: number; height: number; mapName: string; walls: Wall[] };
   me: TankView;
   enemy: TankView;
@@ -80,6 +82,7 @@ export function botView(round: Round, side: Side): BotView {
     timeLeft: Math.max(0, ROUND_SECONDS - round.time),
     dt: DT,
     side,
+    shotInheritPercent: round.rules.shotInheritPercent,
     arena: {
       width: round.map.width,
       height: round.map.height,

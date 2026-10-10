@@ -1,4 +1,4 @@
-import { KIT, MUZZLE_OFFSET, type FieldSize, type Kit } from '@tanks/shared/engine';
+import { KIT, MUZZLE_OFFSET, type Field, type Kit } from '@tanks/shared/engine';
 import type { AimLine } from '../aimLine.js';
 import { drawAimLine, type AimLineStyle } from './aimLineStyle.js';
 import { drawTankSprite, TANK_ART_SCALE, TANK_SPRITE_SIZE, TankArt } from './art.js';
@@ -109,7 +109,7 @@ export interface SceneTank {
 }
 
 export interface FieldScene {
-  field: FieldSize;
+  field: Field;
   borderWidth: number;
   floor: DrawFloor;
   zone: SceneZone;
@@ -181,7 +181,7 @@ export class FieldRenderer {
       scene.fieldLayer(ctx);
     }
     this.drawAimLine(scene.aimLine, frame);
-    this.effects.drawBullets(ctx, scene.bullets);
+    this.effects.drawBullets(ctx, scene.bullets, scene.field);
     this.effects.drawParticles(ctx);
     for (const tank of scene.tanks) {
       if (tank.isAlive) {

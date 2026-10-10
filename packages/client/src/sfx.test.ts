@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SnapshotEvent } from '@tanks/shared/protocol';
 import { Sfx, SOUND_DURATIONS, type SoundName } from './sfx.js';
+import { SoundSetting } from './soundSetting.js';
 import { installFakeAudio, type FakeAudio } from './testing/fakeAudio.js';
 
 // Громкость выстрела и панорама дуэли до перевода `play` на панораму и громкость.
@@ -14,12 +15,14 @@ function event(kind: SnapshotEvent['kind'], x: number): SnapshotEvent {
 describe('Sfx', () => {
   let audio: FakeAudio;
   let isHidden: boolean;
+  let sound: SoundSetting;
   let sfx: Sfx;
 
   beforeEach(() => {
     audio = installFakeAudio();
     isHidden = false;
-    sfx = new Sfx(() => isHidden);
+    sound = new SoundSetting(null);
+    sfx = new Sfx(() => isHidden, sound);
     sfx.unlock();
   });
 
@@ -54,8 +57,31 @@ describe('Sfx', () => {
 
   it('выключенный звук молчит', () => {
     sfx.toggle();
+    expect(sound.isMuted).toBe(true);
+    expect(sfx.isMuted).toBe(true);
     expect(sfx.play('shot')).toBeNull();
     expect(audio.outputs).toHaveLength(0);
+  });
+
+  it('две Sfx на одной настройке: выключил одну — молчат обе', () => {
+    const other = new Sfx(() => false, sound);
+    other.unlock();
+    sound.toggle();
+    expect(other.isMuted).toBe(true);
+    expect(sfx.play('shot')).toBeNull();
+    expect(other.play('shot')).toBeNull();
+    expect(audio.outputs).toHaveLength(0);
+  });
+
+  it('выключение глушит звучащие звуки; включение — новые звучат, заглушённые не возвращаются', () => {
+    sfx.play('death');
+    sfx.play('alarm');
+    sound.toggle();
+    expect(audio.released).toEqual([audio.outputs[0], audio.outputs[1]]);
+    sound.toggle();
+    expect(sfx.play('shot')).not.toBeNull();
+    expect(audio.outputs).toHaveLength(3);
+    expect(audio.released).toHaveLength(2);
   });
 
   it('прозвучавший звук глушится раньше конца; не прозвучавший — не голос', () => {
@@ -65,7 +91,7 @@ describe('Sfx', () => {
     expect(audio.released).toEqual([audio.outputs[0]]);
     isHidden = true;
     expect(sfx.play('shot')).toBeNull();
-    expect(new Sfx(() => false).play('shot')).toBeNull();
+    expect(new Sfx(() => false, sound).play('shot')).toBeNull();
   });
 
   it('таблица длительностей совпадает с синтезом: звук длится до остановки последнего источника', () => {

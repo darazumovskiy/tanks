@@ -166,6 +166,18 @@ describe('условия, настройки и сеть', () => {
     expect(slideOf('2.5')).toBe(0);
   });
 
+  it('догон из строки старта: нет поля, не число или вне 0–6 — 0', () => {
+    const leadOf = (rules: string): number | undefined =>
+      analyzeLogLines(logFiles({ 'LEAD.log': gameLog({ ...LATE, rules }) }))[0]?.parsed.shotLeadTicks;
+
+    expect(leadOf('30 lead=2')).toBe(2);
+    expect(leadOf('30 lead=6')).toBe(6);
+    expect(leadOf('30')).toBe(0);
+    expect(leadOf('30 lead=7')).toBe(0);
+    expect(leadOf('30 lead=два')).toBe(0);
+    expect(leadOf('30 lead=1.5')).toBe(0);
+  });
+
   it('исходы по уровню и по манере: раунды и победы без готового интервала; ничья — не победа', () => {
     const outcomes = profileMetrics(
       profileRoundsOf({ 'EARL.log': gameLog(EARLY), 'LATE.log': gameLog({ ...LATE, winners: [null] }) }),

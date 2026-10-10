@@ -1,4 +1,4 @@
-import { DEFAULT_RULES, WALL_SLIDE_MAX_PERCENT, type Side } from '@tanks/shared/engine';
+import { DEFAULT_RULES, SHOT_LEAD_MAX_TICKS, WALL_SLIDE_MAX_PERCENT, type Side } from '@tanks/shared/engine';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -8,7 +8,7 @@ const KEY_VALUE_PATTERN = /(\w+)=(\S*)/g;
 const CLIENT_SOURCE_PATTERN = /^C([01])$/;
 const DEVICE_PATTERN = /^device ua=(.*) screen=\S* dpr=\S* touch=(\S*)/;
 // Ник пишется в журнал как есть и может содержать пробелы: он тянется до следующего поля строки.
-const GAME_START_NAMES_PATTERN = / p0=(.*?) p1=(.*?)(?: rules=\S*)?$/;
+const GAME_START_NAMES_PATTERN = / p0=(.*?) p1=(.*?)(?: rules=\S*(?: lead=\S*)?(?: inherit=\S*)?)?$/;
 const LEAVE_NICK_PATTERN = / nick=(.*)$/;
 const SERVER_SOURCE = 'S';
 const LOG_EXTENSION = '.log';
@@ -82,13 +82,15 @@ export interface LeaveRecord {
 }
 
 // wallSlidePercent — байт `rules=` строки старта; в журналах до появления байта и при испорченном значении
-// стены липкие, 0.
+// стены липкие, 0. shotLeadTicks — поле `lead=`: на сколько тиков снаряд человека рождался дальше; в журналах
+// до догона и при испорченном значении — 0.
 export interface ParsedGame {
   id: string;
   room: string;
   names: [string, string];
   startSec: number;
   wallSlidePercent: number;
+  shotLeadTicks: number;
   rounds: ParsedRound[];
   clientLines: [ClientLine[], ClientLine[]];
   droppedInputs: [number, number];
@@ -135,10 +137,10 @@ export function field(values: Map<string, string>, key: string): string {
   return values.get(key) ?? '';
 }
 
-function wallSlideOf(text: string): number {
+function ruleOf(text: string, max: number, fallback: number): number {
   const value = Number(text);
-  const isValid = text !== '' && Number.isInteger(value) && value >= 0 && value <= WALL_SLIDE_MAX_PERCENT;
-  return isValid ? value : DEFAULT_RULES.wallSlidePercent;
+  const isValid = text !== '' && Number.isInteger(value) && value >= 0 && value <= max;
+  return isValid ? value : fallback;
 }
 
 export function parseAction(text: string): LogAction | null {
@@ -220,6 +222,7 @@ export function parseGameLog(id: string, text: string): ParsedGame | null {
   let names: [string, string] = ['', ''];
   let startSec: number | null = null;
   let wallSlidePercent = 0;
+  let shotLeadTicks = 0;
   const rounds: ParsedRound[] = [];
   const clientLines: [ClientLine[], ClientLine[]] = [[], []];
   const droppedInputs: [number, number] = [0, 0];
@@ -271,7 +274,8 @@ export function parseGameLog(id: string, text: string): ParsedGame | null {
       const nameMatch = GAME_START_NAMES_PATTERN.exec(body);
       names = [nameMatch?.[1] ?? '', nameMatch?.[2] ?? ''];
       startSec = sec;
-      wallSlidePercent = wallSlideOf(field(values, 'rules'));
+      wallSlidePercent = ruleOf(field(values, 'rules'), WALL_SLIDE_MAX_PERCENT, DEFAULT_RULES.wallSlidePercent);
+      shotLeadTicks = ruleOf(field(values, 'lead'), SHOT_LEAD_MAX_TICKS, DEFAULT_RULES.shotLeadTicks);
       continue;
     }
     if (DROPPED_INPUT_PREFIXES.some((prefix) => body.startsWith(prefix))) {
@@ -289,7 +293,7 @@ export function parseGameLog(id: string, text: string): ParsedGame | null {
   if (room === null || startSec === null || rounds.length === 0) {
     return null;
   }
-  return { id, room, names, startSec, wallSlidePercent, rounds, clientLines, droppedInputs, leave };
+  return { id, room, names, startSec, wallSlidePercent, shotLeadTicks, rounds, clientLines, droppedInputs, leave };
 }
 
 export interface DeviceEntry {

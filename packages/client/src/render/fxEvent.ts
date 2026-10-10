@@ -1,5 +1,7 @@
+import type { Side } from '@tanks/shared/engine';
 import { EventFlag, type SnapshotEvent } from '@tanks/shared/protocol';
-import type { FxAnnouncement, FxEvent, FxEventOptions } from './effects.js';
+import type { WorldView } from '../prediction.js';
+import type { FxAnnouncement, FxEvent, FxEventOptions, FxTank } from './effects.js';
 
 const DUEL_SHAKE = { shot: 2.5, clash: 6, hit: 9, death: 26 } as const;
 const DEATH_SCREEN_FLASH = 0.55;
@@ -81,4 +83,18 @@ export class DuelFxPolicy {
     this.hasFirstBlood = true;
     return { ...QUIET, shake: DUEL_SHAKE.hit, announcement: DUEL_ANNOUNCEMENT.firstBlood };
   }
+}
+
+function duelFxTank(view: WorldView, side: Side): FxTank {
+  return {
+    ...view.tanks[side],
+    id: side,
+    bulletSpeed: view.round.tanks[side].stats.bulletSpeed,
+    shotInheritPercent: view.round.rules.shotInheritPercent,
+  };
+}
+
+// Нарисованные танки дуэли для эффектов: номер — сторона.
+export function duelFxTanks(view: WorldView): FxTank[] {
+  return [duelFxTank(view, 0), duelFxTank(view, 1)];
 }

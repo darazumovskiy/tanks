@@ -1,6 +1,6 @@
 export { ByteReader, ByteWriter } from './bytes.js';
 export * from './messages.js';
-export { decode, encode, isClientMessage, NO_ID, quantizeAction, rulesFromByte, rulesToByte } from './codec.js';
+export { decode, encode, formatJournalRules, isClientMessage, NO_ID, quantizeAction, rulesFromBytes } from './codec.js';
 export { gameTimecode } from './timecode.js';
 export * from './botRoom.js';
 export * from './ffaRoom.js';

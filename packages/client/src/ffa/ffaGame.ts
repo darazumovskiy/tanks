@@ -3,6 +3,7 @@ import {
   ffaMap,
   IDLE_ACTION,
   isTraceReturning,
+  shotCarry,
   traceShot,
   type Action,
   type FfaMap,
@@ -24,12 +25,13 @@ import {
 } from '@tanks/shared/protocol';
 import { aimLineOnPath, firstTargetOnPath, type AimLine } from '../aimLine.js';
 import { AudioMix, mixedSound } from '../audioMix.js';
-import { DiagLog } from '../diag.js';
+import { DiagLog, writeHoldEnds } from '../diag.js';
 import { InputReader, type ShotContext } from '../input.js';
 import { NetClient, websocketUrl, type DisconnectReason, type SocketLike } from '../net.js';
+import { INTERPOLATION_MIN_TICKS } from '../netSmoothing.js';
 import { EventSchedule, eventPlace, pictureDebug } from '../pictureTime.js';
 import { isInView, screenToWorld, type Camera } from '../render/camera.js';
-import { Effects } from '../render/effects.js';
+import { Effects, type FxTank } from '../render/effects.js';
 import {
   FFA_OTHER_COLOR,
   FFA_OWN_COLOR,
@@ -126,6 +128,11 @@ interface FieldHelpers {
 
 const NO_HELPERS: FieldHelpers = { aimLine: null, aimTargetId: null, arrows: [] };
 
+// Свой танк там, где он нарисован в кадре; в кадре его нет — предсказанный.
+function drawnOwnTank(view: FfaFrameView, me: Tank): Point & { turret: number } {
+  return view.tanks.find((tank) => tank.id === me.id) ?? me;
+}
+
 function sessionTokens(storage: Storage): TokenStore {
   return {
     read: (size) => storage.getItem(`${TOKEN_KEY_PREFIX}${String(size)}`) ?? '',
@@ -173,6 +180,10 @@ export class FfaGame {
   private summaryAt: number;
   private snapshotsThisSecond = 0;
   private inputsThisSecond = 0;
+  private worstCorrectionPx = 0;
+  private worstSnapshotGapMs = 0;
+  // Между матчами и соединениями снимков нет по замыслу: пауза считается только внутри матча одного соединения.
+  private lastSnapshotAt: number | null = null;
   private isHidden = false;
   private isClosed = false;
   private hasFieldControls: boolean | null = null;
@@ -344,11 +355,16 @@ export class FfaGame {
           ? null
           : { state: this.helpers.aimLine.state, targetId: this.helpers.aimTargetId },
       voices: this.audioMix.activeCount(this.deps.now()),
+      isMuted: this.sfx.isMuted,
       isAutoFiring: this.input.isAutoFiring,
       floorChunks: this.renderer.floorChunks,
       floorMemoryMb: this.renderer.floorMemoryMb,
       fps: this.fps,
       worstFrameMs: this.worstFrameMs,
+      ownHits: prediction?.ownHitCounts ?? null,
+      ownShots: prediction?.ownShotCounts ?? null,
+      hasNetSmoothing: session.hasNetSmoothing,
+      interpolationTicks: prediction?.interpolationTicks ?? null,
       picture: pictureDebug(view.clock, prediction?.latestTick ?? 0, view.bullets),
     };
   }
@@ -406,6 +422,7 @@ export class FfaGame {
     const outcome = this.session.onWelcome(message, this.deps.now());
     this.deps.tokens.write(this.options.size, message.token);
     this.seq = 0;
+    this.lastSnapshotAt = null;
     this.spareInput.reset();
     this.prediction?.resetConnection();
     if (outcome === 'lost') {
@@ -424,12 +441,17 @@ export class FfaGame {
 
   private onMatchStart(message: FfaMatchStartMessage): void {
     const outcome = this.session.onMatchStart(message);
+    this.lastSnapshotAt = null;
     const myId = this.session.playerId;
     if (myId !== null && (outcome === 'new' || this.prediction === null)) {
-      this.prediction = new FfaPrediction(this.map, this.session.rules, message.zone, myId, (id) => ({
-        name: this.session.nameOf(id),
-        stats: this.session.statsOf(id),
-      }));
+      this.prediction = new FfaPrediction(
+        this.map,
+        this.session.rules,
+        message.zone,
+        myId,
+        (id) => ({ name: this.session.nameOf(id), stats: this.session.statsOf(id) }),
+        this.session.hasNetSmoothing,
+      );
     }
     if (outcome === 'new') {
       this.resetMatchEffects();
@@ -445,10 +467,15 @@ export class FfaGame {
     const prediction = this.prediction;
     if (prediction !== null) {
       prediction.applySnapshot(message, receivedAt);
+      this.worstCorrectionPx = Math.max(this.worstCorrectionPx, prediction.lastCorrectionPx);
       for (const { predictedId, serverId } of prediction.takeConfirmedBullets()) {
         this.effects.renameTrail(predictedId, serverId);
       }
     }
+    if (this.lastSnapshotAt !== null) {
+      this.worstSnapshotGapMs = Math.max(this.worstSnapshotGapMs, receivedAt - this.lastSnapshotAt);
+    }
+    this.lastSnapshotAt = receivedAt;
     this.spareInput.noteSnapshot(message.ackSeq, message.hasSpareInput);
     this.diag.markSnapshot(message.gameTick, receivedAt);
     this.snapshotsThisSecond++;
@@ -466,17 +493,34 @@ export class FfaGame {
         this.camera.easeIn();
         this.setAutoFire(false);
       }
+      if (prediction?.wasPlayedOnTouch(event) === true || prediction?.wasShotPlayed(event) === true) {
+        continue;
+      }
       const tank = message.tanks.find((candidate) => candidate.id === event.tank) ?? null;
       this.events.add(event, message.tick, eventPlace(event.kind, tank, myId), receivedAt);
     }
   }
 
-  // События, до места которых дошла картинка: эффекты, тряска, объявления и звук по правилам толпы.
+  // Свои выстрелы и попадания по своему танку, сыгранные по досчёту, и события, до места которых дошла картинка:
+  // эффекты, объявления и звук по правилам толпы.
+  private fxTanks(view: FfaFrameView, camera: Camera): FxTank[] {
+    const prediction = this.prediction;
+    if (prediction === null) {
+      return [];
+    }
+    return view.tanks
+      .filter((tank) => isInView(camera, tank, VIEW_MARGIN))
+      .map((tank) => ({ ...tank, ...prediction.shotOf(tank.id) }));
+  }
+
   private releaseEvents(view: FfaFrameView, camera: Camera, now: number): void {
     const myId = this.session.playerId;
     const listener = this.listener();
     const drawnTank = (id: number): FfaViewTank | null => view.tanks.find((tank) => tank.id === id) ?? null;
-    for (const { event, tick } of this.events.release(view.clock, drawnTank, now)) {
+    const ownShots = this.prediction?.takeOwnShots() ?? [];
+    const ownHits = this.prediction?.takeOwnHits() ?? [];
+    writeHoldEnds(this.diag, this.prediction?.takeHoldEnds() ?? []);
+    for (const { event, tick } of [...ownShots, ...ownHits, ...this.events.release(view.clock, drawnTank, now)]) {
       const victimId = event.kind === 'death' ? event.tank : null;
       const ownKillCount = victimId === null ? null : this.session.ownKillNumber(tick, victimId);
       const options = this.fxPolicy.optionsFor(event, myId, camera, ownKillCount);
@@ -531,7 +575,7 @@ export class FfaGame {
       this.sfx.unlock();
     };
     window.addEventListener('keydown', unlock);
-    window.addEventListener('mousedown', unlock);
+    window.addEventListener('pointerdown', unlock);
     window.addEventListener('touchstart', unlock);
     window.addEventListener('keydown', (event) => {
       if (event.code === 'KeyM' && !event.repeat) {
@@ -553,6 +597,8 @@ export class FfaGame {
       this.accumulator = 0;
       this.lastFrame = this.deps.now();
       this.events.clear();
+      this.prediction?.discardOwnHits();
+      this.prediction?.discardOwnShots();
     });
   }
 
@@ -602,9 +648,11 @@ export class FfaGame {
     const { settings } = this.options;
     const targets = this.lastFrameTargets();
     const bulletSpeed = me.stats.bulletSpeed;
-    const path = traceShot(this.map, me, me.turret, bulletSpeed).segments;
-    const isReturning = settings.hasRicochetGuard && isTraceReturning(path, me, firstTargetOnPath(path, targets));
-    const isInZone = settings.hasZoneFire && isPathInZone(path, { shooter: me, bulletSpeed, targets });
+    const carry = shotCarry(me, this.session.rules.shotInheritPercent);
+    const trace = traceShot(this.map, me, me.turret, bulletSpeed, carry);
+    const path = trace.segments;
+    const isReturning = settings.hasRicochetGuard && isTraceReturning(trace, me, firstTargetOnPath(path, targets));
+    const isInZone = settings.hasZoneFire && isPathInZone(path, { shooter: me, bulletSpeed, carry, targets });
     return { isReturning, isInZone };
   }
 
@@ -662,7 +710,8 @@ export class FfaGame {
   }
 
   // Свой танк на отсчёте — камера на нём без сдвига; в бою — со сдвигом, который после выхода в бой нарастает
-  // с нуля; подбит и на итогах — окно стоит, где было; зритель — за целью; иначе центр карты.
+  // с нуля; подбит и на итогах — окно стоит, где было; зритель — за целью; иначе центр карты. Камера следует
+  // за нарисованным своим танком: поправку он догоняет плавно, и поле вокруг не прыгает.
   private frameCamera(view: FfaFrameView, screen: SessionScreen, elapsed: number): FfaFraming {
     const size = this.renderer.screen;
     const me = this.prediction?.me ?? null;
@@ -673,10 +722,10 @@ export class FfaGame {
     }
     this.isOwnFightFramed = isOwnFighting;
     if (isOwnFighting) {
-      return this.camera.update(me, this.aimOf(me), size, elapsed);
+      return this.camera.update(drawnOwnTank(view, me), this.aimOf(me), size, elapsed);
     }
     if (isOwnAlive && screen === 'countdown') {
-      return this.camera.update(me, { kind: 'none' }, size, elapsed);
+      return this.camera.update(drawnOwnTank(view, me), { kind: 'none' }, size, elapsed);
     }
     if ((screen === 'dead' || screen === 'results') && this.framing !== null) {
       return this.framing;
@@ -734,10 +783,7 @@ export class FfaGame {
     const { camera } = framing;
     this.releaseEvents(view, camera, now);
     this.helpers = this.fieldHelpers(view, screen, camera);
-    this.effects.update(
-      elapsed / SECOND_MS,
-      view.tanks.filter((tank) => isInView(camera, tank, VIEW_MARGIN)),
-    );
+    this.effects.update(elapsed / SECOND_MS, this.fxTanks(view, camera));
     this.renderer.draw({
       view,
       myId: this.session.playerId,
@@ -769,7 +815,7 @@ export class FfaGame {
   }
 
   // Стрелки и линия — только в бою, пока свой танк на поле и в игре: на доигрывании конца матча их нет; упреждение
-  // в толпе не показывается.
+  // в толпе не показывается. Линия идёт от нарисованного своего танка; предохранитель решает по предсказанному.
   private fieldHelpers(view: FfaFrameView, screen: SessionScreen, camera: Camera): FieldHelpers {
     const me = this.ownTankInPlay();
     if (me === null || screen !== 'fight') {
@@ -782,12 +828,14 @@ export class FfaGame {
     }
     const targets = visibleEnemies(view.tanks, myId, camera);
     const bulletSpeed = me.stats.bulletSpeed;
-    const path = traceShot(this.map, me, me.turret, bulletSpeed).segments;
-    const aimLine = aimLineOnPath(path, { shooter: me, bulletSpeed, targets, hasLeadHint: false });
+    const shooter = drawnOwnTank(view, me);
+    const carry = shotCarry(me, this.session.rules.shotInheritPercent);
+    const trace = traceShot(this.map, shooter, shooter.turret, bulletSpeed, carry);
+    const aimLine = aimLineOnPath(trace, { shooter, bulletSpeed, carry, targets, hasLeadHint: false });
     if (aimLine.state !== 'onTarget') {
       return { aimLine, aimTargetId: null, arrows };
     }
-    return { aimLine, aimTargetId: firstTargetOnPath(path, targets)?.id ?? null, arrows };
+    return { aimLine, aimTargetId: firstTargetOnPath(trace.segments, targets)?.id ?? null, arrows };
   }
 
   private showFieldControls(isVisible: boolean): void {
@@ -823,8 +871,11 @@ export class FfaGame {
     const worst = Math.round(this.worstFrameMs);
     const rtt = Math.round(this.net.rttMs);
     const pend = this.prediction?.pendingCount ?? 0;
+    const smoothing = this.session.hasNetSmoothing
+      ? ` ilag=${(this.prediction?.interpolationTicks ?? INTERPOLATION_MIN_TICKS).toFixed(1)}`
+      : '';
     this.diag.write(
-      `sec fps=${String(fps)} worst=${String(worst)} rtt=${String(rtt)} pend=${String(pend)} snaps=${String(this.snapshotsThisSecond)} ins=${String(this.inputsThisSecond)}`,
+      `sec fps=${String(fps)} worst=${String(worst)} rtt=${String(rtt)} pend=${String(pend)} snaps=${String(this.snapshotsThisSecond)} ins=${String(this.inputsThisSecond)} corr=${this.worstCorrectionPx.toFixed(1)} gap=${this.worstSnapshotGapMs.toFixed(0)}${smoothing}`,
     );
     this.options.telemetry.event('sec', 'sec', {
       fps,
@@ -836,6 +887,8 @@ export class FfaGame {
     });
     this.snapshotsThisSecond = 0;
     this.inputsThisSecond = 0;
+    this.worstCorrectionPx = 0;
+    this.worstSnapshotGapMs = 0;
   }
 
   private restart(isWithToken: boolean): void {

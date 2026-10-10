@@ -129,6 +129,34 @@ describe('разбор журнала игры', () => {
     expect(game?.leave).toEqual({ side: HUMAN, nick: 'Мой ник' });
   });
 
+  it('ник с пробелами перед правилами со скольжением и догоном — целиком', () => {
+    const text = new LogBuilder(START_SEC)
+      .server('game start room=bot05lead p0=Ветеран p1=Мой ник rules=30 lead=2')
+      .client(HUMAN, 'in seq=1 a=0.00,0.00,0.00,0')
+      .roundStart(0, 0)
+      .frames(countdownFrames(POSES))
+      .frames(standingFrames(POSES, 5))
+      .text();
+    const [game] = run(makeLogDir({ 'LEAD.log': text }));
+
+    expect(game?.human_name).toBe('Мой ник');
+    expect(game?.bot_name).toBe('Ветеран');
+  });
+
+  it('ник с пробелами перед правилами со скольжением, догоном и снарядом со скоростью танка — целиком', () => {
+    const text = new LogBuilder(START_SEC)
+      .server('game start room=bot05inhr p0=Ветеран p1=Мой ник rules=30 lead=2 inherit=100')
+      .client(HUMAN, 'in seq=1 a=0.00,0.00,0.00,0')
+      .roundStart(0, 0)
+      .frames(countdownFrames(POSES))
+      .frames(standingFrames(POSES, 5))
+      .text();
+    const [game] = run(makeLogDir({ 'INHR.log': text }));
+
+    expect(game?.human_name).toBe('Мой ник');
+    expect(game?.bot_name).toBe('Ветеран');
+  });
+
   it('устройство: из журнала комнаты не дальше пяти минут, иначе по нику, иначе неизвестно; переход через полночь', () => {
     const slots = `net room slots=Новобранец|Дима`;
     const dir = makeLogDir({

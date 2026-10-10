@@ -36,13 +36,15 @@
 
 Журнал: строка `flags` получает `aimstyle=<идентификатор>`; `debugState().aimLineStyle` отдаёт текущий идентификатор.
 
-«На нём» главнее «упреждаю». Точка упреждения — `leadPoint` из `@tanks/shared/engine`: четыре приближения времени полёта при полном учёте скорости цели, та же формула, что у ботов; скорость снаряда — своя `stats.bulletSpeed`, скорость противника — `speed` и `heading` его интерполированного танка. При скорости ниже `LEAD_MIN_SPEED` = 30 ед/с точка упреждения совпадает с корпусом, и «упреждаю» не показывается. Упреждение считается по прямой, поэтому проверяется только на первом отрезке — после отскока путь длиннее прямой и формула не годится.
+«На нём» главнее «упреждаю». Точка упреждения — точка встречи `meet` из `leadShot` (`@tanks/shared/engine`): четыре приближения времени полёта при полном учёте скорости цели, та же формула, что у ботов; скорость снаряда — своя `stats.bulletSpeed`, скорость противника — `speed` и `heading` его интерполированного танка.
+
+**Снаряд со скоростью танка** ([shot-inherit.md](../backend/shot-inherit.md)). Вход линии несёт снос `carry` — `shotCarry` своего танка по правилам боя (`RoundStart.rules`, `FfaWelcome.rules`). Путь — `traceShot` со сносом: на ходу вбок линия отклоняется от ствола по ходу танка и показывает, куда снаряд реально полетит по полю. Точка встречи со сносом лежит на этом пути; опасный хвост проверяет возврат в танк, едущий со скоростью сноса. Без правила снос нулевой и линия прежняя. При скорости ниже `LEAD_MIN_SPEED` = 30 ед/с точка упреждения совпадает с корпусом, и «упреждаю» не показывается. Упреждение считается по прямой, поэтому проверяется только на первом отрезке — после отскока путь длиннее прямой и формула не годится.
 
 **Опасный хвост.** Если расчёт говорит, что снаряд вернётся в свой корпус (`isTraceReturning`), хвост рисуется опасным цветом `#ff5a6a` (ядро и ореол), штрихи текут к игроку — независимо от флага предохранителя.
 
 ## Предохранитель и противник
 
-Расчёт возврата (`isTraceReturning(segments, shooter, target)`) принимает необязательную цель: если первый отрезок проходит через живого видимого противника, снаряд примет он — выстрел безопасен, даже если за ним стена перпендикулярно. Та же функция даёт `isReturning` линии и признак для предохранителя; один расчёт — одно мнение. Без цели поведение прежнее: опасен только второй отрезок.
+Расчёт возврата (`isTraceReturning(trace, shooter, target)`) принимает путь `traceShot` и необязательную цель: если первый отрезок проходит через живого видимого противника, снаряд примет он — выстрел безопасен, даже если за ним стена перпендикулярно. Та же функция даёт `isReturning` линии и признак для предохранителя; один расчёт — одно мнение. Без цели поведение прежнее: опасен только второй отрезок.
 
 ## Админ-режим
 
@@ -61,9 +63,9 @@
 
 | Файл | Роль |
 |---|---|
-| `packages/shared/src/engine/trajectory.ts` | `traceShot` — отрезки пути; `isTraceReturning(segments, shooter, target)` — возврат в свой корпус с учётом противника на первом отрезке; `isShotReturning(walls, shooter, turret, bulletSpeed, target)` — то же от стрелка; `TANK_HIT_RADIUS` |
-| `packages/shared/src/engine/lead.ts` | `leadPoint(shooter, target, velocity, bulletSpeed)` — точка упреждения, общая для клиента и следующих помощников |
-| `packages/client/src/aimLine.ts` | `computeAimLine({ field, shooter, bulletSpeed, targets, hasLeadHint })` → `{ segments, state, mark, isReturning }`: цели — живые танки в кадре, дуэль передаёт противника или пусто, бой толпы — всех чужих в окне ([ffa-client.md](ffa-client.md)); «на нём» — первый танк, в который входит путь; `firstTargetOnPath` — этот танк для предохранителя и отладки толпы; `enemyLeadPoint` — точка упреждения по `heading` и `speed` противника, общая с огнём по цели ([touch-controls.md](touch-controls.md)); `AIM_LINE_TAIL`, `LEAD_MIN_SPEED` |
+| `packages/shared/src/engine/trajectory.ts` | `traceShot(field, shooter, turret, bulletSpeed, carry)` — отрезки пути, скорость и снос; `isTraceReturning(trace, shooter, target)` — возврат в свой корпус с учётом противника на первом отрезке и сноса; `isShotReturning(field, shooter, turret, bulletSpeed, carry, target)` — то же от стрелка; `TANK_HIT_RADIUS` |
+| `packages/shared/src/engine/lead.ts` | `leadShot(shooter, target, velocity, bulletSpeed, carry)` — куда навести ствол (`aim`) и где цель встретит снаряд (`meet`); `leadPoint` — точка наводки |
+| `packages/client/src/aimLine.ts` | `computeAimLine({ field, shooter, bulletSpeed, carry, targets, hasLeadHint })` → `{ segments, state, mark, isReturning }`: цели — живые танки в кадре, дуэль передаёт противника или пусто, бой толпы — всех чужих в окне ([ffa-client.md](ffa-client.md)); «на нём» — первый танк, в который входит путь; `firstTargetOnPath` — этот танк для предохранителя и отладки толпы; `enemyLeadPoint` — точка упреждения по `heading` и `speed` противника, общая с огнём по цели ([touch-controls.md](touch-controls.md)); `AIM_LINE_TAIL`, `LEAD_MIN_SPEED` |
 | `packages/client/src/admin.ts` | `resolveAdminMode(search, storage)` — разбор `?admin` и память на устройстве |
 | `packages/client/src/settings.ts` | `hasAimLine`, `hasLeadHint`; `isAdminOnly` у поля; `SettingsStore(storage, defaults, { isAdmin })` обнуляет админские поля без права, `store.isAdmin` |
 | `packages/client/src/settingsPanel.ts` | Группа «Для настройки» с админскими флажками — только при `store.isAdmin` |
@@ -111,6 +113,7 @@
 | Башня на противника и одновременно на точку упреждения (цель едет на стрелка) | `onTarget` |
 | Дуло в стене | пусто: нет отрезков, `none`, `isReturning` false |
 | Дальность кончается раньше преграды (скорость снаряда 5) | один отрезок, хвоста нет, `none` |
+| Снаряд со скоростью танка: снос поперёк ствола; ствол на точку наводки со сносом по едущей цели; стрелок едет вдоль стены, ствол в стену поперёк | первый отрезок по стволу со сносом; `lead`, засечка у точки встречи (без учёта сноса — `none`); `isReturning` true — план в [shot-inherit.md](../backend/shot-inherit.md) |
 
 `admin.test.ts`:
 

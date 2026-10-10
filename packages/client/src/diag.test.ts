@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DIAG_BATCH_LINES, DIAG_FLUSH_INTERVAL_MS, DIAG_MAX_LINES, DiagLog } from './diag.js';
+import { DIAG_BATCH_LINES, DIAG_FLUSH_INTERVAL_MS, DIAG_MAX_LINES, DiagLog, writeHoldEnds } from './diag.js';
 
 interface Sent {
   url: string;
@@ -55,6 +55,19 @@ describe('DiagLog', () => {
     await vi.advanceTimersByTimeAsync(DIAG_FLUSH_INTERVAL_MS);
     expect(posted[1]?.url).toBe('/log?key=K7MF&src=C1');
     expect(posted[1]?.body).toContain('net roundstart');
+  });
+
+  it('стояния на броне — строкой на каждое: номер снаряда, ожидание в мс, исход', async () => {
+    writeHoldEnds(diag, [
+      { id: 7, ticks: 4.5, outcome: 'boom' },
+      { id: 9, ticks: 0, outcome: 'miss' },
+    ]);
+    writeHoldEnds(diag, []);
+    await vi.advanceTimersByTimeAsync(DIAG_FLUSH_INTERVAL_MS);
+    expect(posted[0]?.body.split('\n').map((line) => line.split(' ').slice(3).join(' '))).toEqual([
+      'hold id=7 ms=150 end=boom',
+      'hold id=9 ms=0 end=miss',
+    ]);
   });
 
   it('оценивает таймкод по последнему снимку и местному времени', async () => {

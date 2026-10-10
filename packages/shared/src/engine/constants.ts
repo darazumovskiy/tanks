@@ -18,6 +18,9 @@ export const WALL_HIT_SPEED_FACTOR = 0.6;
 export const WALL_BUMP_MIN_SPEED = 60;
 export const WALL_SLIDE_MAX_PERCENT = 100;
 export const WALL_BUMP_MIN_DROP = 25;
+// Догон снаряда человека — не дальше 200 мс полёта.
+export const SHOT_LEAD_MAX_TICKS = 6;
+export const SHOT_INHERIT_MAX_PERCENT = 100;
 export const KIT = { radius: 16, heal: 50, firstSpawn: 15, respawn: 20 } as const;
 export const ZONE = { startShrink: 60, endShrink: 100, finalRadius: 170, damagePerSecond: 20 } as const;
 // Зона начинает сжиматься с круга, описанного вокруг поля, с запасом.

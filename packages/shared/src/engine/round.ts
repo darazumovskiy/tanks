@@ -19,6 +19,7 @@ import {
 } from './constants.js';
 import { boundsHit, circleRect, clamp, normalizeAngle } from './geometry.js';
 import { MAPS, mapByIndex, type BattleMap, type MapDef, type Spawn } from './maps.js';
+import { shotCarry } from './shot.js';
 import { deriveStats, type DerivedStats } from './stats.js';
 
 export type Side = 0 | 1;
@@ -46,9 +47,11 @@ export interface Tally {
 
 // id — постоянный номер танка: в дуэли 0 и 1, в матче — номер игрока.
 // shieldLeft — неуязвимость в секундах: пока больше нуля, урон не проходит.
+// isBot — танк бота: догон компенсирует отставание взгляда человека, снаряды бота не догоняются.
 export interface Tank {
   id: number;
   name: string;
+  isBot: boolean;
   stats: DerivedStats;
   x: number;
   y: number;
@@ -100,11 +103,15 @@ export type EndReason = 'kill' | 'time';
 
 // Настраиваемые правила движка; одинаковы на сервере, у бота и в предсказании клиента.
 // wallSlidePercent — скольжение вдоль стен, целое 0–100: 0 — оригинал tank-arena, 100 — стены без трения.
+// shotLeadTicks — догон: снаряд человека рождается на столько тиков полёта дальше, 0 — без догона.
+// shotInheritPercent — какую долю скорости танка снаряд получает в момент выстрела, целое 0–100: 0 — только по стволу.
 export interface RoundRules {
   wallSlidePercent: number;
+  shotLeadTicks: number;
+  shotInheritPercent: number;
 }
 
-export const DEFAULT_RULES: Readonly<RoundRules> = { wallSlidePercent: 0 };
+export const DEFAULT_RULES: Readonly<RoundRules> = { wallSlidePercent: 0, shotLeadTicks: 0, shotInheritPercent: 0 };
 
 // Поле боя с любым числом танков; tanks — танки на поле в порядке обработки.
 export interface World<T extends Tank[] = Tank[]> {
@@ -162,9 +169,11 @@ export type WorldEvent =
 
 export type RoundEvent = WorldEvent | { type: 'roundOver'; winner: Side | null; reason: EndReason };
 
+// Без isBot — человек.
 export interface TankSetup {
   name: string;
   stats: unknown;
+  isBot?: boolean;
 }
 
 export const DUEL_ZONE_PLAN: Readonly<ZonePlan> = {
@@ -214,6 +223,7 @@ export function makeTank(setup: TankSetup, id: number, pose: Spawn): Tank {
   return {
     id,
     name: setup.name,
+    isBot: setup.isBot === true,
     stats,
     x: pose.x,
     y: pose.y,
@@ -238,7 +248,11 @@ export function createWorld<T extends Tank[]>(
     tick: 0,
     time: 0,
     map,
-    rules: { wallSlidePercent: rules.wallSlidePercent },
+    rules: {
+      wallSlidePercent: rules.wallSlidePercent,
+      shotLeadTicks: rules.shotLeadTicks,
+      shotInheritPercent: rules.shotInheritPercent,
+    },
     nextBulletId: 1,
     tanks,
     bullets: [],
@@ -417,7 +431,7 @@ function resolveTanks(world: World): void {
   }
 }
 
-function fire(world: World, tank: Tank, events: WorldEvent[]): void {
+function fire(world: World, tank: Tank, events: WorldEvent[]): Bullet | null {
   const dx = Math.cos(tank.turret);
   const dy = Math.sin(tank.turret);
   const x = tank.x + dx * MUZZLE_OFFSET;
@@ -431,21 +445,42 @@ function fire(world: World, tank: Tank, events: WorldEvent[]): void {
     world.map.walls.some((wall) => circleRect(x, y, BULLET_RADIUS, wall) !== null);
   if (isBlocked) {
     events.push({ type: 'impact', x, y, owner: tank.id });
-    return;
+    return null;
   }
-  world.bullets.push({
+  let vx = dx * tank.stats.bulletSpeed;
+  let vy = dy * tank.stats.bulletSpeed;
+  if (world.rules.shotInheritPercent > 0) {
+    const carry = shotCarry(tank, world.rules.shotInheritPercent);
+    vx += carry.x;
+    vy += carry.y;
+  }
+  const bullet: Bullet = {
     id: world.nextBulletId++,
     owner: tank.id,
     x,
     y,
-    vx: dx * tank.stats.bulletSpeed,
-    vy: dy * tank.stats.bulletSpeed,
+    vx,
+    vy,
     damage: tank.stats.damage,
     bouncesLeft: BULLET_BOUNCES,
     hasBounced: false,
     age: 0,
     isDead: false,
-  });
+  };
+  world.bullets.push(bullet);
+  return bullet;
+}
+
+// Догон компенсирует отставание взгляда человека на чужие танки: снаряд проходит шаги полёта против танков
+// и снарядов этого тика. Догон идёт после выстрелов всех танков тика, поэтому размен в упор не зависит
+// от порядка танков.
+function leadBullets(world: World, fired: readonly Bullet[], events: WorldEvent[]): void {
+  for (const bullet of fired) {
+    const leadTicks = tankById(world, bullet.owner)?.isBot === false ? world.rules.shotLeadTicks : 0;
+    for (let step = 0; step < leadTicks && !bullet.isDead; step++) {
+      stepBullet(world, bullet, events, true);
+    }
+  }
 }
 
 function bounceBullet(bullet: Bullet, contact: { nx: number; ny: number; depth: number }): void {
@@ -487,7 +522,9 @@ function hitTankWithBullet(world: World, bullet: Bullet, tank: Tank, speed: numb
   });
 }
 
-function stepBullet(world: World, bullet: Bullet, events: WorldEvent[]): void {
+// isLead — догонный шаг: остальные снаряды поля стоят, поэтому перехват проверяется на каждом подшаге,
+// а подшаг короче дистанции перехвата и встречный снаряд не проскочить.
+function stepBullet(world: World, bullet: Bullet, events: WorldEvent[], isLead = false): void {
   bullet.age += DT;
   if (bullet.age > BULLET_LIFETIME) {
     bullet.isDead = true;
@@ -524,43 +561,63 @@ function stepBullet(world: World, bullet: Bullet, events: WorldEvent[]): void {
         bullet.isDead = true;
         events.push({ type: 'impact', x: bullet.x, y: bullet.y, owner: bullet.owner });
       }
+    } else {
+      hitTanks(world, bullet, speed, events);
+    }
+    if (isLead && !bullet.isDead) {
+      clashWithField(world, bullet, events);
+    }
+  }
+}
+
+function hitTanks(world: World, bullet: Bullet, speed: number, events: WorldEvent[]): void {
+  for (const tank of world.tanks) {
+    if (!tank.isAlive) {
       continue;
     }
-    for (const tank of world.tanks) {
-      if (!tank.isAlive) {
-        continue;
-      }
-      if (tank.id === bullet.owner && !bullet.hasBounced) {
-        continue;
-      }
-      if (Math.hypot(tank.x - bullet.x, tank.y - bullet.y) < TANK_RADIUS + BULLET_RADIUS) {
-        hitTankWithBullet(world, bullet, tank, speed, events);
-        break;
-      }
+    if (tank.id === bullet.owner && !bullet.hasBounced) {
+      continue;
+    }
+    if (Math.hypot(tank.x - bullet.x, tank.y - bullet.y) < TANK_RADIUS + BULLET_RADIUS) {
+      hitTankWithBullet(world, bullet, tank, speed, events);
+      return;
     }
   }
 }
 
 // Снаряды уничтожают друг друга: встречный выстрел можно сбить.
+function clashPair(world: World, a: Bullet, b: Bullet, events: WorldEvent[]): boolean {
+  if (Math.hypot(a.x - b.x, a.y - b.y) >= BULLET_RADIUS * 2 + 2) {
+    return false;
+  }
+  a.isDead = true;
+  b.isDead = true;
+  if (a.owner !== b.owner) {
+    // Перехват засчитывается тому, чей снаряд выпущен позже: это оборонительный выстрел.
+    const later = a.id > b.id ? a : b;
+    const defender = tankById(world, later.owner);
+    if (defender !== undefined) {
+      defender.tally.intercepts++;
+    }
+  }
+  events.push({ type: 'clash', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  return true;
+}
+
+function clashWithField(world: World, bullet: Bullet, events: WorldEvent[]): void {
+  for (const other of world.bullets) {
+    if (other !== bullet && !other.isDead && clashPair(world, bullet, other, events)) {
+      return;
+    }
+  }
+}
+
 function clashBullets(world: World, events: WorldEvent[]): void {
   const live = world.bullets.filter((bullet) => !bullet.isDead);
   for (const [i, a] of live.entries()) {
     for (const b of live.slice(i + 1)) {
-      if (a.isDead || b.isDead) {
-        continue;
-      }
-      if (Math.hypot(a.x - b.x, a.y - b.y) < BULLET_RADIUS * 2 + 2) {
-        a.isDead = true;
-        b.isDead = true;
-        if (a.owner !== b.owner) {
-          // Перехват засчитывается тому, чей снаряд выпущен позже: это оборонительный выстрел.
-          const later = a.id > b.id ? a : b;
-          const defender = tankById(world, later.owner);
-          if (defender !== undefined) {
-            defender.tally.intercepts++;
-          }
-        }
-        events.push({ type: 'clash', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+      if (!a.isDead && !b.isDead) {
+        clashPair(world, a, b, events);
       }
     }
   }
@@ -672,12 +729,17 @@ export function stepWorld(world: World, actions: readonly unknown[]): WorldEvent
     }
   }
 
+  const fired: Bullet[] = [];
   for (const [index, tank] of world.tanks.entries()) {
     const isFiring = acts[index]?.isFiring === true;
     if (tank.isAlive && isFiring && tank.reloadLeft <= 0) {
-      fire(world, tank, events);
+      const bullet = fire(world, tank, events);
+      if (bullet !== null) {
+        fired.push(bullet);
+      }
     }
   }
+  leadBullets(world, fired, events);
 
   stepBullets(world, events);
   stepKits(world, events);
