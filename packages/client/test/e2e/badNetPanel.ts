@@ -1,6 +1,6 @@
 // Пульт стенда «плохая сеть»: страница с кнопками и HTTP API. Пинг и неровность меняются у посредника на ходу;
 // лаг-компенсация (догон снаряда), снаряд со скоростью танка и сглаживание — настройки сервера при старте, поэтому меняются
-// перезапуском процесса сервера на том же порту.
+// перезапуском сервера. Без посредника (bench — null) пульт — админка тестовой машины: только настройки сервера.
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { Agent, createServer, get, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -18,7 +18,6 @@ import {
   type JitterName,
   type NetworkSetting,
 } from './networkProfile.js';
-import type { GameServer } from './server.js';
 
 // Пинг через посредника за последние замеры, мс; замеров ещё нет — null.
 export interface MeasuredPing {
@@ -35,7 +34,21 @@ export interface ServerSettings {
   hasNetSmoothing: boolean;
 }
 
-export interface PanelState extends ServerSettings {
+// Сервер, которым управляет пульт: перезапуск с новыми переменными окружения и папка его журналов.
+export interface RestartableServer {
+  readonly logDir: string;
+  restart(env: Record<string, string>): Promise<void>;
+}
+
+// Посредник сети стенда и порты сервера напрямую и через посредника.
+export interface Bench {
+  proxy: NetProxy;
+  network: NetworkSetting;
+  directPort: number;
+  proxyPort: number;
+}
+
+export interface BenchState {
   pingMs: number;
   jitter: JitterName;
   // Шаг пачек неровности от и до, мс; без пачек — 0.
@@ -44,23 +57,24 @@ export interface PanelState extends ServerSettings {
   // Сколько неровность сама добавляет к пингу в среднем, мс.
   jitterAddedMs: number;
   measuredPing: MeasuredPing | null;
+  directPort: number;
+  proxyPort: number;
+}
+
+export interface PanelState extends ServerSettings {
+  bench: BenchState | null;
   isRestarting: boolean;
   // Время последнего удачного перезапуска сервера пультом, мс от эпохи; null — не перезапускался.
   restartedAt: number | null;
   serverError: string | null;
-  directPort: number;
-  proxyPort: number;
   overflowLastMinute: number;
 }
 
 export interface PanelOptions extends ServerSettings {
   port: number;
   host: string;
-  proxy: NetProxy;
-  server: GameServer;
-  network: NetworkSetting;
-  directPort: number;
-  proxyPort: number;
+  server: RestartableServer;
+  bench: Bench | null;
 }
 
 export interface BadNetPanel {
@@ -230,49 +244,68 @@ function overflowLastMinute(logDir: string, now: number): number {
   return count;
 }
 
-class PanelControl {
-  private network: NetworkSetting;
-  private settings: ServerSettings;
-  private isRestarting = false;
-  private restartedAt: number | null = null;
-  private serverError: string | null = null;
+class BenchControl {
   private readonly probe: PingProbe;
 
-  constructor(private readonly options: PanelOptions) {
-    this.network = options.network;
-    this.settings = {
-      shotLeadTicks: options.shotLeadTicks,
-      shotInheritPercent: options.shotInheritPercent,
-      hasNetSmoothing: options.hasNetSmoothing,
-    };
-    this.probe = new PingProbe(options.proxyPort);
+  constructor(
+    private readonly bench: Bench,
+    private network: NetworkSetting,
+  ) {
+    this.probe = new PingProbe(bench.proxyPort);
   }
 
-  state(): PanelState {
+  state(): BenchState {
     return {
       pingMs: this.network.pingMs,
       jitter: this.network.jitter,
       ...JITTERS[this.network.jitter],
       jitterAddedMs: Math.round(jitterAddedPingMs(this.network.jitter)),
       measuredPing: this.probe.measured(),
-      ...this.settings,
-      isRestarting: this.isRestarting,
-      restartedAt: this.restartedAt,
-      serverError: this.serverError,
-      directPort: this.options.directPort,
-      proxyPort: this.options.proxyPort,
-      overflowLastMinute: overflowLastMinute(this.options.server.logDir, Date.now()),
+      directPort: this.bench.directPort,
+      proxyPort: this.bench.proxyPort,
     };
   }
 
   setNetwork(change: Partial<NetworkSetting>): void {
     this.network = { ...this.network, ...change };
-    this.options.proxy.setShape(networkShape(this.network));
+    this.bench.proxy.setShape(networkShape(this.network));
     this.probe.reset();
   }
 
   close(): void {
     this.probe.close();
+  }
+}
+
+class PanelControl {
+  readonly bench: BenchControl | null;
+  private settings: ServerSettings;
+  private isRestarting = false;
+  private restartedAt: number | null = null;
+  private serverError: string | null = null;
+
+  constructor(private readonly options: PanelOptions) {
+    this.bench = options.bench === null ? null : new BenchControl(options.bench, options.bench.network);
+    this.settings = {
+      shotLeadTicks: options.shotLeadTicks,
+      shotInheritPercent: options.shotInheritPercent,
+      hasNetSmoothing: options.hasNetSmoothing,
+    };
+  }
+
+  state(): PanelState {
+    return {
+      bench: this.bench?.state() ?? null,
+      ...this.settings,
+      isRestarting: this.isRestarting,
+      restartedAt: this.restartedAt,
+      serverError: this.serverError,
+      overflowLastMinute: overflowLastMinute(this.options.server.logDir, Date.now()),
+    };
+  }
+
+  close(): void {
+    this.bench?.close();
   }
 
   get isBusy(): boolean {
@@ -300,12 +333,43 @@ class PanelControl {
   }
 }
 
+const LEAD_ENV = 'SHOT_LEAD_TICKS';
+const INHERIT_ENV = 'SHOT_INHERIT_PERCENT';
+const SMOOTHING_ENV = 'NET_SMOOTHING';
+const SMOOTHING_ON = '1';
+
 export function serverSettingsEnv(settings: ServerSettings): Record<string, string> {
   return {
-    SHOT_LEAD_TICKS: String(settings.shotLeadTicks),
-    SHOT_INHERIT_PERCENT: String(settings.shotInheritPercent),
-    NET_SMOOTHING: settings.hasNetSmoothing ? '1' : '0',
+    [LEAD_ENV]: String(settings.shotLeadTicks),
+    [INHERIT_ENV]: String(settings.shotInheritPercent),
+    [SMOOTHING_ENV]: settings.hasNetSmoothing ? SMOOTHING_ON : '0',
   };
+}
+
+// Файл окружения службы: строки `ИМЯ=значение`; нет переменной или значение не число в пределах — настройка выключена.
+export function serverSettingsFromEnvFile(text: string): ServerSettings {
+  const values = new Map<string, string>();
+  for (const line of text.split('\n')) {
+    const separator = line.indexOf('=');
+    if (separator > 0) {
+      values.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+    }
+  }
+  const integer = (name: string, max: number): number => {
+    const value = Number(values.get(name));
+    return isIntegerUpTo(value, max) ? value : 0;
+  };
+  return {
+    shotLeadTicks: integer(LEAD_ENV, SHOT_LEAD_MAX_TICKS),
+    shotInheritPercent: integer(INHERIT_ENV, SHOT_INHERIT_MAX_PERCENT),
+    hasNetSmoothing: values.get(SMOOTHING_ENV) === SMOOTHING_ON,
+  };
+}
+
+export function envFileText(env: Readonly<Record<string, string>>): string {
+  return Object.entries(env)
+    .map(([name, value]) => `${name}=${value}\n`)
+    .join('');
 }
 
 function send(response: ServerResponse, status: number, type: string, body: string | Buffer): void {
@@ -348,7 +412,7 @@ function sendFont(response: ServerResponse, name: string): void {
   send(response, HTTP_OK, type, readFileSync(file));
 }
 
-async function changeNetwork(control: PanelControl, request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function changeNetwork(bench: BenchControl, request: IncomingMessage, response: ServerResponse): Promise<void> {
   const body = await readJson(request);
   if (body === null) {
     sendError(response, HTTP_BAD_REQUEST, 'тело — объект JSON');
@@ -367,8 +431,7 @@ async function changeNetwork(control: PanelControl, request: IncomingMessage, re
     sendError(response, HTTP_BAD_REQUEST, `неровность — одна из: ${Object.keys(JITTERS).join(', ')}`);
     return;
   }
-  control.setNetwork({ ...(pingMs === undefined ? {} : { pingMs }), ...(jitter === undefined ? {} : { jitter }) });
-  sendJson(response, HTTP_OK, control.state());
+  bench.setNetwork({ ...(pingMs === undefined ? {} : { pingMs }), ...(jitter === undefined ? {} : { jitter }) });
 }
 
 async function changeServer(control: PanelControl, request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -422,7 +485,14 @@ async function route(
     return;
   }
   if (endpoint === 'POST /api/network') {
-    await changeNetwork(control, request, response);
+    if (control.bench === null) {
+      sendError(response, HTTP_NOT_FOUND, 'у пульта нет посредника сети');
+      return;
+    }
+    await changeNetwork(control.bench, request, response);
+    if (!response.headersSent) {
+      sendJson(response, HTTP_OK, control.state());
+    }
     return;
   }
   if (endpoint === 'POST /api/server') {

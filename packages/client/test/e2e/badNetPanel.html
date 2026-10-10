@@ -291,8 +291,8 @@
   <body>
     <main class="panel">
       <header class="head">
-        <h1>Плохая сеть</h1>
-        <p class="head-sub">Пульт стенда</p>
+        <h1 id="title">Плохая сеть</h1>
+        <p class="head-sub" id="subtitle">Пульт стенда</p>
       </header>
       <div class="layout">
         <div class="column">
@@ -307,26 +307,28 @@
             <span class="notice-text" id="notice-text"></span>
           </div>
           <section class="card">
-            <h2>Играть через плохую сеть</h2>
+            <h2 id="play-title">Играть через плохую сеть</h2>
             <div class="links">
               <a class="link is-bad" id="bad-ffa" target="_blank" rel="noopener">Бой толпы</a>
               <a class="link is-bad" id="bad-home" target="_blank" rel="noopener">Главная</a>
             </div>
-            <h2>Напрямую для сравнения</h2>
-            <div class="links">
-              <a class="link" id="direct-ffa" target="_blank" rel="noopener">Бой толпы</a>
-              <a class="link" id="direct-home" target="_blank" rel="noopener">Главная</a>
+            <div id="direct-links">
+              <h2>Напрямую для сравнения</h2>
+              <div class="links">
+                <a class="link" id="direct-ffa" target="_blank" rel="noopener">Бой толпы</a>
+                <a class="link" id="direct-home" target="_blank" rel="noopener">Главная</a>
+              </div>
             </div>
             <p class="hint" id="addresses"></p>
           </section>
         </div>
         <div class="column">
-          <section class="card">
+          <section class="card" id="ping-card">
             <h2>Пинг</h2>
             <div class="options is-pings" id="ping-options"></div>
             <p class="hint" id="ping-hint"></p>
           </section>
-          <section class="card">
+          <section class="card" id="jitter-card">
             <h2>Неровность</h2>
             <div class="options is-triples">
               <button type="button" class="option" data-jitter="even">Ровно</button>
@@ -417,13 +419,34 @@
         link.href = `${location.protocol}//${location.hostname}:${port}${path}`;
       }
 
+      // Без посредника пульт — админка тестовой машины: игра на этом же адресе, сети на пульте нет.
       function renderLinks() {
-        setLink('bad-ffa', state.proxyPort, FFA_PATH);
-        setLink('bad-home', state.proxyPort, '/');
-        setLink('direct-ffa', state.directPort, FFA_PATH);
-        setLink('direct-home', state.directPort, '/');
+        const bench = state.bench;
+        byId('direct-links').hidden = bench === null;
+        if (bench === null) {
+          byId('play-title').textContent = 'Играть';
+          byId('bad-ffa').href = `${location.origin}${FFA_PATH}`;
+          byId('bad-home').href = `${location.origin}/`;
+          byId('addresses').textContent = `Игра — ${location.host}, сеть настоящая.`;
+          return;
+        }
+        setLink('bad-ffa', bench.proxyPort, FFA_PATH);
+        setLink('bad-home', bench.proxyPort, '/');
+        setLink('direct-ffa', bench.directPort, FFA_PATH);
+        setLink('direct-home', bench.directPort, '/');
         byId('addresses').textContent =
-          `Через плохую сеть — ${location.hostname}:${state.proxyPort}, напрямую — ${location.hostname}:${state.directPort}.`;
+          `Через плохую сеть — ${location.hostname}:${bench.proxyPort}, напрямую — ${location.hostname}:${bench.directPort}.`;
+      }
+
+      function renderTitle() {
+        const isAdmin = state.bench === null;
+        const title = isAdmin ? 'Админка' : 'Плохая сеть';
+        byId('title').textContent = title;
+        byId('subtitle').textContent = isAdmin ? 'Тестовый сервер' : 'Пульт стенда';
+        document.title = isAdmin ? 'Админка · Тестовый сервер' : document.title;
+        byId('ping-card').hidden = isAdmin;
+        byId('jitter-card').hidden = isAdmin;
+        byId('now-ping').hidden = isAdmin;
       }
 
       function renderChoices(boxId, presets, current, key, label) {
@@ -445,34 +468,47 @@
         );
       }
 
-      function pingHint() {
-        if (state.pingMs === 0) {
+      function pingHint(bench) {
+        if (bench.pingMs === 0) {
           return 'Без задержки: данные проходят сразу.';
         }
-        return `Задержка туда и обратно: посредник держит данные по ${state.pingMs / 2} мс в каждую сторону.`;
+        return `Задержка туда и обратно: посредник держит данные по ${bench.pingMs / 2} мс в каждую сторону.`;
       }
 
-      function jitterAdded() {
-        return Math.round(state.jitterAddedMs / 10) * 10;
+      function jitterAdded(bench) {
+        return Math.round(bench.jitterAddedMs / 10) * 10;
       }
 
-      function jitterHint() {
-        if (state.jitter === 'even') {
+      function jitterHint(bench) {
+        if (bench.jitter === 'even') {
           return 'Данные идут ровно, без пачек — пинг в игре как задан.';
         }
-        return `Пачки — данные копятся и уходят кучкой, как у мобильной связи. Сами добавляют к пингу в среднем около ${jitterAdded()} мс: в игре будет около ${state.pingMs + jitterAdded()}, то меньше, то больше.`;
+        return `Пачки — данные копятся и уходят кучкой, как у мобильной связи. Сами добавляют к пингу в среднем около ${jitterAdded(bench)} мс: в игре будет около ${bench.pingMs + jitterAdded(bench)}, то меньше, то больше.`;
       }
 
-      function measuredText() {
-        const measured = state.measuredPing;
+      function measuredText(bench) {
+        const measured = bench.measuredPing;
         if (measured === null) {
           return ['Меряю пинг через посредника…'];
         }
         return [
           'Замер через посредника: ',
           Object.assign(document.createElement('strong'), { textContent: `${measured.medianMs} мс` }),
-          ` — последние ${measured.samples} замеров от ${measured.minMs} до ${measured.maxMs}, расчёт около ${state.pingMs + jitterAdded()}.`,
+          ` — последние ${measured.samples} замеров от ${measured.minMs} до ${measured.maxMs}, расчёт около ${bench.pingMs + jitterAdded(bench)}.`,
         ];
+      }
+
+      function renderBench(bench) {
+        byId('now-ping').replaceChildren(...measuredText(bench));
+        renderChoices('ping-options', PING_CHOICES, bench.pingMs, 'ping', String);
+        for (const button of document.querySelectorAll('[data-ping]')) {
+          button.setAttribute('aria-pressed', String(Number(button.dataset.ping) === bench.pingMs));
+        }
+        for (const button of document.querySelectorAll('[data-jitter]')) {
+          button.setAttribute('aria-pressed', String(button.dataset.jitter === bench.jitter));
+        }
+        byId('ping-hint').textContent = pingHint(bench);
+        byId('jitter-hint').textContent = jitterHint(bench);
       }
 
       function renderNotice() {
@@ -514,41 +550,42 @@
           return span;
         };
         const accent = (text) => Object.assign(document.createElement('b'), { textContent: text });
-        const jitterPart =
-          state.jitter === 'even'
-            ? part('без пачек')
-            : part('пачки ', accent(`${state.burstMs}–${state.burstMaxMs}`), ' мс');
+        const bench = state.bench;
+        const networkParts =
+          bench === null
+            ? []
+            : [
+                part('пинг ', accent(String(bench.pingMs)), ' мс'),
+                ' · ',
+                bench.jitter === 'even'
+                  ? part('без пачек')
+                  : part('пачки ', accent(`${bench.burstMs}–${bench.burstMaxMs}`), ' мс'),
+                ' · ',
+              ];
         byId('now-line').replaceChildren(
-          part('пинг ', accent(String(state.pingMs)), ' мс'),
-          ' · ',
-          jitterPart,
-          ' · ',
+          ...networkParts,
           part('лаг-компенсация ', accent(leadText)),
           ' · ',
           part('скорость танка ', accent(inheritText(state.shotInheritPercent).toLowerCase())),
           ' · ',
           part('сглаживание ', accent(smoothingText)),
         );
-        byId('now-ping').replaceChildren(...measuredText());
         byId('now-stat').replaceChildren(
           'Выброшено команд за минуту: ',
           Object.assign(document.createElement('strong'), { textContent: String(state.overflowLastMinute) }),
           ' — пришли пачкой сверх очереди сервера.',
         );
+        renderTitle();
         renderLinks();
-        renderChoices('ping-options', PING_CHOICES, state.pingMs, 'ping', String);
+        if (bench !== null) {
+          renderBench(bench);
+        }
         renderChoices('lead-options', LEAD_CHOICES, state.shotLeadTicks, 'lead', (ticks) =>
           ticks === 0 ? 'Выкл' : String(ticks),
         );
         renderChoices('inherit-options', INHERIT_CHOICES, state.shotInheritPercent, 'inherit', inheritText);
         renderNotice();
         const isServerLocked = state.isRestarting || isSending;
-        for (const button of document.querySelectorAll('[data-ping]')) {
-          button.setAttribute('aria-pressed', String(Number(button.dataset.ping) === state.pingMs));
-        }
-        for (const button of document.querySelectorAll('[data-jitter]')) {
-          button.setAttribute('aria-pressed', String(button.dataset.jitter === state.jitter));
-        }
         for (const button of document.querySelectorAll('[data-lead]')) {
           button.setAttribute('aria-pressed', String(Number(button.dataset.lead) === state.shotLeadTicks));
           button.disabled = isServerLocked;
@@ -561,8 +598,6 @@
           button.setAttribute('aria-pressed', String(button.dataset.smoothing === String(state.hasNetSmoothing)));
           button.disabled = isServerLocked;
         }
-        byId('ping-hint').textContent = pingHint();
-        byId('jitter-hint').textContent = jitterHint();
         byId('lead-hint').textContent = leadHint(state.shotLeadTicks);
         byId('inherit-hint').textContent = inheritHint(state.shotInheritPercent);
         byId('smoothing-hint').textContent = SMOOTHING_HINTS[String(state.hasNetSmoothing)];
@@ -593,7 +628,7 @@
           return;
         }
         try {
-          state = await request('/api/state');
+          state = await request('api/state');
           render();
         } catch (error) {
           showFailure(error);
@@ -625,26 +660,26 @@
         const { ping, jitter, lead, inherit, smoothing } = button.dataset;
         if (ping !== undefined) {
           const pingMs = Number(ping);
-          void send('/api/network', { pingMs }, {});
+          void send('api/network', { pingMs }, {});
           return;
         }
         if (jitter !== undefined) {
-          void send('/api/network', { jitter }, {});
+          void send('api/network', { jitter }, {});
           return;
         }
         if (lead !== undefined) {
           const shotLeadTicks = Number(lead);
-          void send('/api/server', { shotLeadTicks }, { shotLeadTicks, isRestarting: true });
+          void send('api/server', { shotLeadTicks }, { shotLeadTicks, isRestarting: true });
           return;
         }
         if (inherit !== undefined) {
           const shotInheritPercent = Number(inherit);
-          void send('/api/server', { shotInheritPercent }, { shotInheritPercent, isRestarting: true });
+          void send('api/server', { shotInheritPercent }, { shotInheritPercent, isRestarting: true });
           return;
         }
         if (smoothing !== undefined) {
           const hasNetSmoothing = smoothing === 'true';
-          void send('/api/server', { hasNetSmoothing }, { hasNetSmoothing, isRestarting: true });
+          void send('api/server', { hasNetSmoothing }, { hasNetSmoothing, isRestarting: true });
         }
       });
 

@@ -82,7 +82,7 @@
 
 **Измеренный пинг.** Пульт раз в секунду запрашивает `/healthz` сервера через посредника по одному держащемуся соединению (keep-alive): круг проходит задержку и пачки в обе стороны, как сообщения игры. Показывает медиану, наименьший и наибольший из последних 20 замеров и расчёт — пинг плюс добавка пачек. Смена пинга или неровности сбрасывает замеры; ответ на запрос, ушедший по старой сети, не засчитывается; ответ дольше 5 с выброшен. Пока замеров нет — «меряю».
 
-API пульта — JSON: `GET /api/state` — состояние (`pingMs`, `jitter`, шаг пачек `burstMs`–`burstMaxMs`, добавка `jitterAddedMs`, замер `measuredPing` — `{ medianMs, minMs, maxMs, samples }` или `null`, догон `shotLeadTicks`, скорость танка у снаряда `shotInheritPercent`, сглаживание, перезапуск, порты, `overflowLastMinute`); `POST /api/network` `{ "pingMs"?: 0–2000, "jitter"?: "even" | "light" | "phone" }` — меняет названное, остальное прежнее, хотя бы одно поле; `POST /api/server` `{ "shotLeadTicks"?: 0–6, "shotInheritPercent"?: 0–100, "hasNetSmoothing"?: true | false }` — меняет названное, остальное прежнее, отвечает после перезапуска, 409 — перезапуск уже идёт, 500 — сервер не поднялся (текст ошибки в состоянии); неверное тело — 400.
+API пульта — JSON: `GET /api/state` — состояние: сеть `bench` — `pingMs`, `jitter`, шаг пачек `burstMs`–`burstMaxMs`, добавка `jitterAddedMs`, замер `measuredPing` (`{ medianMs, minMs, maxMs, samples }` или `null`), порты `directPort`, `proxyPort`; у админки без посредника `bench` — `null`; дальше догон `shotLeadTicks`, скорость танка у снаряда `shotInheritPercent`, сглаживание, перезапуск, `overflowLastMinute`. `POST /api/network` `{ "pingMs"?: 0–2000, "jitter"?: "even" | "light" | "phone" }` — меняет названное, остальное прежнее, хотя бы одно поле; без посредника — 404; `POST /api/server` `{ "shotLeadTicks"?: 0–6, "shotInheritPercent"?: 0–100, "hasNetSmoothing"?: true | false }` — меняет названное, остальное прежнее, отвечает после перезапуска, 409 — перезапуск уже идёт, 500 — сервер не поднялся (текст ошибки в состоянии); неверное тело — 400.
 
 Сокращения командной строки ставят пинг и неровность; `--ping <мс>` (0–2000) и `--jitter even|light|phone` правят названное поверх сокращения:
 
@@ -110,6 +110,8 @@ API пульта — JSON: `GET /api/state` — состояние (`pingMs`, `j
 
 Журналы сервера — во временной папке, путь печатается при старте и при остановке. В журнале боя (`<номер игры>.log`) — строки клиентов `sec … rtt= … corr= gap=` (задержка, худшая поправка своего танка и худший разрыв между снимками за секунду; со сглаживанием — ещё `ilag=`, отставание чужих в тиках) и строки сервера `input overflow` (команды сверх очереди выброшены); разбор — скилл `battle-logs`.
 
+**Админка тестовой машины** — тот же пульт без посредника ([serverAdmin.ts](../../../../packages/client/test/e2e/serverAdmin.ts)): страница называется «Админка · Тестовый сервер», групп пинга и неровности, замера пинга и ссылок «напрямую» нет, ссылки «Играть» ведут на бой и главную того же адреса. Настройки сервера читаются при старте из файла окружения службы `tanks` и пишутся в него при смене; перезапуск — `systemctl restart tanks` и ожидание `/healthz` до 30 с, не поднялась — ошибка в состоянии. Выкладка и адрес — [deploy-proto.md](../infra/deploy-proto.md), «Тестовая машина».
+
 Скрипт — [badNet.ts](../../../../packages/client/test/e2e/badNet.ts), пульт — [badNetPanel.ts](../../../../packages/client/test/e2e/badNetPanel.ts) и страница [badNetPanel.html](../../../../packages/client/test/e2e/badNetPanel.html) (без сборки клиента, шрифты — из `packages/client/dist/fonts`; страница читается при старте), пинг, неровность, сокращения и разбор аргументов — [networkProfile.ts](../../../../packages/client/test/e2e/networkProfile.ts). Node исполняет исходники стенда без сборки через [tsLoader.mjs](../../../../packages/client/test/e2e/tsLoader.mjs): компилятор TypeScript переводит файл, импорт `./x.js` ведёт на `./x.ts`.
 
 ## Файлы
@@ -126,11 +128,12 @@ API пульта — JSON: `GET /api/state` — состояние (`pingMs`, `j
 | `packages/client/test/e2e/lagPlayer.spec.ts` | Сквозные тесты пачек и сценарий «живой лагер» |
 | `packages/client/test/e2e/badNet.ts` | Команда `npm run bad-net`: сервер, посредник, пульт, ссылки, остановка |
 | `packages/client/test/e2e/badNetPanel.ts` | Пульт: HTTP API, смена пинга и неровности у посредника, замер пинга через посредника, перезапуск сервера с новым окружением (`serverSettingsEnv` — догон, скорость танка у снаряда, сглаживание), счётчик `input overflow` за минуту |
-| `packages/client/test/e2e/badNetPanel.html` | Страница пульта: состояние, ссылки, кнопки групп |
+| `packages/client/test/e2e/badNetPanel.html` | Страница пульта: состояние, ссылки, кнопки групп; без посредника — вид админки |
+| `packages/client/test/e2e/serverAdmin.ts` | Админка тестовой машины: пульт без посредника, файл окружения службы, перезапуск службы |
 | `packages/client/test/e2e/server.ts` | `restart` с переменными окружения поверх прежних |
 | `packages/client/test/e2e/networkProfile.ts` | Пинг и неровность, форма сети для посредника, добавка пачек к пингу, сокращения `night`, `day`, `smooth`, разбор аргументов, флаги `--ping`, `--jitter`, догона `--lead`, скорости танка у снаряда `--inherit`, сглаживания `--smooth-net` и порта `--port` |
 | `packages/client/test/e2e/tsLoader.mjs` | Исполнение исходников стенда в Node без сборки |
-| `packages/client/test/e2e/badNet.spec.ts` | Тесты аргументов, команды целиком и пульта |
+| `packages/client/test/e2e/badNet.spec.ts` | Тесты аргументов, команды целиком, пульта и админки без посредника |
 
 ## План тестирования
 

@@ -98,14 +98,11 @@ const panel = await panelModule
   .startPanel({
     port: panelPort,
     host: ALL_INTERFACES,
-    proxy,
     server,
-    network: choice.network,
+    bench: { proxy, network: choice.network, directPort, proxyPort },
     shotLeadTicks: choice.shotLeadTicks,
     shotInheritPercent: choice.shotInheritPercent,
     hasNetSmoothing: choice.hasNetSmoothing,
-    directPort,
-    proxyPort,
   })
   .catch(async (error: unknown) => {
     await proxy.close();

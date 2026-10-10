@@ -1,11 +1,18 @@
 import { expect, test, type Page } from '@playwright/test';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { PanelState } from './badNetPanel.js';
+import {
+  envFileText,
+  serverSettingsEnv,
+  serverSettingsFromEnvFile,
+  startPanel,
+  type PanelState,
+} from './badNetPanel.js';
 import { NETWORK_PROFILES, networkShape, parseNetworkArgs } from './networkProfile.js';
 import { Player, until } from './player.js';
 import { stopChild } from './server.js';
@@ -40,7 +47,9 @@ const MEASURE_TIMEOUT_MS = 10_000;
 const LATENCY_SAMPLES = 3;
 const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
+const HTTP_NOT_FOUND = 404;
 const HTTP_CONFLICT = 409;
+const HTTP_SERVER_ERROR = 500;
 const HOME_REQUEST = 'GET / HTTP/1.1\r\nHost: stand\r\nConnection: close\r\n\r\n';
 const BAD_PANEL_REQUESTS: readonly [string, string][] = [
   ['/api/network', JSON.stringify({ jitter: 'evening' })],
@@ -306,17 +315,14 @@ test.describe('пульт bad-net', () => {
     const font = await fetch(`${PANEL_URL}/fonts/russo-one-cyrillic.woff2`);
     expect(font.headers.get('content-type')).toBe('font/woff2');
     expect((await callPanel('/api/state')).body).toMatchObject({
-      pingMs: 100,
-      jitter: 'even',
+      bench: { pingMs: 100, jitter: 'even', directPort: PANEL_RUN_PORT, proxyPort: PANEL_RUN_PORT + 1 },
       shotLeadTicks: 0,
       shotInheritPercent: 0,
       hasNetSmoothing: false,
       restartedAt: null,
-      directPort: PANEL_RUN_PORT,
-      proxyPort: PANEL_RUN_PORT + 1,
     });
     const measuredMs = async (): Promise<number | null> =>
-      (await callPanel('/api/state')).body.measuredPing?.medianMs ?? null;
+      (await callPanel('/api/state')).body.bench?.measuredPing?.medianMs ?? null;
     await expect.poll(measuredMs, { timeout: MEASURE_TIMEOUT_MS }).not.toBeNull();
     expect(await measuredMs()).toBeGreaterThanOrEqual(SMOOTH_ROUND_TRIP_MS);
     expect(await measuredMs()).toBeLessThanOrEqual(SMOOTH_MEASURED_MAX_MS);
@@ -325,7 +331,7 @@ test.describe('пульт bad-net', () => {
     const kept = await openSocket(PANEL_RUN_PORT);
     const clean = await callPanel('/api/network', JSON.stringify({ pingMs: 0 }));
     expect(clean.status).toBe(HTTP_OK);
-    expect(clean.body).toMatchObject({ pingMs: 0, jitter: 'even', measuredPing: null });
+    expect(clean.body).toMatchObject({ bench: { pingMs: 0, jitter: 'even', measuredPing: null } });
     expect(await answersOn(kept)).toBe(true);
     expect(await homeRoundTripMs(PANEL_PROXY_URL)).toBeLessThan(CLEAN_ROUND_TRIP_MS);
     await expect.poll(measuredMs, { timeout: MEASURE_TIMEOUT_MS }).not.toBeNull();
@@ -335,8 +341,7 @@ test.describe('пульт bad-net', () => {
       expect((await callPanel(path, body)).status, `${path} ${body}`).toBe(HTTP_BAD_REQUEST);
     }
     expect((await callPanel('/api/state')).body).toMatchObject({
-      pingMs: 0,
-      jitter: 'even',
+      bench: { pingMs: 0, jitter: 'even' },
       shotLeadTicks: 0,
       shotInheritPercent: 0,
       hasNetSmoothing: false,
@@ -395,7 +400,7 @@ test.describe('пульт bad-net', () => {
 
       expect((await callPanel('/api/state')).body.overflowLastMinute).toBe(0);
       const phone = await callPanel('/api/network', JSON.stringify({ jitter: 'phone' }));
-      expect(phone.body).toMatchObject({ pingMs: 0, jitter: 'phone' });
+      expect(phone.body).toMatchObject({ bench: { pingMs: 0, jitter: 'phone' } });
       await expect
         .poll(async () => (await callPanel('/api/state')).body.overflowLastMinute, { timeout: OVERFLOW_TIMEOUT_MS })
         .toBeGreaterThan(0);
@@ -403,5 +408,61 @@ test.describe('пульт bad-net', () => {
       await player.close();
     }
     await expectStopped(child, PANEL_RUN_PORTS);
+  });
+});
+
+test.describe('пульт без посредника — админка тестовой машины', () => {
+  test('файл настроек: туда и обратно; чужие и битые значения — выключено', () => {
+    const settings = { shotLeadTicks: 4, shotInheritPercent: 50, hasNetSmoothing: true };
+    expect(serverSettingsFromEnvFile(envFileText(serverSettingsEnv(settings)))).toEqual(settings);
+    expect(serverSettingsFromEnvFile('')).toEqual({ shotLeadTicks: 0, shotInheritPercent: 0, hasNetSmoothing: false });
+    expect(
+      serverSettingsFromEnvFile('SHOT_LEAD_TICKS=7\nSHOT_INHERIT_PERCENT=сто\nNET_SMOOTHING=yes\nWALL_SLIDE=30\n'),
+    ).toEqual({ shotLeadTicks: 0, shotInheritPercent: 0, hasNetSmoothing: false });
+  });
+
+  test('только настройки сервера: сети нет, смена — перезапуск с полным набором переменных', async () => {
+    const restarts: Record<string, string>[] = [];
+    let failure: Error | null = null;
+    const server = {
+      logDir: mkdtempSync(join(tmpdir(), 'tanks-admin-log-')),
+      restart: (env: Record<string, string>): Promise<void> => {
+        restarts.push(env);
+        return failure === null ? Promise.resolve() : Promise.reject(failure);
+      },
+    };
+    const panel = await startPanel({
+      port: 0,
+      host: '127.0.0.1',
+      server,
+      bench: null,
+      shotLeadTicks: 0,
+      shotInheritPercent: 0,
+      hasNetSmoothing: true,
+    });
+    const url = `http://127.0.0.1:${String(panel.port)}`;
+    const call = async (path: string, body?: string): Promise<PanelReply> => {
+      const init = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
+      const response = await fetch(`${url}${path}`, init);
+      return { status: response.status, body: (await response.json()) as PanelReply['body'] };
+    };
+    try {
+      expect((await fetch(`${url}/`)).status).toBe(HTTP_OK);
+      expect((await call('/api/state')).body).toMatchObject({ bench: null, shotLeadTicks: 0, hasNetSmoothing: true });
+      expect((await call('/api/network', JSON.stringify({ pingMs: 0 }))).status).toBe(HTTP_NOT_FOUND);
+
+      const lead = await call('/api/server', JSON.stringify({ shotLeadTicks: 4 }));
+      expect(lead.status).toBe(HTTP_OK);
+      expect(lead.body).toMatchObject({ shotLeadTicks: 4, serverError: null, isRestarting: false });
+      expect(lead.body.restartedAt).not.toBeNull();
+      expect(restarts).toEqual([{ SHOT_LEAD_TICKS: '4', SHOT_INHERIT_PERCENT: '0', NET_SMOOTHING: '1' }]);
+
+      failure = new Error('служба не поднялась');
+      const failed = await call('/api/server', JSON.stringify({ hasNetSmoothing: false }));
+      expect(failed.status).toBe(HTTP_SERVER_ERROR);
+      expect(failed.body.serverError).toBe('служба не поднялась');
+    } finally {
+      await panel.close();
+    }
   });
 });

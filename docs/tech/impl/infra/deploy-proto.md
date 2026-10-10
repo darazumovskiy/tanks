@@ -24,4 +24,10 @@
 
 После выкладки изменений сервера — бой под нагрузкой (игра на 50 мест: один клиент и серверные боты) и ряд «Сервер: ОК?» на дашборде: все плитки зелёные. Средний процессор и память машины паузы сервера не показывают ([infra.md](../../base/infra.md), «Мониторинг и логи»).
 
+## Тестовая машина
+
+Временная машина для проверки игры на настоящем дальнем пинге: Akamai (Linode) Linode 4 GB в Сиэтле, `172.238.33.233`, $0,036 в час; пинг с Кипра около 200 мс. Адрес — `https://172-238-33-233.sslip.io`, админка — `/admin/` под логином `admin` и паролем (пароль у оператора, на машине — только хэш в `/etc/tanks/admin.hash`). После проверки машину удаляет оператор.
+
+Выкладка — `deploy/test/deploy-test.sh root@172.238.33.233 <ветка или коммит>` с рабочей машины: архив коммита из локального репозитория уходит по SSH, без пуша в GitHub; на машине [remote.sh](../../../../deploy/test/remote.sh) ставит Node 22 и Caddy (из репозитория Ubuntu), собирает, ставит `tanks.service` из коммита с дополнением `EnvironmentFile=-/etc/tanks/settings.env`, пишет Caddyfile на имя sslip.io. Vector не ставится: метрики и журнал в Grafana не уходят, `/telemetry` отвечает 204. Есть в коммите админка ([serverAdmin.ts](../../../../packages/client/test/e2e/serverAdmin.ts)) и хэш пароля на машине — служба `tanks-admin` от root на `127.0.0.1:8090` и `/admin/` в Caddy под basic auth; админка меняет настройки в `/etc/tanks/settings.env` и перезапускает `tanks` ([lag-lab.md](../frontend/lag-lab.md), «Админка тестовой машины»). Журналы игр — `/opt/tanks-logs`, как на боевой.
+
 Логи процесса: `journalctl -u tanks`, `journalctl -u caddy`, `journalctl -u vector`. Журналы игр — `/opt/tanks-logs/<gameId>.log`, один файл на дуэль, около 1 МБ в минуту боя двух игроков ([game-log.md](../backend/game-log.md)); старше 7 дней удаляет ежедневный cron `tanks-logs-cleanup`. Визиты страниц — `/opt/tanks-logs/visits/<дата>.log`, хранятся 90 дней ([visitors.md](../backend/visitors.md)). Метрики, системный журнал и редкие события игр — в Grafana Cloud, дашборд `https://graylichen2028.grafana.net/d/tanks-main` ([monitoring.md](monitoring.md)).
