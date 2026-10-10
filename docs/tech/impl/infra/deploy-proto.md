@@ -23,7 +23,7 @@
 | `Caddyfile` | HTTPS на `tankbattle.io` и старом имени sslip.io, `www.tankbattle.io` → постоянная переадресация на `tankbattle.io`; сжатие; `/metrics` → 404, `/telemetry` → Vector, `/admin/` → админка под паролем, остальное (включая WebSocket) → 8080 |
 | `android/` | Сборка и загрузка Android-приложения — [android-app.md](android-app.md) |
 
-Выкладка берёт код только из `origin/main` на GitHub: сначала коммит и пуш, потом `deploy/deploy.sh root@172.232.212.157`. Перезапуск рвёт активные дуэли.
+Выкладка берёт код только из `origin/main` на GitHub: сначала коммит и пуш, потом `deploy/deploy.sh root@172.232.212.157`. Перезапуск рвёт активные дуэли. Выкладка исполняет `deploy-local.sh` той версии, что лежала на машине до неё: новые шаги самого скрипта работают со следующей выкладки — после правки скрипта выкладку повторить.
 
 После выкладки изменений сервера — бой под нагрузкой (игра на 50 мест: один клиент и серверные боты) и ряд «Сервер: ОК?» на дашборде: все плитки зелёные. Средний процессор и память машины паузы сервера не показывают ([infra.md](../../base/infra.md), «Мониторинг и логи»).
 
@@ -35,7 +35,7 @@
 Админка — `https://tankbattle.io/admin/`, логин `admin`: пульт стенда без посредника сети ([lag-lab.md](../frontend/lag-lab.md), «Админка тестовой машины»). Служба `tanks-admin` ([tanks-admin.service](../../../../deploy/tanks-admin.service)) от root на `127.0.0.1:8090`: пишет файл настроек, перезапускает `tanks` и ждёт `/healthz`; перезапуск рвёт текущие бои, открытые вкладки переподключаются сами уже с новыми правилами. Caddy пускает на `/admin/` по basic auth: `deploy-local.sh` пишет `/etc/caddy/admin-auth.caddy` из хэша пароля в `/etc/tanks/admin.hash`; хэша нет — `/admin/` отвечает 503. Пароль у оператора в `~/.secrets-tank/admin-password`; положить или сменить хэш:
 
 ```bash
-ssh -i ~/.ssh/tanks_probe_ed25519 root@172.232.212.157 'install -d -m 755 /etc/tanks && read -r PW && caddy hash-password --plaintext "$PW" > /etc/tanks/admin.hash && chmod 600 /etc/tanks/admin.hash' < ~/.secrets-tank/admin-password
+ssh -i ~/.ssh/tanks_probe_ed25519 root@172.232.212.157 'install -d -m 755 /etc/tanks && PW=$(cat) && caddy hash-password --plaintext "$PW" > /etc/tanks/admin.hash && chmod 600 /etc/tanks/admin.hash' < ~/.secrets-tank/admin-password
 ```
 
 После смены хэша — выкладка `deploy/deploy.sh root@172.232.212.157`: она пересобирает блок пароля и перезагружает Caddy.
