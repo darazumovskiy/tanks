@@ -64,10 +64,10 @@ async function snapshotAfterCountdown(client: TestClient): Promise<SnapshotMessa
   return snapshot;
 }
 
-async function healthz(): Promise<{ rooms: number; connections: number; tick: number }> {
+async function healthz(): Promise<{ build: string; rooms: number; connections: number; tick: number }> {
   const response = await fetch(`http://127.0.0.1:${String(port)}/healthz`);
   expect(response.status).toBe(200);
-  return (await response.json()) as { rooms: number; connections: number; tick: number };
+  return (await response.json()) as { build: string; rooms: number; connections: number; tick: number };
 }
 
 beforeEach(async () => {
@@ -89,6 +89,7 @@ afterEach(async () => {
 describe('HTTP', () => {
   it('отдаёт состояние на /healthz', async () => {
     const body = await healthz();
+    expect(body.build).toBe('dev');
     expect(body.rooms).toBe(0);
     expect(body.connections).toBe(0);
   });
@@ -673,7 +674,9 @@ describe('журнал игры', () => {
       expect(line).toMatch(LINE);
     }
     const text = lines.join('\n');
-    expect(text).toContain(`S gt=0 tc=00:00 game start room=srvlog p0=Алиса p1=Боб rules=0 lead=0 inherit=0`);
+    expect(text).toMatch(
+      /S gt=0 tc=00:00 game start room=srvlog p0=Алиса p1=Боб rules=0 lead=0 inherit=0\n\S+ S gt=0 tc=00:00 build server=dev\n/,
+    );
     expect(text).toContain('round start idx=0 map=0 score=0:0');
     expect(text).toMatch(/tick rt=\d+ ph=c late=\d+\.\d a0=0\.00,0\.00,0\.00,0 ack0=0 in0=0 sil0=\d p0=140\.0,450\.0/);
     expect(text).toMatch(/tick rt=\d+ ph=f .*a0=1\.00,0\.00,0\.00,1 ack0=1 in0=1 /);
@@ -719,23 +722,25 @@ describe('журнал игры', () => {
     );
   });
 
-  it('SHOT_LEAD_TICKS ставит догон поверх правил процесса: RoundStart и строка game start', async () => {
+  it('SHOT_LEAD_TICKS ставит догон поверх правил процесса, TANKS_BUILD — версию: RoundStart, game start, /healthz', async () => {
     await app.close();
     app = createApp({
       logDir,
       rules: { ...DEFAULT_RULES, wallSlidePercent: 50 },
-      env: { SHOT_LEAD_TICKS: '2' },
+      env: { SHOT_LEAD_TICKS: '2', TANKS_BUILD: 'abc1234' },
       room: FAST_ROOM,
       tickMs: TICK_MS,
     });
     port = await app.listen(0, '127.0.0.1');
+    expect((await healthz()).build).toBe('abc1234');
     const [a] = await joinedPair('leadrules');
     expect(lastRoundStart.rules).toEqual({ wallSlidePercent: 50, shotLeadTicks: 2, shotInheritPercent: 0 });
     await snapshotAfterCountdown(a);
     await app.close();
     expect(logLines(lastRoundStart.gameId).join('\n')).toContain(
-      'game start room=leadrules p0=Алиса p1=Боб rules=50 lead=2 inherit=0',
+      'game start room=leadrules p0=Алиса p1=Боб rules=50 lead=2 inherit=0\n',
     );
+    expect(logLines(lastRoundStart.gameId)[1]).toMatch(/ S gt=0 tc=00:00 build server=abc1234$/);
   });
 
   it('отвергает недопустимый ключ или источник, слишком большое тело и не-POST', async () => {
@@ -915,6 +920,7 @@ describe('догон снаряда', () => {
   it('бой толпы при догоне 2: правило в FfaWelcome и game start; снаряд человека дальше, снаряд бота — нет', async () => {
     await start({
       SHOT_LEAD_TICKS: String(LEAD_TICKS),
+      TANKS_BUILD: 'abc1234',
       FFA_SERVER_BOTS: '0',
       FFA_MINIMUM: '2',
       FFA_LOBBY_WAIT_SECONDS: '1',
@@ -948,6 +954,7 @@ describe('догон снаряда', () => {
     expect(gameLog(welcome.gameId)).toContain(
       `game start mode=ffa size=10 rules=0 lead=${String(LEAD_TICKS)} inherit=0`,
     );
+    expect(gameLog(welcome.gameId)).toMatch(/inherit=0\n\S+ S gt=0 tc=00:00 build server=abc1234\n/);
   });
 });
 

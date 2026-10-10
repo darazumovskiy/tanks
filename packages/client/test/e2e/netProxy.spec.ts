@@ -95,6 +95,18 @@ test.describe('посредник: пачки', () => {
   });
 });
 
+test.describe('посредник: паузы связи', () => {
+  test('связь замирает на 100 мс раз в 300 мс — поток целиком, разрывы не короче паузы', async () => {
+    const stream = await streamThroughEcho({ delayMs: 10, stallEveryMs: 300, stallMs: 100 });
+    expect(stream.received.equals(stream.sent)).toBe(true);
+    // Первый разрыв — от первого куска до конца первой паузы, он короче шага пауз.
+    const betweenStalls = stream.burstGaps.slice(1);
+    expect(betweenStalls.length).toBeGreaterThan(1);
+    expect(Math.min(...betweenStalls)).toBeGreaterThanOrEqual(300 - SAME_BURST_MS);
+    expect(spread(betweenStalls)).toBeLessThan(25);
+  });
+});
+
 test.describe('посредник: смена сети на ходу', () => {
   const NIGHT: NetProxyOptions = { delayMs: 40, burstMs: 150, burstMaxMs: 250 };
   const CLEAN: NetProxyOptions = { delayMs: 0, burstMs: 0, burstMaxMs: 0 };

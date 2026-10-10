@@ -31,7 +31,7 @@ main() {
   chown -R tanks:tanks /opt/tanks
   cd /opt/tanks
   sudo -u tanks npm ci --no-audit --no-fund --silent
-  sudo -u tanks npm run -s build
+  sudo -u tanks TANKS_BUILD="$COMMIT" npm run -s build
   install -d -o tanks -g tanks -m 755 /opt/tanks-logs
 
   install -d -m 755 /etc/tanks

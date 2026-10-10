@@ -5,7 +5,7 @@ import { createBot } from './bots/ladder.js';
 import { createTwin } from './bots/twin.js';
 import { BotTurns, type BotTurnReport } from './crowd/botTurns.js';
 import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaConnection, type FfaOptions, type FfaSeat } from './ffaGame.js';
-import { NO_LOG, type GameLog } from './gameLog.js';
+import { DEV_BUILD, NO_LOG, type GameLog } from './gameLog.js';
 import {
   emptyPlayerCounts,
   NO_DROP_COUNTER,
@@ -65,6 +65,7 @@ export class RoomManager {
     private readonly rules: Readonly<RoundRules> = DEFAULT_RULES,
     private readonly ffaOptions: FfaOptions = DEFAULT_FFA_OPTIONS,
     private readonly hasNetSmoothing = false,
+    private readonly build = DEV_BUILD,
   ) {}
 
   get roomCount(): number {
@@ -77,7 +78,7 @@ export class RoomManager {
     if (existing !== undefined) {
       return existing;
     }
-    const room = new Room(code, this.options, this.log, this.dropCounter, this.rules, this.hasNetSmoothing);
+    const room = new Room(code, this.options, this.log, this.dropCounter, this.rules, this.hasNetSmoothing, this.build);
     this.rooms.set(code, room);
     const bot = this.botFor(code, room);
     if (bot !== null) {
@@ -211,7 +212,15 @@ export class RoomManager {
     if (fullest !== null) {
       return fullest;
     }
-    const game = new FfaGame(size, this.ffaOptions, this.log, this.dropCounter, this.rules, this.hasNetSmoothing);
+    const game = new FfaGame(
+      size,
+      this.ffaOptions,
+      this.log,
+      this.dropCounter,
+      this.rules,
+      this.hasNetSmoothing,
+      this.build,
+    );
     this.games.push(game);
     return game;
   }

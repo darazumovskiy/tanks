@@ -57,7 +57,7 @@ import { crowdNickname, crowdPyramid, type CrowdLevel } from './crowd/profile.js
 import { ServerBot } from './crowd/serverBot.js';
 import { TargetBook } from './crowd/targets.js';
 import { crowdBullets, crowdTank, type Frame } from './crowd/view.js';
-import { LOG_SOURCE_SERVER, type GameLog } from './gameLog.js';
+import { DEV_BUILD, formatBuildLine, LOG_SOURCE_SERVER, type GameLog } from './gameLog.js';
 import { clearInput, createInputChannel, hasSpareInput, offerInput, takeAction, type InputChannel } from './inputs.js';
 import type { InputDropCounter } from './metrics.js';
 import { randomGameId, sanitizeNickname, sanitizeStats, type Connection, type Seat } from './room.js';
@@ -256,12 +256,14 @@ export class FfaGame {
     private readonly dropCounter: InputDropCounter,
     private readonly rules: Readonly<RoundRules>,
     private readonly hasNetSmoothing = false,
+    build = DEV_BUILD,
   ) {
     this.map = options.mapFor(size);
     if (options.hasServerBots) {
       prepareCrowdMap(this.map);
     }
     this.writeLog(`game start mode=ffa size=${String(size)} ${formatJournalRules(rules)}`);
+    this.writeLog(formatBuildLine(build));
   }
 
   // Участники — люди и боты роя: серверный бот своё место им уступает.

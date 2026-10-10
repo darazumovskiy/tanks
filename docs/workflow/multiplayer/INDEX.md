@@ -16,6 +16,7 @@
 | Почему игра RWV3 лагала: приступ потерь пакетов на пути от Mac, рой на том же Mac его усиливает; сервер и журнал каждого тика ни при чём | [knowledge/incident-rwv3.md](knowledge/incident-rwv3.md) |
 | Почему свёрнутый айфон заводил новую дуэль каждые 20 секунд и как это повторено тестом | [knowledge/incident-yct4.md](knowledge/incident-yct4.md) |
 | Почему в игре ZBF9 после возврата связи танк 13 секунд не слушался управления | [knowledge/incident-zbf9.md](knowledge/incident-zbf9.md) |
+| Почему в игре 633T на Samsung танк рвал вперёд: связь замирала раз в 2 с, сервер проезжал паузу дважды — повторами и пачкой команд | [knowledge/incident-633t.md](knowledge/incident-633t.md) |
 | Правила боя: вход, матч, счёт, возрождение, зона и финал, бездействие, что видит игрок, карты, боты | [concept/ffa.md](../../concept/ffa.md) |
 | Движок на N танков, матч, выбор точки возрождения, карты; план тестирования | [tech/impl/backend/ffa-engine.md](../../tech/impl/backend/ffa-engine.md) |
 | Сервер общей игры: подбор, фазы, бездействие, обрыв и возврат; сообщения протокола; снаряды у клиента; план тестирования | [tech/impl/backend/ffa-server.md](../../tech/impl/backend/ffa-server.md) |

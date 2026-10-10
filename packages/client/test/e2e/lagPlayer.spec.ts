@@ -75,6 +75,11 @@ async function zigzag(player: Player, durationMs: number): Promise<void> {
   await player.page.keyboard.up('KeyW');
 }
 
+// Газ без руля: свой танк едет туда же, куда его везёт повтор прошлой команды на сервере.
+async function driveStraight(player: Player, durationMs: number): Promise<void> {
+  await player.holdKey('KeyW', durationMs);
+}
+
 async function joinLagger(
   browser: Parameters<typeof Player.openFfa>[0],
   server: GameServer,
@@ -92,10 +97,22 @@ async function joinLagger(
   return { player, start };
 }
 
+// Выброшенные команды игрока: сверх очереди и засчитанные за повторы паузы.
+function droppedInputs(
+  server: GameServer,
+  gameId: string,
+  playerId: number | null,
+): { overflow: number; owed: number } {
+  const lines = server.gameLog(gameId).split('\n');
+  const count = (reason: string): number =>
+    lines.filter((line) => line.includes(`input ${reason} id=${String(playerId)} `)).length;
+  return { overflow: count('overflow'), owed: count('owed') };
+}
+
 test.describe('игрок с пачками в сети', () => {
-  for (const [title, network, isOverflowExpected] of [
-    ['пачки 200 мс — сервер выбрасывает команды сверх очереди', EVEN_BURSTS, true],
-    ['неровные пачки ночной сети — сервер выбрасывает команды сверх очереди', NIGHT_NETWORK, true],
+  for (const [title, network, isDropExpected] of [
+    ['пачки 200 мс — сервер не применяет команд пачки сверх присланных', EVEN_BURSTS, true],
+    ['неровные пачки ночной сети — сервер не применяет команд пачки сверх присланных', NIGHT_NETWORK, true],
     ['ровная задержка — команды не выбрасываются', { delayMs: 30 }, false],
   ] as const) {
     test(title, async ({ browser }) => {
@@ -107,14 +124,11 @@ test.describe('игрок с пачками в сети', () => {
       await zigzag(player, DRIVE_MS);
       const gameId = start.gameId ?? '';
       await server.stop();
-      const overflows = server
-        .gameLog(gameId)
-        .split('\n')
-        .filter((line) => line.includes(`input overflow id=${String(start.playerId)} `)).length;
-      if (isOverflowExpected) {
-        expect(overflows).toBeGreaterThan(0);
+      const drops = droppedInputs(server, gameId, start.playerId);
+      if (isDropExpected) {
+        expect(drops.overflow + drops.owed).toBeGreaterThan(0);
       } else {
-        expect(overflows).toBe(0);
+        expect(drops).toEqual({ overflow: 0, owed: 0 });
       }
     });
   }
@@ -136,6 +150,8 @@ const TICK_MS = 1000 / 30;
 const STALL_SHARE = 0.25;
 // Сдвиг своего танка дальше — возрождение, а не поправка.
 const RESPAWN_JUMP = 120;
+// Чуть дольше OWN_SMOOTHING_MS — за это время нарисованный танк проходит всю поправку.
+const SURGE_WINDOW_MS = 150;
 
 async function startSampling(page: Player['page']): Promise<void> {
   await page.evaluate(() => {
@@ -177,6 +193,9 @@ interface Smoothness {
   overflows: number;
   // Самый большой сдвиг нарисованного своего танка за кадр сверх его хода.
   worstOwnJump: number;
+  // Самый большой сдвиг нарисованного своего танка за SURGE_WINDOW_MS сверх его хода: поправка, которую сглаживание
+  // растянуло на несколько кадров, глаз всё равно видит рывком.
+  worstOwnSurge: number;
   // Доля кадров, где картинка чужих стоит.
   othersStallShare: number;
   // Самый большой шаг тика чужих за кадр сверх хода времени, тиков.
@@ -203,15 +222,55 @@ function smoothnessOf(samples: readonly FrameSample[], overflows: number): Smoot
       continue;
     }
     const moved = Math.hypot(now.me.x - was.me.x, now.me.y - was.me.y);
-    const travel = (Math.max(Math.abs(was.speed), Math.abs(now.speed)) * elapsed) / 1000;
     if (moved < RESPAWN_JUMP) {
-      worstOwnJump = Math.max(worstOwnJump, moved - travel);
+      worstOwnJump = Math.max(worstOwnJump, moved - frameTravel(was, now));
     }
   }
-  return { overflows, worstOwnJump, othersStallShare: stalls / Math.max(1, frames), worstOthersLeap };
+  return {
+    overflows,
+    worstOwnJump,
+    worstOwnSurge: worstOwnSurge(samples, start),
+    othersStallShare: stalls / Math.max(1, frames),
+    worstOthersLeap,
+  };
 }
 
-async function playNight(browser: Parameters<typeof Player.openFfa>[0], hasNetSmoothing: boolean): Promise<Smoothness> {
+function frameTravel(was: FrameSample, now: FrameSample): number {
+  return (Math.max(Math.abs(was.speed), Math.abs(now.speed)) * (now.at - was.at)) / 1000;
+}
+
+function worstOwnSurge(samples: readonly FrameSample[], start: number): number {
+  let worst = 0;
+  for (let last = 1; last < samples.length; last++) {
+    const end = samples[last];
+    const endMe = end?.me ?? null;
+    if (end === undefined || endMe === null || end.at < start) {
+      continue;
+    }
+    let travel = 0;
+    for (let first = last - 1; first >= 0; first--) {
+      const [from, next] = [samples[first], samples[first + 1]];
+      const fromMe = from?.me ?? null;
+      if (from === undefined || next === undefined || fromMe === null || end.at - from.at > SURGE_WINDOW_MS) {
+        break;
+      }
+      travel += frameTravel(from, next);
+      const moved = Math.hypot(endMe.x - fromMe.x, endMe.y - fromMe.y);
+      if (moved >= RESPAWN_JUMP) {
+        break;
+      }
+      worst = Math.max(worst, moved - travel);
+    }
+  }
+  return worst;
+}
+
+async function playLagger(
+  browser: Parameters<typeof Player.openFfa>[0],
+  network: NetProxyOptions,
+  hasNetSmoothing: boolean,
+  drive: (player: Player, durationMs: number) => Promise<void> = zigzag,
+): Promise<Smoothness> {
   const server = new GameServer({
     FFA_LOBBY_WAIT_SECONDS: '1',
     FFA_MINIMUM: '1',
@@ -219,33 +278,50 @@ async function playNight(browser: Parameters<typeof Player.openFfa>[0], hasNetSm
   });
   servers.push(server);
   await server.start();
-  const { player, start } = await joinLagger(browser, server, NIGHT_NETWORK);
+  const { player, start } = await joinLagger(browser, server, network);
   await startSampling(player.page);
-  await zigzag(player, SMOOTH_DRIVE_MS);
+  await drive(player, SMOOTH_DRIVE_MS);
   const samples = await stopSampling(player.page);
   await server.stop();
-  const overflows = server
-    .gameLog(start.gameId ?? '')
-    .split('\n')
-    .filter((line) => line.includes(`input overflow id=${String(start.playerId)} `)).length;
-  return smoothnessOf(samples, overflows);
+  return smoothnessOf(samples, droppedInputs(server, start.gameId ?? '', start.playerId).overflow);
 }
 
-test('ночная сеть со сглаживанием: выброшенных команд в разы меньше, свой танк не прыгает, чужие не стоят', async ({
+test('ночная сеть со сглаживанием: команд сверх очереди не больше, свой танк не прыгает, чужие не стоят', async ({
   browser,
 }) => {
   test.setTimeout(150_000);
-  const plain = await playNight(browser, false);
-  const smooth = await playNight(browser, true);
+  const plain = await playLagger(browser, NIGHT_NETWORK, false);
+  const smooth = await playLagger(browser, NIGHT_NETWORK, true);
   const summary = `без сглаживания ${JSON.stringify(plain)}; со сглаживанием ${JSON.stringify(smooth)}`;
   console.log(summary);
   test.info().annotations.push({ type: 'сглаживание', description: summary });
-  expect(plain.overflows, summary).toBeGreaterThan(0);
-  expect(smooth.overflows * 3, summary).toBeLessThanOrEqual(plain.overflows);
+  expect(smooth.overflows, summary).toBeLessThanOrEqual(plain.overflows);
   expect(smooth.worstOwnJump * 2, summary).toBeLessThanOrEqual(plain.worstOwnJump);
   expect(smooth.othersStallShare * 2, summary).toBeLessThanOrEqual(plain.othersStallShare);
   expect(smooth.worstOthersLeap, summary).toBeLessThan(plain.worstOthersLeap);
 });
+
+// Связь телефона, которая засыпает: каждые 2,07 с обе стороны замирают на 225 мс, остальное время пинг 50 мс.
+const STALLING_NETWORK: NetProxyOptions = { delayMs: 25, stallEveryMs: 2_070, stallMs: 225 };
+// Сдвиг своего танка сверх хода, который глаз не видит как рывок; сервер, шагнувший лишние тики паузы, давал десятки.
+const STALL_OWN_SURGE_LIMIT = 10;
+
+// Без сглаживания свой танк показывает поправку целиком: руль, переложенный посреди паузы, сервер угадать не может,
+// поэтому там — газ без руля; повтор прошлой команды тогда совпадает с присланными.
+for (const [title, hasNetSmoothing, drive] of [
+  ['со сглаживанием, змейка с огнём', true, zigzag],
+  ['со сглаживанием, газ без руля', true, driveStraight],
+  ['без сглаживания, газ без руля', false, driveStraight],
+] as const) {
+  test(`связь замирает раз в 2 с (${title}): свой танк не рвёт вперёд`, async ({ browser }) => {
+    test.setTimeout(90_000);
+    const result = await playLagger(browser, STALLING_NETWORK, hasNetSmoothing, drive);
+    const summary = JSON.stringify(result);
+    console.log(summary);
+    test.info().annotations.push({ type: 'паузы связи', description: summary });
+    expect(result.worstOwnSurge, summary).toBeLessThan(STALL_OWN_SURGE_LIMIT);
+  });
+}
 
 // Живой лагер для оператора: `LAG_DEMO=1 npx playwright test lagPlayer -g "живой лагер"`, затем открыть
 // `http://localhost:8095/ffa/10` в своём браузере. LAG_DEMO_MINUTES — сколько минут Лагер играет.

@@ -506,7 +506,8 @@ describe('бой', () => {
       const me = tankOf(snapshot, a.welcome.playerId);
       return me !== undefined && Math.hypot(me.x - startX, me.y - startY) > 20;
     });
-    expect(moved.ackSeq).toBe(seq);
+    // Повторы газа после последней команды засчитываются вперёд — подтверждённый номер может уйти дальше присланного.
+    expect(moved.ackSeq).toBeGreaterThanOrEqual(seq);
   });
 
   it('выстрел: рождение у всех, отскок от края со скоростью после отскока, гибель', async () => {

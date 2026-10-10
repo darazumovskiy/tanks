@@ -1,0 +1,16 @@
+#!/bin/bash
+# Пишет /etc/tanks/build.env с TANKS_BUILD — коммитом сборки в /opt/tanks. Вызывается tanks.service перед запуском.
+# Тестовая выкладка приходит архивом без .git и кладёт коммит в COMMIT; боевая — git-клон.
+set -euo pipefail
+
+ROOT=/opt/tanks
+TARGET=/etc/tanks/build.env
+
+build=dev
+if [[ -s $ROOT/COMMIT ]]; then
+  build=$(tr -d '[:space:]' <"$ROOT/COMMIT")
+elif commit=$(git -c safe.directory="$ROOT" -C "$ROOT" rev-parse --short HEAD 2>/dev/null); then
+  build=$commit
+fi
+install -d -m 755 "$(dirname "$TARGET")"
+printf 'TANKS_BUILD=%s\n' "$build" >"$TARGET"

@@ -36,7 +36,7 @@ import {
   takeAction,
   type InputChannel,
 } from './inputs.js';
-import { LOG_SOURCE_SERVER, NO_LOG, type GameLog } from './gameLog.js';
+import { DEV_BUILD, formatBuildLine, LOG_SOURCE_SERVER, NO_LOG, type GameLog } from './gameLog.js';
 import { NO_DROP_COUNTER, type InputDropCounter } from './metrics.js';
 
 export interface Connection {
@@ -126,6 +126,7 @@ export class Room {
   private readonly dropCounter: InputDropCounter;
   private readonly rules: Readonly<RoundRules>;
   private readonly hasNetSmoothing: boolean;
+  private readonly build: string;
 
   // hasNetSmoothing — сглаживание дёрганой сети: очередь команд растёт на пачках, клиент узнаёт признак из Welcome.
   constructor(
@@ -135,6 +136,7 @@ export class Room {
     dropCounter: InputDropCounter = NO_DROP_COUNTER,
     rules: Readonly<RoundRules> = DEFAULT_RULES,
     hasNetSmoothing = false,
+    build = DEV_BUILD,
   ) {
     this.code = code;
     this.options = options;
@@ -142,6 +144,7 @@ export class Room {
     this.dropCounter = dropCounter;
     this.rules = rules;
     this.hasNetSmoothing = hasNetSmoothing;
+    this.build = build;
   }
 
   get isEmpty(): boolean {
@@ -310,6 +313,7 @@ export class Room {
     };
     this.duel = duel;
     this.writeLog(`game start room=${this.code} p0=${a.nickname} p1=${b.nickname} ${formatJournalRules(this.rules)}`);
+    this.writeLog(formatBuildLine(this.build));
     this.startRound(duel);
   }
 

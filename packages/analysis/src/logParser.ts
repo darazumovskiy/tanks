@@ -20,7 +20,13 @@ const POSE_FIELDS = 4;
 const TOUCH_ON = '1';
 const SLOTS_SEPARATOR = '|';
 const ROOM_SLOTS_PREFIX = 'net room slots=';
-const DROPPED_INPUT_PREFIXES: readonly string[] = ['input stale', 'input limit', 'input overflow', 'input backlog'];
+const DROPPED_INPUT_PREFIXES: readonly string[] = [
+  'input stale',
+  'input limit',
+  'input overflow',
+  'input backlog',
+  'input owed',
+];
 const USER_AGENT_LABEL_LENGTH = 40;
 // Строка `device` берётся из журнала комнаты, только если она написана не дальше пяти минут от старта игры.
 const DEVICE_ROOM_WINDOW_SEC = 300;

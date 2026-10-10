@@ -3,7 +3,7 @@ import type { BotTurnReport } from './crowd/botTurns.js';
 import type { SystemCpu } from './systemCpu.js';
 
 export type Direction = 'in' | 'out';
-export type DropReason = 'stale' | 'limit' | 'overflow' | 'backlog';
+export type DropReason = 'stale' | 'limit' | 'overflow' | 'backlog' | 'owed';
 
 export interface InputDropCounter {
   countDroppedInput(reason: DropReason): void;
@@ -103,7 +103,7 @@ export function createMetrics(): Metrics {
   let lateTicks = 0;
   const messages: Record<Direction, number> = { in: 0, out: 0 };
   const bytes: Record<Direction, number> = { in: 0, out: 0 };
-  const dropped: Record<DropReason, number> = { stale: 0, limit: 0, overflow: 0, backlog: 0 };
+  const dropped: Record<DropReason, number> = { stale: 0, limit: 0, overflow: 0, backlog: 0, owed: 0 };
 
   return {
     recordTick(durationMs, isLate): void {
@@ -178,7 +178,7 @@ export function createMetrics(): Metrics {
         out.value('tanks_bytes_total', bytes[direction], { direction });
       }
       out.header('tanks_inputs_dropped_total', 'counter', 'команд отброшено');
-      for (const reason of ['stale', 'limit', 'overflow', 'backlog'] as const) {
+      for (const reason of ['stale', 'limit', 'overflow', 'backlog', 'owed'] as const) {
         out.value('tanks_inputs_dropped_total', dropped[reason], { reason });
       }
       const { machinePressureSeconds, gamePressureSeconds, stealSeconds } = gauges.cpu;

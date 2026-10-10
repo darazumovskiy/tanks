@@ -10,6 +10,8 @@ export interface GameLog {
 
 export const LOG_ROUTE = '/log';
 export const LOG_SOURCE_SERVER = 'S';
+// Версия сервера без коммита сборки — локальный запуск и тесты.
+export const DEV_BUILD = 'dev';
 const LOG_KEY_PATTERN = /^[A-Za-z0-9-]{1,40}$/;
 const LOG_SOURCE_PATTERN = /^[A-Za-z0-9]{1,6}$/;
 const LOG_BODY_LIMIT_BYTES = 256 * 1024;
@@ -22,6 +24,11 @@ export const NO_LOG: GameLog = {
     return;
   },
 };
+
+// Отдельная строка сразу после `game start`: разбор журналов читает `game start` до конца строки.
+export function formatBuildLine(build: string): string {
+  return `build server=${build}`;
+}
 
 function timeOfDay(now: Date): string {
   const hh = String(now.getUTCHours()).padStart(2, '0');

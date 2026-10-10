@@ -73,7 +73,7 @@ Vector читает `journalctl` юнитов `tanks`, `caddy` и `vector` це�
 | `shell` | `app` (Capacitor), `browser`, `pwa` | `Capacitor.isNativePlatform()`, `display-mode: standalone` |
 | `os`, `osVersion` | `Android 14`, `iOS 17.5`, `macOS 14`, `Windows 11` | `userAgent` |
 | `browser`, `browserVersion` | `Chrome 130`, `Safari 17` | `userAgent` |
-| `appVersion` | версия клиента — короткий хеш коммита (`APP_VERSION` через `define` Vite; в тестах `test`, вне git `dev`) | сборка |
+| `appVersion` | версия клиента — короткий хеш коммита (`APP_VERSION` через `define` Vite: `TANKS_BUILD` от выкладки, иначе git, вне git `dev`; в тестах `test`) | сборка |
 | `screen`, `dpr`, `touch` | `1080x2400`, `2.75`, `1` | `window`, `navigator` |
 
 Где какой признак живёт: метками Loki (по ним индекс, их мало) — `platform`, `shell`, `kind`, `game`, `side`; остальные — полями события в теле строки (JSON), фильтруются и группируются в LogQL (`| json | os="Android 14"`). Правило: метка — только признак с десятком значений и меньше; версии, модели, размеры — поля. Это держит число потоков Loki в рамках бесплатного тарифа при любом росте признаков.

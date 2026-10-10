@@ -925,7 +925,7 @@ describe('журнал клиента', () => {
     expect(sentWith(harness, ' net welcome id=4 ').url).toBe(`/log?key=K7QX&src=C${String(ME)}`);
   });
 
-  it('строка устройства кончается номером устройства', async () => {
+  it('строка устройства: версия клиента, браузер вместо приложения, номер устройства в конце', async () => {
     const harness = makeGame();
     harness.socket().open();
     harness.socket().receive(welcome());
@@ -933,7 +933,7 @@ describe('журнал клиента', () => {
     const line = sentWith(harness, ' device ')
       .body.split('\n')
       .find((text) => text.includes(' device '));
-    expect(line).toMatch(new RegExp(` mode=ffa size=${String(SIZE)} dev=${DEVICE_ID}$`));
+    expect(line).toMatch(new RegExp(` mode=ffa size=${String(SIZE)} build=test app=web dev=${DEVICE_ID}$`));
   });
 
   it('строка секунды — самая большая поправка своего танка и самая длинная пауза между снимками за секунду', async () => {

@@ -49,6 +49,7 @@ import { edgeArrows, visibleEnemies, type EdgeArrow } from './arrows.js';
 import { FfaCamera, type FfaAim, type FfaFraming } from './ffaCamera.js';
 import { FfaPrediction, type FfaFrameView, type FfaViewTank } from './ffaPrediction.js';
 import { FfaFxPolicy } from './fxPolicy.js';
+import { formatBuildFields } from '../build.js';
 import { ffaInvitePath } from '../ffaRoute.js';
 import { FfaHud } from './hud/hud.js';
 import { feedText, FfaSession, type FfaScreen as SessionScreen } from './session.js';
@@ -233,7 +234,7 @@ export class FfaGame {
     this.summaryAt = now;
     this.diag = this.deps.createDiag(this.roomCode);
     this.diag.write(
-      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'} mode=ffa size=${String(options.size)} dev=${options.deviceId}`,
+      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'} mode=ffa size=${String(options.size)} ${formatBuildFields(navigator.userAgent)} dev=${options.deviceId}`,
     );
     this.effects = this.deps.createEffects(
       (id) => (id === this.session.playerId ? FFA_OWN_COLOR : FFA_OTHER_COLOR),

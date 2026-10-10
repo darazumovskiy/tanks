@@ -6,7 +6,7 @@
 
 | Файл | Роль |
 |---|---|
-| `packages/mobile/capacitor.config.ts` | `appId` `io.github.darazumovskiy.tanks`, имя «Танки», `server.url` — адрес игрового сервера (переопределяется `TANKS_SERVER_URL`), `webDir: www` — заглушка «нет связи» |
+| `packages/mobile/capacitor.config.ts` | `appId` `io.github.darazumovskiy.tanks`, имя «Танки», `server.url` — адрес игрового сервера (переопределяется `TANKS_SERVER_URL`), `appendUserAgent` — метка `TanksApp/<versionName>` (versionName читается из `app/build.gradle`), `webDir: www` — заглушка «нет связи» |
 | `packages/mobile/android/` | Нативный проект: `AndroidManifest.xml` — `screenOrientation="sensorLandscape"`, intent-filter ссылок `https://<сервер>/d/…` с `autoVerify`; `MainActivity.java` — скрытые системные панели (возвращаются свайпом от края), экран не гаснет, пока приложение на экране — замок Wi-Fi с низкой задержкой (`WIFI_MODE_FULL_LOW_LATENCY`, до Android 10 — `WIFI_MODE_FULL_HIGH_PERF`, разрешение `WAKE_LOCK`): радио не уходит в энергосбережение, из-за которого Samsung с One UI 7+ замирает раз в пару секунд ([incident-633t.md](../../../workflow/multiplayer/knowledge/incident-633t.md)), ссылка на дуэль из `onNewIntent` грузится в WebView; `app/build.gradle` — подпись из переменных окружения, `versionCode`/`versionName`, хост ссылок из `TANKS_SERVER_URL`. Открытие ссылок приложением — [invite-link.md](../frontend/invite-link.md) |
 | `packages/mobile/package.json` | Нативные плагины Capacitor, которые `cap sync` кладёт в APK: `@capacitor/share` — системное меню «поделиться» |
 | `packages/mobile/ios/` | Проект iOS, создан, не собирается (см. research) |
@@ -26,7 +26,7 @@
 
 Нужно только при изменении самой оболочки (ориентация, панели, иконка, адрес сервера, нативные плагины). Изменения игры доезжают без этого.
 
-1. Поднять `versionCode` в `packages/mobile/android/app/build.gradle`.
+1. Поднять `versionCode` и `versionName` в `packages/mobile/android/app/build.gradle`; `versionName` уходит в User-Agent меткой `TanksApp/<versionName>` (`appendUserAgent` в `capacitor.config.ts`), клиент пишет его полем `app` строки `device` журнала боя ([game-log.md](../backend/game-log.md)).
 2. `deploy/android/build.sh`, затем `deploy/android/upload.sh root@172.232.212.157`. Если менялся `assetlinks.json` — сначала выкладка сервера: Android сверяет домен при установке.
 3. На телефоне — скачать по QR заново; Android поставит поверх старой версии, потому что подпись та же.
 
@@ -37,6 +37,7 @@
 | 0.4 (`versionCode` 4) | Ссылки на общий бой открываются приложением |
 | 0.5 (`versionCode` 5) | Адрес сервера и ссылок — `tankbattle.io`; старые версии продолжают открывать `172-232-212-157.sslip.io` |
 | 0.6 (`versionCode` 6) | Замок Wi-Fi с низкой задержкой, пока приложение на экране |
+| 0.7 (`versionCode` 7) | Версия оболочки в User-Agent (`TanksApp/0.7`) — журнал боя знает, на какой версии приложения играли |
 
 ## Проверка на устройстве
 

@@ -9,17 +9,23 @@ export interface NetProxyOptions {
   burstMs?: number;
   // Неровные пачки: шаг до каждой следующей границы сетки — случайный от `burstMs` до `burstMaxMs`, мс.
   burstMaxMs?: number;
+  // Связь замирает в обе стороны на `stallMs` раз в `stallEveryMs`: куски, чей срок попал в окно паузы, уходят разом
+  // в его конце — как сеть телефона, которая периодически засыпает.
+  stallEveryMs?: number;
+  stallMs?: number;
   // Порт и адрес прослушивания; по умолчанию — случайный свободный порт только на этой машине.
   port?: number;
   host?: string;
 }
 
-type NetShapeOptions = Pick<NetProxyOptions, 'delayMs' | 'burstMs' | 'burstMaxMs'>;
+type NetShapeOptions = Pick<NetProxyOptions, 'delayMs' | 'burstMs' | 'burstMaxMs' | 'stallEveryMs' | 'stallMs'>;
 
 interface NetShape {
   delayMs: number;
   burstMs: number;
   burstMaxMs: number;
+  stallEveryMs: number;
+  stallMs: number;
 }
 
 interface HeldChunk {
@@ -119,7 +125,8 @@ class FrameTap {
 // его порт — иначе соединение игры пойдёт мимо. Разрыв закрывает обе стороны, как пропавшая сеть; молчание —
 // открытые соединения перестают пересылать, не закрываясь, и уже ждущие задержки куски не доходят. Пока `isRefusing` — новые соединения сразу закрываются,
 // как недоступная сеть. Задержка держит каждый кусок данных заданное время, порядок сохраняется; пачки — куски
-// после задержки уходят разом на границе сетки `burstMs`, у неровных пачек шаг сетки случайный до `burstMaxMs`.
+// после задержки уходят разом на границе сетки `burstMs`, у неровных пачек шаг сетки случайный до `burstMaxMs`;
+// паузы связи — общие окна `stallMs` раз в `stallEveryMs` по часам посредника для обоих направлений.
 // `setShape` меняет сеть на ходу: следующие куски идут по новым правилам, уже ждущие — по старым.
 // Сообщения сервера в соединении игры копятся в `serverMessages`.
 export class NetProxy {
@@ -229,9 +236,9 @@ export class NetProxy {
   }
 
   private forward(to: Socket, chunk: Buffer): void {
-    const { delayMs, burstMs } = this.shape;
+    const { delayMs, burstMs, stallEveryMs } = this.shape;
     const isHolding = (this.lanes.get(to)?.held.length ?? 0) > 0;
-    if (delayMs === 0 && burstMs === 0 && !isHolding) {
+    if (delayMs === 0 && burstMs === 0 && stallEveryMs === 0 && !isHolding) {
       to.write(chunk);
       return;
     }
@@ -239,7 +246,7 @@ export class NetProxy {
   }
 
   private hold(to: Socket, chunk: Buffer): void {
-    const { delayMs, burstMs, burstMaxMs } = this.shape;
+    const { delayMs, burstMs, burstMaxMs, stallEveryMs, stallMs } = this.shape;
     let lane = this.lanes.get(to);
     if (lane === undefined) {
       lane = { held: [], timer: null, edge: null, lastDueAt: 0 };
@@ -253,6 +260,10 @@ export class NetProxy {
       }
       lane.edge = edge;
       dueAt = edge;
+    }
+    const stallPhase = stallEveryMs > 0 ? dueAt % stallEveryMs : stallMs;
+    if (stallPhase < stallMs) {
+      dueAt += stallMs - stallPhase;
     }
     lane.lastDueAt = dueAt;
     lane.held.push({ dueAt, chunk });
@@ -304,5 +315,7 @@ function netShape(options: NetShapeOptions): NetShape {
     delayMs: options.delayMs ?? 0,
     burstMs,
     burstMaxMs: Math.max(burstMs, options.burstMaxMs ?? burstMs),
+    stallEveryMs: options.stallEveryMs ?? 0,
+    stallMs: options.stallMs ?? 0,
   };
 }

@@ -284,11 +284,19 @@ afterEach(() => {
 });
 
 describe('проводка дуэли', () => {
-  it('строка устройства в журнале кончается номером устройства', () => {
+  it('строка устройства в журнале: версия клиента, браузер вместо приложения, номер устройства в конце', () => {
     const write = vi.spyOn(DiagLog.prototype, 'write');
     startDuel();
     const device = write.mock.calls.map(([line]) => line).find((line) => line.startsWith('device '));
-    expect(device).toMatch(new RegExp(` touch=0 dev=${DEVICE_ID}$`));
+    expect(device).toMatch(new RegExp(` touch=0 build=test app=web dev=${DEVICE_ID}$`));
+  });
+
+  it('строка устройства в приложении Android — версия оболочки из User-Agent', () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 16; wv) TanksApp/0.7');
+    const write = vi.spyOn(DiagLog.prototype, 'write');
+    startDuel();
+    const device = write.mock.calls.map(([line]) => line).find((line) => line.startsWith('device '));
+    expect(device).toMatch(new RegExp(`^device ua=.* TanksApp/0\\.7 screen=.* build=test app=0\\.7 dev=${DEVICE_ID}$`));
   });
 
   it('снимок с запасом команд — один шаг ввода пропущен: команда не уходит, в журнале `in skip`', () => {

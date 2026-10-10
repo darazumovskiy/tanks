@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  createRound,
   DEFAULT_RULES,
   DEFAULT_STATS,
   IDLE_ACTION,
   normalizeAngle,
+  roundPlan,
+  stepRound,
   TICK_RATE,
+  type Action,
   type FfaMap,
 } from '@tanks/shared/engine';
 import { decode, FfaPhase, MessageType, type FfaSnapshotMessage, type SnapshotMessage } from '@tanks/shared/protocol';
@@ -12,13 +16,19 @@ import { createApp, type App } from '../src/app.js';
 import { DEFAULT_FFA_OPTIONS, FfaGame, type FfaOptions } from '../src/ffaGame.js';
 import { NO_LOG } from '../src/gameLog.js';
 import {
+  clearInput,
+  createInputChannel,
   INPUT_BACKLOG_MIN,
   INPUT_BACKLOG_TICKS,
   INPUT_BURST_CALM_TICKS,
   INPUT_BURST_SIZE,
+  INPUT_JITTER_REPEATS,
   INPUT_QUEUE_BURST_LIMIT,
   INPUT_QUEUE_LIMIT,
   INPUT_SPARE_TICKS,
+  INPUT_TIMEOUT_TICKS,
+  offerInput,
+  takeAction,
 } from '../src/inputs.js';
 import type { DropReason } from '../src/metrics.js';
 import { Room, type Seat } from '../src/room.js';
@@ -195,10 +205,12 @@ class ManualDuel {
   readonly drops: DropReason[] = [];
   readonly acked = new Set<number>();
   readonly spareFlags: boolean[] = [];
+  latest: SnapshotMessage | null = null;
+  shots = 0;
   private lastSeq = 0;
   private ackSeq = 0;
   private readonly room: Room;
-  private readonly seat: Seat;
+  private seat: Seat;
 
   constructor(hasNetSmoothing = false) {
     const dropCounter = {
@@ -207,7 +219,12 @@ class ManualDuel {
       },
     };
     this.room = new Room('manual', FAST_ROOM, NO_LOG, dropCounter, DEFAULT_RULES, hasNetSmoothing);
-    this.seat = this.room.join(
+    this.seat = this.joinFirst();
+    this.room.join(1, SILENT_CONNECTION, 'Б', DEFAULT_STATS);
+  }
+
+  private joinFirst(): Seat {
+    return this.room.join(
       0,
       {
         send: (bytes) => {
@@ -216,19 +233,38 @@ class ManualDuel {
             this.ackSeq = message.ackSeq;
             this.acked.add(message.ackSeq);
             this.spareFlags.push(message.hasSpareInput);
+            this.latest = message;
+            this.shots += message.events.filter((event) => event.kind === 'shot' && event.side === 0).length;
           }
         },
       },
       'А',
       DEFAULT_STATS,
     );
-    this.room.join(1, SILENT_CONNECTION, 'Б', DEFAULT_STATS);
+  }
+
+  // Новое соединение того же игрока: номера команд снова с единицы.
+  rejoin(): void {
+    this.seat.leave();
+    this.seat = this.joinFirst();
+    this.lastSeq = 0;
+  }
+
+  send(action: Action, count = 1): void {
+    for (let i = 0; i < count; i++) {
+      this.lastSeq++;
+      this.seat.input(this.lastSeq, action);
+    }
   }
 
   sendIdle(count: number): void {
-    for (let i = 0; i < count; i++) {
-      this.lastSeq++;
-      this.seat.input(this.lastSeq, IDLE_ACTION);
+    this.send(IDLE_ACTION, count);
+  }
+
+  // Шаги до боя: отсчёт съедает команды без движения.
+  skipCountdown(): void {
+    while (this.latest === null || this.latest.tick === 0) {
+      this.room.step();
     }
   }
 
@@ -237,12 +273,12 @@ class ManualDuel {
   }
 
   // Каждый тик: шаг, задержка подтверждения в командах, затем perTick новых команд.
-  run(ticks: number, perTick: number): number[] {
+  run(ticks: number, perTick: number, action: Action = IDLE_ACTION): number[] {
     const lags: number[] = [];
     for (let i = 0; i < ticks; i++) {
       this.room.step();
       lags.push(this.lastSeq - this.ackSeq);
-      this.sendIdle(perTick);
+      this.send(action, perTick);
     }
     return lags;
   }
@@ -408,10 +444,21 @@ class ManualFfa {
 }
 
 describe('очередь команд: сглаживание дёрганой сети', () => {
-  it('без сглаживания пачки по 5 после пауз теряют команды', () => {
+  it('без сглаживания пачки по 5 после пауз теряют лишнее сверх повторов паузы', () => {
     const duel = new ManualDuel();
     sendBursts(duel);
-    expect(duel.drops).toEqual(Array<DropReason>(BURSTS * (BURST - INPUT_QUEUE_LIMIT)).fill('overflow'));
+    // Пачка ставит в очередь 3 из 5, пауза — 2 повтора, из них засчитан один: следующая пачка — одна в счёт повтора,
+    // одна сверх очереди.
+    const perBurst = BURST - INPUT_QUEUE_LIMIT;
+    const owedPerBurst = perBurst - INPUT_JITTER_REPEATS;
+    const nextBurst = [
+      ...Array<DropReason>(owedPerBurst).fill('owed'),
+      ...Array<DropReason>(perBurst - owedPerBurst).fill('overflow'),
+    ];
+    expect(duel.drops).toEqual([
+      ...Array<DropReason>(perBurst).fill('overflow'),
+      ...Array.from({ length: BURSTS - 1 }, () => nextBurst).flat(),
+    ]);
   });
 
   it('дуэль: пачки по 5 не теряются; к непустой очереди первая теряет одну команду', () => {
@@ -470,6 +517,141 @@ describe('очередь команд: сглаживание дёрганой �
     duel.run(1, 0);
     duel.sendIdle(INPUT_BURST_SIZE - 1);
     expect(duel.drops).toEqual(['overflow']);
+  });
+});
+
+// Пауза связи телефона: семь тиков без команд, затем пачка из всех команд паузы и ещё одной.
+const PAUSE_TICKS = 7;
+const PACK_EXTRA = 1;
+// Первый повтор паузы — дрожание, как без долга: шаг сверх команд; остальные засчитываются.
+const OWED_TICKS = PAUSE_TICKS - INPUT_JITTER_REPEATS;
+const DRIVE: Action = { throttle: 1, turn: 0.5, turretTurn: 0, isFiring: false };
+const STEADY_TICKS = 10;
+const POSE_DIGITS = 1;
+
+// Ровно по команде на тик, последняя применена, затем PAUSE_TICKS шагов повтором без команд.
+function steadyThenPause(duel: ManualDuel, action: Action = IDLE_ACTION): void {
+  duel.skipCountdown();
+  duel.run(STEADY_TICKS, 1, action);
+  duel.run(1, 0);
+  duel.run(PAUSE_TICKS, 0);
+}
+
+describe('очередь команд: долг повторов', () => {
+  for (const hasNetSmoothing of [false, true]) {
+    const mode = hasNetSmoothing ? 'со сглаживанием' : 'без сглаживания';
+
+    it(`${mode}: пачка после паузы засчитывается за повторы — шагов столько же, сколько команд, и шаг дрожания`, () => {
+      const duel = new ManualDuel(hasNetSmoothing);
+      steadyThenPause(duel, DRIVE);
+      expect(duel.latest?.ackSeq).toBe(duel.sent + OWED_TICKS);
+      duel.send(DRIVE, PAUSE_TICKS + PACK_EXTRA);
+      expect(duel.drops).toEqual(Array<DropReason>(OWED_TICKS).fill('owed'));
+      duel.run(INPUT_JITTER_REPEATS + PACK_EXTRA, 0);
+      expect(duel.latest?.ackSeq).toBe(duel.sent);
+
+      const round = createRound(
+        roundPlan(0).mapIndex,
+        [
+          { name: 'А', stats: DEFAULT_STATS, isBot: false },
+          { name: 'Б', stats: DEFAULT_STATS, isBot: false },
+        ],
+        DEFAULT_RULES,
+      );
+      for (let step = 1; step <= duel.sent + INPUT_JITTER_REPEATS; step++) {
+        stepRound(round, [DRIVE, IDLE_ACTION]);
+      }
+      const served = duel.latest?.tanks[0];
+      expect(served?.x).toBeCloseTo(round.tanks[0].x, POSE_DIGITS);
+      expect(served?.y).toBeCloseTo(round.tanks[0].y, POSE_DIGITS);
+      expect(normalizeAngle((served?.heading ?? NaN) - round.tanks[0].heading)).toBeCloseTo(0, POSE_DIGITS);
+    });
+
+    it(`${mode}: выстрел в засчитанной команде пачки не теряется`, () => {
+      const duel = new ManualDuel(hasNetSmoothing);
+      steadyThenPause(duel);
+      duel.send({ ...IDLE_ACTION, isFiring: true });
+      duel.sendIdle(PAUSE_TICKS - 1 + PACK_EXTRA);
+      expect(duel.drops[0]).toBe('owed');
+      expect(duel.shots).toBe(0);
+      duel.run(1, 0);
+      expect(duel.shots).toBe(1);
+      duel.run(PACK_EXTRA + PAUSE_TICKS, 0);
+      expect(duel.shots).toBe(1);
+    });
+
+    it(`${mode}: пачка ровно на засчитанные повторы, выстрел в последней — стреляет следующий шаг, повтор`, () => {
+      const duel = new ManualDuel(hasNetSmoothing);
+      steadyThenPause(duel);
+      duel.sendIdle(OWED_TICKS - 1);
+      duel.send({ ...IDLE_ACTION, isFiring: true });
+      expect(duel.drops).toEqual(Array<DropReason>(OWED_TICKS).fill('owed'));
+      duel.run(1, 0);
+      expect(duel.shots).toBe(1);
+      expect(duel.latest?.ackSeq).toBe(duel.sent + 1);
+    });
+
+    it(`${mode}: тишина дольше таймаута прощает повторы: подтверждение возвращается, долга нет`, () => {
+      const duel = new ManualDuel(hasNetSmoothing);
+      duel.skipCountdown();
+      duel.run(STEADY_TICKS, 1);
+      duel.run(INPUT_TIMEOUT_TICKS + 10, 0);
+      expect(duel.latest?.ackSeq).toBe(duel.sent);
+      const pack = INPUT_TIMEOUT_TICKS + 5;
+      duel.sendIdle(pack);
+      const limit = hasNetSmoothing ? INPUT_QUEUE_BURST_LIMIT : INPUT_QUEUE_LIMIT;
+      expect(duel.drops).toEqual(Array<DropReason>(pack - limit).fill('overflow'));
+    });
+  }
+
+  it('один тик без команды — дрожание: опоздавшая встаёт в запас и подтверждается своим шагом, долга нет', () => {
+    const duel = new ManualDuel();
+    duel.skipCountdown();
+    duel.run(STEADY_TICKS, 1);
+    duel.run(1 + INPUT_JITTER_REPEATS, 0);
+    expect(duel.latest?.ackSeq).toBe(duel.sent);
+    duel.sendIdle(2);
+    expect(duel.run(STEADY_TICKS, 1)).toEqual(Array<number>(STEADY_TICKS).fill(1));
+    expect(duel.drops).toEqual([]);
+  });
+
+  it('новый раунд: покой до первой команды не засчитывается, первая команда встаёт в очередь', () => {
+    const channel = createInputChannel(0, false);
+    let tick = 0;
+    for (let seq = 1; seq <= STEADY_TICKS; seq++) {
+      tick++;
+      offerInput(channel, seq, DRIVE, tick, FAST_ROOM.maxInputsPerSecond);
+      takeAction(channel, tick);
+    }
+    clearInput(channel, tick);
+    for (let i = 0; i < PAUSE_TICKS; i++) {
+      tick++;
+      expect(takeAction(channel, tick)).toEqual(IDLE_ACTION);
+    }
+    expect(channel.ackSeq).toBe(STEADY_TICKS);
+    tick++;
+    expect(offerInput(channel, STEADY_TICKS + 1, DRIVE, tick, FAST_ROOM.maxInputsPerSecond)).toEqual([]);
+    expect(takeAction(channel, tick)).toEqual(DRIVE);
+    expect(channel.ackSeq).toBe(STEADY_TICKS + 1);
+  });
+
+  it('новое соединение начинает без долга', () => {
+    const duel = new ManualDuel();
+    steadyThenPause(duel);
+    duel.rejoin();
+    duel.sendIdle(PAUSE_TICKS);
+    expect(duel.drops).toEqual(Array<DropReason>(PAUSE_TICKS - INPUT_QUEUE_LIMIT).fill('overflow'));
+  });
+
+  it('общий бой: пачка после паузы засчитывается за повторы', () => {
+    const ffa = new ManualFfa(true);
+    for (let i = 0; i < STEADY_TICKS; i++) {
+      ffa.sendIdle(1);
+      ffa.run(1);
+    }
+    ffa.run(PAUSE_TICKS);
+    ffa.sendIdle(PAUSE_TICKS + PACK_EXTRA);
+    expect(ffa.drops).toEqual(Array<DropReason>(OWED_TICKS).fill('owed'));
   });
 });
 

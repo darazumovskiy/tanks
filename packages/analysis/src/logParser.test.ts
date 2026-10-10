@@ -221,6 +221,7 @@ describe('разбор журнала игры', () => {
       .server('input limit side=1 seq=9')
       .server('input overflow side=1 seq=10')
       .server('input backlog side=1 seq=11')
+      .server('input owed side=1 seq=12')
       .server('input stale seq=9 last=10')
       .text();
     const dir = makeLogDir({ 'BRKN.log': broken, 'GOOD.log': good, 'server.log': 'loop late=40 dur=6\n' });
@@ -230,7 +231,7 @@ describe('разбор журнала игры', () => {
     expect(result.skipped).toEqual(['BRKN']);
     expect(result.games[0]?.summary.movement.fight_ticks).toBe(4);
     expect(result.games[0]?.summary.shooting_human.bumps).toBe(1);
-    expect(result.games[0]?.summary.movement.dropped_inputs).toBe(3);
+    expect(result.games[0]?.summary.movement.dropped_inputs).toBe(4);
   });
 
   it('журнал со строками клиента `in skip` — игра разбирается, пропуски в итогах и в отчёте', () => {

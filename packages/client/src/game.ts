@@ -35,6 +35,7 @@ import type { Effects } from './render/effects.js';
 import { createDuelEffects, Renderer } from './render/renderer.js';
 import type { Settings } from './settings.js';
 import { Sfx } from './sfx.js';
+import { formatBuildFields } from './build.js';
 import { SpareInput } from './spareInput.js';
 import type { Telemetry } from './telemetry.js';
 import { isShotInZone } from './zoneFire.js';
@@ -163,7 +164,7 @@ export class Game {
     this.countdownBeeper = new CountdownBeeper(this.sfx);
     this.diag = this.deps.createDiag(options.roomCode);
     this.diag.write(
-      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'} dev=${options.deviceId}`,
+      `device ua=${navigator.userAgent} screen=${String(innerWidth)}x${String(innerHeight)} dpr=${String(devicePixelRatio)} touch=${options.isTouchDevice ? '1' : '0'} ${formatBuildFields(navigator.userAgent)} dev=${options.deviceId}`,
     );
     const effects = this.deps.createEffects(() => this.names());
     this.effects = effects;

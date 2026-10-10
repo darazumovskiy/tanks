@@ -25,7 +25,7 @@ import {
 } from '@tanks/shared/protocol';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { DEFAULT_FFA_OPTIONS, type FfaConnection, type FfaOptions } from './ffaGame.js';
-import { FileGameLog, LOG_ROUTE, NO_LOG, receiveClientLog, type GameLog } from './gameLog.js';
+import { DEV_BUILD, FileGameLog, LOG_ROUTE, NO_LOG, receiveClientLog, type GameLog } from './gameLog.js';
 import { NO_GEO, openGeo } from './geo.js';
 import { createMetrics, type Metrics } from './metrics.js';
 import { DEFAULT_ROOM_OPTIONS, type RoomOptions } from './room.js';
@@ -78,6 +78,7 @@ export interface App {
 }
 
 export interface AppStats {
+  build: string;
   rooms: number;
   connections: number;
   tick: number;
@@ -107,6 +108,8 @@ const FFA_ENV = {
 const SHOT_LEAD_ENV = 'SHOT_LEAD_TICKS';
 const SHOT_INHERIT_ENV = 'SHOT_INHERIT_PERCENT';
 const NET_SMOOTHING_ENV = 'NET_SMOOTHING';
+// Коммит сборки сервера; ставит выкладка (deploy/build-env).
+const BUILD_ENV = 'TANKS_BUILD';
 // 0 — догон выключен.
 const SHOT_LEAD_MIN_TICKS = 0;
 // 0 — снаряд летит только по стволу.
@@ -134,6 +137,14 @@ function envInteger(env: ServerEnv, name: string, min: number, limit: number): n
     throw new Error(`${name} должен быть целым от ${String(min)} до ${String(limit)}, получено «${raw}»`);
   }
   return value;
+}
+
+function buildFromEnv(env: ServerEnv): string {
+  const raw = env[BUILD_ENV];
+  if (raw === undefined || raw === '') {
+    return DEV_BUILD;
+  }
+  return raw;
 }
 
 function envSwitch(env: ServerEnv, name: string): boolean | null {
@@ -221,6 +232,7 @@ export function createApp(options: AppOptions = {}): App {
   const env = options.env ?? {};
   const ffaOptions = ffaOptionsFromEnv(options.ffa ?? DEFAULT_FFA_OPTIONS, env);
   const rules = rulesFromEnv(options.rules ?? DEFAULT_RULES, env);
+  const build = buildFromEnv(env);
   const fileLog = options.logDir === undefined ? null : new FileGameLog(options.logDir);
   const log: GameLog = fileLog ?? NO_LOG;
   const visitLog = options.logDir === undefined ? null : new FileGameLog(join(options.logDir, VISITS_DIR));
@@ -241,6 +253,7 @@ export function createApp(options: AppOptions = {}): App {
     rules,
     ffaOptions,
     envSwitch(env, NET_SMOOTHING_ENV) ?? false,
+    build,
   );
   const tickMs = options.tickMs ?? 1000 / TICK_RATE;
   const botClock = options.botClock ?? ((): number => performance.now());
@@ -291,7 +304,7 @@ export function createApp(options: AppOptions = {}): App {
   let silenceTimer: NodeJS.Timeout | undefined;
 
   function stats(): AppStats {
-    return { rooms: rooms.roomCount, connections: connections.size, tick, tickDurationMaxMs };
+    return { build, rooms: rooms.roomCount, connections: connections.size, tick, tickDurationMaxMs };
   }
 
   function sendError(socket: WebSocket, code: ErrorCode, text: string): void {
