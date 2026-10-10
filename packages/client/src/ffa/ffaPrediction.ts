@@ -156,7 +156,7 @@ export class FfaPrediction {
   private isFlightStale = true;
   private readonly picture: BulletPicture;
   private readonly ownTime = new OwnTime();
-  private readonly shots = new PredictedShots();
+  private readonly shots = new PredictedShots<Bullet>();
   private readonly ownHits = new OwnHits();
   private playedOnTouch: ReadonlySet<FfaSnapshotEvent> = new Set();
   private readonly ownShots = new OwnShots<FfaSnapshotEvent>();
@@ -279,7 +279,7 @@ export class FfaPrediction {
       this.world.nextBulletId = predictedBulletId(seq);
       this.ownShots.fired(seq, this.stepWithOwnHits(this.world, this.actionsFor(this.world.tanks, action)));
       this.tracks.record(this.world.tick, this.world.bullets);
-      this.shots.note(this.world.bullets);
+      this.shots.note(this.world.bullets, this.world.tick);
       this.isFlightStale = true;
     }
   }
@@ -301,8 +301,10 @@ export class FfaPrediction {
     const ownServerShots = message.events.filter((event) => event.kind === 'shot' && event.tank === this.myId);
     const isOnField = message.tanks.some((tank) => tank.id === this.myId && tank.isAlive);
     this.playedShots = this.ownShots.settle(message.ackSeq, message.tick, ownServerShots, isOnField);
+    const born = message.births.filter((bullet) => bullet.owner === this.myId).map((bullet) => bullet.id);
+    const unpaired = this.shots.takeUnpaired(message.ackSeq, message.tick, born.length, isOnField);
     this.tracks.forgetFrom(message.tick);
-    this.tracks.record(message.tick, this.mirror.bullets);
+    this.tracks.record(message.tick, [...this.mirror.bullets, ...unpaired]);
     this.tracks.forgetBefore(message.tick - SNAPSHOT_BUFFER_TICKS);
     this.remember(message, receivedAt);
     const before = this.me;
@@ -326,7 +328,7 @@ export class FfaPrediction {
         target.respawnIn = kit.respawnIn;
       }
     }
-    world.bullets = this.mirror.bullets.map((bullet) => ({ ...bullet }));
+    world.bullets = [...this.mirror.bullets.map((bullet) => ({ ...bullet })), ...unpaired];
     this.pending = this.pending.filter((input) => input.seq > message.ackSeq);
     if (this.isStepping) {
       this.replay();
@@ -334,7 +336,7 @@ export class FfaPrediction {
       this.flyAhead();
     }
     this.isFlightStale = true;
-    this.noteConfirmed(message);
+    this.noteConfirmed(message.ackSeq, born);
     const me = this.me;
     this.lastCorrectionPx = before === null || me === null ? 0 : Math.hypot(me.x - beforeX, me.y - beforeY);
     if (this.hasNetSmoothing) {
@@ -386,7 +388,7 @@ export class FfaPrediction {
       }
       flyBullets(far);
       this.tracks.record(field.tick, [...field.bullets, ...far.bullets]);
-      this.shots.note(field.bullets);
+      this.shots.note(field.bullets, field.tick);
     }
     this.ownShots.replayed(shots);
     world.tick = field.tick;
@@ -442,10 +444,9 @@ export class FfaPrediction {
     return isBulletHit ? event.by : null;
   }
 
-  private noteConfirmed(message: FfaSnapshotMessage): void {
+  private noteConfirmed(ackSeq: number, born: readonly number[]): void {
     const predictedNow = new Set(this.world.bullets.map((bullet) => bullet.id));
-    const born = message.births.filter((bullet) => bullet.owner === this.myId).map((bullet) => bullet.id);
-    for (const pair of this.shots.confirm(predictedNow, message.ackSeq, born)) {
+    for (const pair of this.shots.confirm(predictedNow, ackSeq, born)) {
       this.picture.rename(pair.predictedId, pair.serverId);
       this.confirmed.push(pair);
     }

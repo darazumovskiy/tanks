@@ -398,6 +398,56 @@ describe('снаряды зеркалом', () => {
     expect(client.takeConfirmedBullets()).toEqual([]);
   });
 
+  it('пауза связи: команда выстрела подтверждена повтором раньше снаряда сервера — свой снаряд летит до пары', () => {
+    const server = worldOf([placedTank(ME, 500, 600), placedTank(5, 1500, 900)]);
+    const tracker = new BulletTracker();
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    const client = prediction();
+    client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), 0);
+    const ownIds = (): number[] =>
+      client
+        .view(1000)
+        .bullets.filter((bullet) => bullet.owner === ME)
+        .map((bullet) => bullet.id);
+    const fireSeq = 2;
+    const lateFireSeq = 4;
+    const lastSeq = 6;
+    for (let seq = 1; seq <= lastSeq; seq++) {
+      client.predict(seq, seq === fireSeq ? FIRE : IDLE_ACTION);
+    }
+    for (let seq = 1; seq < lateFireSeq; seq++) {
+      stepWorld(server, actionsFor(server, IDLE_ACTION));
+      client.applySnapshot(snapshotOf(server, { ackSeq: seq, changes: tracker.diff(server.bullets) }), seq * TICK_MS);
+      expect(ownIds()).toEqual([PREDICTED_BULLET_ID_BASE + fireSeq]);
+      expect(client.takeConfirmedBullets()).toEqual([]);
+    }
+    stepWorld(server, actionsFor(server, FIRE));
+    client.applySnapshot(
+      snapshotOf(server, { ackSeq: lateFireSeq, changes: tracker.diff(server.bullets) }),
+      lateFireSeq * TICK_MS,
+    );
+    const serverId = server.bullets.find((bullet) => bullet.owner === ME)?.id ?? -1;
+    expect(ownIds()).toEqual([serverId]);
+    expect(client.takeConfirmedBullets()).toEqual([{ predictedId: PREDICTED_BULLET_ID_BASE + fireSeq, serverId }]);
+  });
+
+  it('свой танк подбит, пока подтверждённый снаряд ждёт пару, — снаряд предсказания пропадает', () => {
+    const server = worldOf([placedTank(ME, 500, 600), placedTank(5, 1500, 900)]);
+    const tracker = new BulletTracker();
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    const client = prediction();
+    client.applySnapshot(snapshotOf(server, { changes: tracker.diff(server.bullets) }), 0);
+    client.predict(1, FIRE);
+    client.predict(2, IDLE_ACTION);
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    client.applySnapshot(snapshotOf(server, { ackSeq: 1, changes: tracker.diff(server.bullets) }), TICK_MS);
+    expect(client.view(1000).bullets.filter((bullet) => bullet.owner === ME)).toHaveLength(1);
+    meOf(server).isAlive = false;
+    stepWorld(server, actionsFor(server, IDLE_ACTION));
+    client.applySnapshot(snapshotOf(server, { ackSeq: 2, changes: tracker.diff(server.bullets) }), 2 * TICK_MS);
+    expect(client.view(1000).bullets.filter((bullet) => bullet.owner === ME)).toEqual([]);
+  });
+
   it('вход в идущий матч: снаряды из полного списка видны с первым снимком', () => {
     const server = worldOf([placedTank(ME, 500, 600), placedTank(5, 900, 300)]);
     stepWorld(server, actionsFor(server, IDLE_ACTION));

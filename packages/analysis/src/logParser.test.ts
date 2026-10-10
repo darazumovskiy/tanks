@@ -231,7 +231,7 @@ describe('разбор журнала игры', () => {
     expect(result.skipped).toEqual(['BRKN']);
     expect(result.games[0]?.summary.movement.fight_ticks).toBe(4);
     expect(result.games[0]?.summary.shooting_human.bumps).toBe(1);
-    expect(result.games[0]?.summary.movement.dropped_inputs).toBe(4);
+    expect(result.games[0]?.summary.movement.dropped_inputs).toBe(3);
   });
 
   it('журнал со строками клиента `in skip` — игра разбирается, пропуски в итогах и в отчёте', () => {

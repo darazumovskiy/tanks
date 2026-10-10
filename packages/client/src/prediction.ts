@@ -115,7 +115,7 @@ export class Prediction {
   private isFlightStale = true;
   private readonly picture: BulletPicture;
   private readonly ownTime = new OwnTime();
-  private readonly shots = new PredictedShots();
+  private readonly shots = new PredictedShots<Round['bullets'][number]>();
   private readonly ownHits = new OwnHits();
   private playedOnTouch: ReadonlySet<SnapshotEvent> = new Set();
   private readonly ownShots = new OwnShots<SnapshotEvent>();
@@ -265,7 +265,16 @@ export class Prediction {
     this.round.zone.radius = message.zoneRadius;
     applyTank(this.round.tanks[0], message.tanks[0]);
     applyTank(this.round.tanks[1], message.tanks[1]);
-    this.round.bullets = message.bullets.map((bullet) => ({ ...bullet, damage: 0, isDead: false }));
+    const born = message.bullets
+      .filter((bullet) => bullet.owner === this.side && !this.serverBulletIds.has(bullet.id))
+      .map((bullet) => bullet.id);
+    const unpaired = this.shots.takeUnpaired(
+      message.ackSeq,
+      message.tick,
+      born.length,
+      message.tanks[this.side].isAlive,
+    );
+    this.round.bullets = [...message.bullets.map((bullet) => ({ ...bullet, damage: 0, isDead: false })), ...unpaired];
     this.settleOwnHits(message);
     const ownServerShots = message.events.filter((event) => event.kind === 'shot' && event.side === this.side);
     this.playedShots = this.ownShots.settle(
@@ -275,7 +284,7 @@ export class Prediction {
       message.tanks[this.side].isAlive,
     );
     this.tracks.forgetFrom(message.tick);
-    this.tracks.record(message.tick, message.bullets);
+    this.tracks.record(message.tick, [...message.bullets, ...unpaired]);
     this.tracks.forgetBefore(message.tick - SNAPSHOT_BUFFER_TICKS);
     this.isFlightStale = true;
     for (const [index, kit] of message.kits.entries()) {
@@ -299,7 +308,7 @@ export class Prediction {
       }
       this.ownShots.replayed(shots);
     }
-    this.noteConfirmed(message);
+    this.noteConfirmed(message, born);
     this.lastCorrectionPx = Math.hypot(this.me.x - before.x, this.me.y - before.y);
     if (this.hasNetSmoothing) {
       this.ownSmoothing.correct(beforePose, this.ownPose(), receivedAt);
@@ -331,7 +340,7 @@ export class Prediction {
       this.tracks.markBornDead(bornId, this.round.tick);
     }
     this.tracks.record(this.round.tick, this.round.bullets);
-    this.shots.note(this.round.bullets);
+    this.shots.note(this.round.bullets, this.round.tick);
     this.isFlightStale = true;
     const shot = events.find((event) => event.type === 'shot' && event.tank === this.side);
     return shot === undefined ? null : { event: toSnapshotEvent(shot), tick: this.round.tick };
@@ -359,11 +368,8 @@ export class Prediction {
     return this.side === 0 ? 1 : 0;
   }
 
-  private noteConfirmed(message: SnapshotMessage): void {
+  private noteConfirmed(message: SnapshotMessage, born: readonly number[]): void {
     const predictedNow = new Set(this.round.bullets.map((bullet) => bullet.id));
-    const born = message.bullets
-      .filter((bullet) => bullet.owner === this.side && !this.serverBulletIds.has(bullet.id))
-      .map((bullet) => bullet.id);
     this.serverBulletIds = new Set(message.bullets.map((bullet) => bullet.id));
     for (const pair of this.shots.confirm(predictedNow, message.ackSeq, born)) {
       this.picture.rename(pair.predictedId, pair.serverId);

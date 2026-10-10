@@ -18,8 +18,9 @@ Environment=GEO_DIR=/opt/tanks-files/geo
 Environment=WALL_SLIDE=30
 # Лаг-компенсация, снаряд со скоростью танка, сглаживание сети; файл меняет админка, первый кладёт выкладка.
 EnvironmentFile=-/etc/tanks/settings.env
-# Коммит сборки (TANKS_BUILD) для журнала игр и /healthz; файл пишется заново перед каждым запуском, от root (+).
-ExecStartPre=+/bin/bash /opt/tanks/deploy/build-env
+# Коммит сборки (TANKS_BUILD) для журнала игр и /healthz; файл пишется заново перед каждым запуском, от root (+);
+# сбой скрипта не мешает запуску игры (-).
+ExecStartPre=-+/bin/bash /opt/tanks/deploy/build-env
 EnvironmentFile=-/etc/tanks/build.env
 ExecStart=/usr/bin/node /opt/tanks/packages/server/dist/main.js
 Restart=always

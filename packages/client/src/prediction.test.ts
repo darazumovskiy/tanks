@@ -17,7 +17,7 @@ import {
 } from '@tanks/shared/engine';
 import { MessageType, toSnapshotEvent, type SnapshotEvent, type SnapshotMessage } from '@tanks/shared/protocol';
 import { PICTURE_NEAR, pictureTickAt } from './pictureTime.js';
-import { PREDICTED_BULLET_ID_BASE } from './predictedShots.js';
+import { PREDICTED_BULLET_ID_BASE, UNPAIRED_SHOT_TICKS } from './predictedShots.js';
 import { Prediction, type PictureView } from './prediction.js';
 
 const TICK_MS = 1000 / 30;
@@ -28,6 +28,8 @@ const FIRE: Action = { ...IDLE_ACTION, isFiring: true };
 const LANE_ME = { x: 240, y: 100, heading: Math.PI / 2, turret: 0 };
 const LANE_ENEMY = { x: 1180, y: 100, heading: Math.PI, turret: Math.PI };
 const WARMUP_SEQ = 8;
+// Сервер стреляет за подтверждённую повтором команду, когда она дошла после паузы, — шагами позже.
+const SERVER_FIRE_DELAY = 3;
 const SETUPS: [{ nickname: string; stats: typeof DEFAULT_STATS }, { nickname: string; stats: typeof DEFAULT_STATS }] = [
   { nickname: 'Дима', stats: DEFAULT_STATS },
   { nickname: 'Бублик', stats: DEFAULT_STATS },
@@ -95,7 +97,8 @@ interface DuelFrame {
 }
 
 // Дуэль на верхней полосе: сервер применяет свою команду с отставанием lag, противник стреляет по enemyAction;
-// снимок тика, для которого isSnapshotHeld — true, приходит вместе со следующим.
+// снимок тика, для которого isSnapshotHeld — true, приходит вместе со следующим. serverAction — что сервер сделал
+// за подтверждённую команду: повтор в паузе связи подтверждает команду, которой ещё не видел.
 function playDuel(
   lag: number,
   ticks: number,
@@ -103,6 +106,7 @@ function playDuel(
   enemyAction: (tick: number) => Action,
   prepare: (round: Round) => void = (): void => undefined,
   isSnapshotHeld: (tick: number) => boolean = (): boolean => false,
+  serverAction: (seq: number, sent: Action) => Action = (_seq, sent): Action => sent,
 ): { frames: DuelFrame[]; history: Map<number, DuelTick>; prediction: Prediction } {
   const server = laneRound();
   prepare(server);
@@ -123,7 +127,7 @@ function playDuel(
       prediction.predict(action(tick));
     }
     const seq = tick - lag;
-    const events = stepRound(server, [seq >= 1 ? action(seq) : IDLE_ACTION, enemyAction(tick)]);
+    const events = stepRound(server, [seq >= 1 ? serverAction(seq, action(seq)) : IDLE_ACTION, enemyAction(tick)]);
     const hits = events.flatMap((event): Side[] => (event.type === 'hit' ? [event.tank as Side] : []));
     history.set(server.tick, record([...(history.get(server.tick)?.hits ?? []), ...hits]));
     if (tick > ticks) {
@@ -217,6 +221,48 @@ describe('дуэль: картинка совпадает с сервером', 
       { predictedId: PREDICTED_BULLET_ID_BASE + fireSeq, serverId: ownIds.at(-1)?.[0] },
     ]);
     expect(prediction.takeConfirmedBullets()).toEqual([]);
+  });
+
+  it('пауза связи: команда выстрела подтверждена повтором раньше снаряда сервера — свой снаряд не пропадает, пара есть', () => {
+    const fireSeq = WARMUP_SEQ + 1;
+    const lateFireSeq = fireSeq + SERVER_FIRE_DELAY;
+    const { frames, prediction } = playDuel(
+      4,
+      WARMUP_SEQ + 20,
+      (seq) => (seq === fireSeq ? FIRE : IDLE_ACTION),
+      () => IDLE_ACTION,
+      undefined,
+      undefined,
+      (seq, sent) => {
+        if (seq === fireSeq) {
+          return IDLE_ACTION;
+        }
+        return seq === lateFireSeq ? FIRE : sent;
+      },
+    );
+    const ownIds = frames.map(({ view }) => view.bullets.filter((bullet) => bullet.owner === ME).map((b) => b.id));
+    const first = ownIds.findIndex((ids) => ids.includes(PREDICTED_BULLET_ID_BASE + fireSeq));
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(ownIds.slice(first).every((ids) => ids.length === 1)).toBe(true);
+    const serverId = ownIds.at(-1)?.[0];
+    expect(serverId).toBeLessThan(PREDICTED_BULLET_ID_BASE);
+    expect(prediction.takeConfirmedBullets()).toEqual([{ predictedId: PREDICTED_BULLET_ID_BASE + fireSeq, serverId }]);
+  });
+
+  it('подтверждённый выстрел, которого сервер так и не сделал, — снаряд предсказания пропадает после ожидания пары', () => {
+    const fireSeq = WARMUP_SEQ + 1;
+    const { frames } = playDuel(
+      4,
+      WARMUP_SEQ + UNPAIRED_SHOT_TICKS + 10,
+      (seq) => (seq === fireSeq ? FIRE : IDLE_ACTION),
+      () => IDLE_ACTION,
+      undefined,
+      undefined,
+      (seq, sent) => (seq === fireSeq ? IDLE_ACTION : sent),
+    );
+    const ownIds = frames.map(({ view }) => view.bullets.filter((bullet) => bullet.owner === ME).map((b) => b.id));
+    expect(ownIds.some((ids) => ids.length === 1)).toBe(true);
+    expect(ownIds.at(-1)).toEqual([]);
   });
 
   it('своя гибель: убивший снаряд не появляется снова, ни один снаряд и тик своего танка не идут назад', () => {
