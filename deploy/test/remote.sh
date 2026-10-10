@@ -9,7 +9,7 @@ COMMIT=$2
 SETTINGS=/etc/tanks/settings.env
 # Хэш пароля админки (caddy hash-password) кладётся на машину руками; без него или без админки в коммите /admin нет.
 ADMIN_HASH_FILE=/etc/tanks/admin.hash
-ADMIN_SCRIPT=packages/client/test/e2e/serverAdmin.ts
+ADMIN_UNIT=deploy/tanks-admin.service
 ADMIN_USER=admin
 ADMIN_PORT=8090
 
@@ -35,15 +35,17 @@ main() {
   install -d -o tanks -g tanks -m 755 /opt/tanks-logs
 
   install -d -m 755 /etc/tanks
-  [[ -f $SETTINGS ]] || : >"$SETTINGS"
+  if [[ ! -f $SETTINGS ]]; then
+    cp /opt/tanks/deploy/settings.env "$SETTINGS" 2>/dev/null || : >"$SETTINGS"
+  fi
   install -m 644 /opt/tanks/deploy/tanks.service /etc/systemd/system/tanks.service
   install -d -m 755 /etc/systemd/system/tanks.service.d
   printf '[Service]\nEnvironmentFile=-%s\n' "$SETTINGS" >/etc/systemd/system/tanks.service.d/settings.conf
 
   local has_admin=0
-  if [[ -f /opt/tanks/$ADMIN_SCRIPT && -s $ADMIN_HASH_FILE ]]; then
+  if [[ -f /opt/tanks/$ADMIN_UNIT && -s $ADMIN_HASH_FILE ]]; then
     has_admin=1
-    write_admin_unit
+    install -m 644 "/opt/tanks/$ADMIN_UNIT" /etc/systemd/system/tanks-admin.service
   fi
   write_caddyfile "$has_admin"
   systemctl daemon-reload
@@ -63,28 +65,6 @@ main() {
   if [[ $has_admin == 1 ]]; then
     systemctl is-active tanks-admin
   fi
-}
-
-# Админка — от root: пишет файл настроек службы tanks и перезапускает её.
-write_admin_unit() {
-  cat >/etc/systemd/system/tanks-admin.service <<EOF
-[Unit]
-Description=Tanks test server admin
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/tanks
-Environment=ADMIN_PORT=$ADMIN_PORT
-Environment=SETTINGS_FILE=$SETTINGS
-Environment=LOG_DIR=/opt/tanks-logs
-ExecStart=/usr/bin/node --import ./packages/client/test/e2e/tsLoader.mjs $ADMIN_SCRIPT
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-EOF
 }
 
 write_caddyfile() {
